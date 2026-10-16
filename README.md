@@ -132,7 +132,7 @@ generic and state-space addresses. Accesses to global addresses below 4096
 
 | Group | Instructions |
 |---|---|
-| integer | `add sub mul{.lo,.hi,.wide} mad{.lo,.hi,.wide} div rem min max abs neg` with `.sat`; `and or xor not cnot shl shr popc clz brev` |
+| integer | `add sub mul{.lo,.hi,.wide} mad{.lo,.hi,.wide} div rem min max abs neg` with `.sat`; carry chains `add.cc addc sub.cc subc mad.cc madc` (CC.CF); `and or xor not cnot shl shr popc clz brev` |
 | floating point (f16/f32/f64) | `add sub mul div fma mad min max abs neg sqrt rsqrt rcp sin cos lg2 ex2 tanh copysign` with `.sat` |
 | comparison / selection | `setp.{eq,ne,lt,le,gt,ge,lo,ls,hi,hs,equ,neu,ltu,leu,gtu,geu,num,nan}[.and/.or/.xor]` with `p\|q` destinations, `selp`, predicated execution `@p` / `@!p`, `not/and/or/xor.pred` |
 | data movement | `mov` (incl. symbol addresses, special registers, vector pack/unpack), `cvt` (all int↔int, int↔float, float↔float, `.rni/.rzi/.rmi/.rpi`, `.sat`), `cvta[.to]` |
