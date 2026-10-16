@@ -9,7 +9,7 @@ relevant), and the work is committed and pushed.
 Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependencies.
 
 ## 0. Prior work
-- [ ] 41 Survey and reuse existing trusted formalizations (K semantics, PTX memory-model formalizations, IEEE test vectors) → `docs/prior-work.md`
+- [x] 41 Survey and reuse existing trusted formalizations (K semantics, PTX memory-model formalizations, IEEE test vectors) → `docs/prior-work.md`
 
 ## 1. Infrastructure
 - [ ] 1 Modularize semantics for parallel extension
