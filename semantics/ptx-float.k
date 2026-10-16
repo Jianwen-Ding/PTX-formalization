@@ -58,6 +58,9 @@ module PTX-FLOAT
   syntax Float ::= clampF(Set, Float) [function, total]
   rule clampF(M, F) => satF(F) requires "sat" in M
   rule clampF(M, F) => reluF(F) requires "relu" in M
+  rule clampF(M, F) => #if signFloat(F) #then --Float maxValueFloat(precisionFloat(F), exponentBitsFloat(F))
+                       #else maxValueFloat(precisionFloat(F), exponentBitsFloat(F)) #fi
+    requires "satfinite" in M andBool isInfinite(F)
   rule clampF(_, F) => F [owise]
   syntax Int ::= post(Set, Int, Float) [function, total]
   rule post(M, W, F) => ftzOut(M, W, encodeF(clampF(M, F), W))
@@ -66,11 +69,15 @@ module PTX-FLOAT
   syntax Float ::= nextUpF(Float, Int)   [function, total]
                  | nextDownF(Float, Int) [function, total]
   rule nextUpF(F, _) => F requires isNaN(F) orBool (isInfinite(F) andBool notBool signFloat(F))
-  rule nextUpF(F, W) => decodeF(1, W) requires notBool isNaN(F) andBool F ==Float fc(0.0, F)
-  rule nextUpF(F, W) => decodeF(encodeF(F, W) +Int 1, W)
+  rule nextUpF(F, W) => decodeF(ulpStep(W), W) requires notBool isNaN(F) andBool F ==Float fc(0.0, F)
+  rule nextUpF(F, W) => decodeF(encodeF(F, W) +Int ulpStep(W), W)
     requires notBool isNaN(F) andBool notBool isInfinite(F) andBool F >Float fc(0.0, F)
-  rule nextUpF(F, W) => decodeF(encodeF(F, W) -Int 1, W)
+  rule nextUpF(F, W) => decodeF(encodeF(F, W) -Int ulpStep(W), W)
     requires notBool isNaN(F) andBool F <Float fc(0.0, F)
+  // distance between adjacent bit patterns (tf32 lives in the high bits of a binary32 layout)
+  syntax Int ::= ulpStep(Int) [function, total]
+  rule ulpStep(132) => 8192
+  rule ulpStep(_) => 1 [owise]
   rule nextDownF(F, W) => --Float nextUpF(--Float F, W)
 
   // ------------------------------------------------------------ directed rounding
@@ -94,10 +101,17 @@ module PTX-FLOAT
   rule rdPick(V, S, "rz", D, U, _) => #if V >Float fc(0.0, V) orBool (V ==Float fc(0.0, V) andBool S >Int 0)
                                     #then D #else U #fi
   // nearest: exact gap comparison; ties go by the sticky sign, else away ("rna") / even ("rn")
-  rule rdPick(V, S, Mode, D, U, W) => #if V -Float D <Float U -Float V #then D
-                                    #else #if V -Float D >Float U -Float V #then U
-                                    #else rdTie(V, S, Mode, D, U, W) #fi #fi
+  // an infinite neighbour stands for the next binade's first value, i.e. one top-binade ulp beyond max finite
+  rule rdPick(V, S, Mode, D, U, W) => rdNear(V, S, Mode, D, U, W,
+                                             #if isInfinite(D) #then wide3(U) -Float (wide3(nextUpF(U, W)) -Float wide3(U)) #else D #fi,
+                                             #if isInfinite(U) #then wide3(D) +Float (wide3(D) -Float wide3(nextDownF(D, W))) #else U #fi)
     requires Mode ==String "rna" orBool Mode ==String "rn"
+  syntax Float ::= wide3(Float) [function, total]      // exact widening (avoids overflow in the target format)
+  rule wide3(F) => roundFloat(F, 300, WEXP)
+  syntax Float ::= rdNear(Float, Int, String, Float, Float, Int, Float, Float) [function, total]    // ..., effective down, up
+  rule rdNear(V, S, Mode, D, U, W, DV, UV) => #if V -Float DV <Float UV -Float V #then D
+                                               #else #if V -Float DV >Float UV -Float V #then U
+                                               #else rdTie(V, S, Mode, D, U, W) #fi #fi
   syntax Float ::= rdTie(Float, Int, String, Float, Float, Int) [function, total]
   rule rdTie(_, S, _, D, U, _) => #if S >Int 0 #then U #else D #fi requires S =/=Int 0
   rule rdTie(V, 0, "rna", D, U, _) => #if V >Float fc(0.0, V) #then U #else D #fi
@@ -117,7 +131,7 @@ module PTX-FLOAT
                | fpDivW(Set, Int, Float, Float) [function, total]
 
   // finishing a wide result v (already exact or with sticky sign s)
-  rule fpFin(_, W, V, _) => encodeF(qnan(W), W)  requires isNaN(V)
+  rule fpFin(M, W, V, _) => post(M, W, qnan(W)) requires isNaN(V)
   rule fpFin(M, W, V, _) => post(M, W, roundFloat(V, prec(W), ebits(W))) requires isInfinite(V)
   rule fpFin(M, W, V, S) => post(M, W, roundDirF(V, S, rndOf(M), W))
     requires notBool isNaN(V) andBool notBool isInfinite(V)

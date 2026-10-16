@@ -28,7 +28,7 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 ## 3. Floating point
 - [x] 11 f32/f64 rounding modes and modifiers (.rz/.rm/.rp, .ftz, .sat, .relu, .NaN, .xorsign.abs, approx variants)
 - [x] 12 f16 / f16x2 / bf16 / bf16x2 arithmetic
-- [ ] 13 Complete cvt matrix (tf32, .rna, .satfinite, packing, cvt.pack, cvt.rs) (after 12)
+- [x] 13 Complete cvt matrix (tf32, .rna, .satfinite, packing, cvt.pack, cvt.rs) (after 12)
 - [ ] 14 FP8 / FP6 / FP4 / UE8M0 conversions (after 12)
 
 ## 4. Warp-level and synchronisation (after 3)

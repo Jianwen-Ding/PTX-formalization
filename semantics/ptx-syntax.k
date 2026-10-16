@@ -45,6 +45,7 @@ module PTX-SYNTAX
                 | ".e2m3x2" | ".e3m2x2" | ".e2m3x4" | ".e3m2x4" // fp6
                 | ".e2m1x2" | ".e2m1x4"                         // fp4
                 | ".ue8m0x2"
+                | ".u4" | ".s4" | ".u2" | ".s2"
 
   // ---------------------------------------------------------------- operands
   syntax Addr ::= Reg | Name | Int

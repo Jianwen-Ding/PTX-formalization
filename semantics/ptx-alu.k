@@ -178,13 +178,19 @@ module PTX-ALU
   syntax String ::= intRnd(Set, String) [function, total]
   rule intRnd(M, D) => pick(M, ListItem("rni") ListItem("rzi") ListItem("rmi") ListItem("rpi"), D)
 
+  // cvt.[rnd][.ftz][.sat|.relu|.satfinite].dtype.stype
+  //  float -> float: exact wide value, rounded by fpFin (any of .rn .rz .rm .rp .rna), or
+  //                  rounded to an integral value in the same format with .rni/.rzi/.rmi/.rpi
+  //  int   -> float: exact, then rounded;  float -> int: rounded to integral (default .rzi),
+  //                  NaN -> 0, saturating;  int -> int: sign/zero extension, optional .sat
   syntax Int ::= cvt(Set, Ty, Ty, Int) [function]          // modifiers, dst, src, bits
-  rule cvt(M, D, S, V) =>
-       fres(#if intRnd(M, "") ==String "" #then fv(V, S) #else rndInt(fv(V, S), intRnd(M, "")) #fi, M, D)
-    requires isF(D) andBool isF(S)
-  rule cvt(M, D, S, V) => fres(Int2Float(ival(V, S), prec(fw(D)), ebits(fw(D))), M, D)
+  rule cvt(M, D, S, V) => post(M, fw(D), roundFloat(rndInt(fv(ftzIn(M, fw(S), V), S), intRnd(M, "")), prec(fw(D)), ebits(fw(D))))
+    requires isF(D) andBool isF(S) andBool intRnd(M, "") =/=String ""
+  rule cvt(M, D, S, V) => fpFin(M, fw(D), roundFloat(fv(ftzIn(M, fw(S), V), S), WP, WEXP), 0)
+    requires isF(D) andBool isF(S) andBool intRnd(M, "") ==String ""
+  rule cvt(M, D, S, V) => fpFin(M, fw(D), Int2Float(ival(V, S), WP, WEXP), 0)
     requires isF(D) andBool notBool isF(S)
-  rule cvt(M, D, S, V) => f2i(fv(V, S), intRnd(M, "rzi"), D)
+  rule cvt(M, D, S, V) => f2i(fv(ftzIn(M, fw(S), V), S), intRnd(M, "rzi"), D)
     requires notBool isF(D) andBool isF(S)
   rule cvt(M, D, S, V) => trunc(#if "sat" in M #then clamp(ival(V, S), D) #else ival(V, S) #fi, wid(D))
     requires notBool isF(D) andBool notBool isF(S)

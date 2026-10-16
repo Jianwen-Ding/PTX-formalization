@@ -45,4 +45,16 @@ module PTX-EXEC-HALF
        <regs> R => wr(R, D, pack16(cmp(cmpOp(M), laneTy(ST), lane16(rd(A, ST, C), 0), lane16(rd(B, ST, C), 0)) *Int laneTrue(DT),
                                    cmp(cmpOp(M), laneTy(ST), lane16(rd(A, ST, C), 1), lane16(rd(B, ST, C), 1)) *Int laneTrue(DT))) </regs>
     requires isHalfPair(ST)
+
+  // cvt.frnd2{.relu}{.satfinite}.f16x2.f32 d, a, b  (also bf16x2): d.hi = cvt(a), d.lo = cvt(b)
+  rule <tk> exec(opc("cvt", M, ListItem(DT) ListItem(ST)), ops(D, A, B, .Operands), C) => .K ... </tk>
+       <regs> R => wr(R, D, pack16(cvt(M, laneTy(DT), ST, rd(B, ST, C)), cvt(M, laneTy(DT), ST, rd(A, ST, C)))) </regs>
+    requires isHalfPair(DT) andBool isF(ST)
+
+  // cvt.pack.sat.type.stype.b32 d, a, b, c : c shifted up, then sat(a), sat(b) packed below it
+  rule <tk> exec(opc("cvt", M, ListItem(PT) ListItem(ST) ListItem(_)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
+       <regs> R => wr(R, D, trunc((rd(X, ty("u", 32), C) <<Int (2 *Int wid(PT)))
+                                   |Int ((clamp(ival(rd(A, ST, C), ST), PT) &Int mask(wid(PT))) <<Int wid(PT))
+                                   |Int (clamp(ival(rd(B, ST, C), ST), PT) &Int mask(wid(PT))), 32)) </regs>
+    requires "pack" in M
 endmodule
