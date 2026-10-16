@@ -79,11 +79,33 @@ decimal, `0x` hex, or PTX bit patterns (`0f3F800000`, `0d3FF0000000000000`).
 | `semantics/ptx-configuration.k` | machine state, state-space address map, byte memories |
 | `semantics/ptx-load.k` | flattening function bodies to code maps, labels, register widths, static allocation |
 | `semantics/ptx-alu.k` | pure semantics of arithmetic, logic, comparisons, conversions and atomics |
-| `semantics/ptx-exec.k` | per-thread execution: fetch, memory, control flow, calls, barriers, scheduling |
+| `semantics/ptx-exec*.k` | per-thread execution, one module per area: `-core` (operands, scheduling, fetch), `-alu`, `-mem`, `-ctrl` (branches, calls, exit), `-sync` (barriers); `ptx-exec.k` assembles them |
 | `semantics/ptx-harness.k` | host side: module loading, buffers, grid launch, `.print`/`.expect` |
 | `tests/` | regression programs and golden outputs |
 | `examples/` | `--search` demonstrations (races, barriers, deadlock) |
 | `scripts/` | test runner, IEEE-754 differential fuzzer, examples runner |
+
+## Extending
+
+Features are added as new modules, so independent areas do not conflict:
+
+1. **Syntax**: new tokens/productions go in `ptx-syntax.k`. Opcodes need none,
+   since any dotted name already parses and is split by `decodeOpc`.
+2. **Pure operations** (value computations): add `rule bin/un/tern/cvt(...)`
+   cases in `ptx-alu.k` (or a new `ptx-alu-<area>.k` imported by
+   `PTX-EXEC-ALU`'s module chain), extending the dispatch sets (`BINOPS`, ...).
+3. **Instructions**: create `semantics/ptx-exec-<area>.k` with
+   `module PTX-EXEC-<AREA>` importing `PTX-EXEC-CORE`, write
+   `rule <tk> exec(opc("name", M, Tys), ops(...), C) => ... </tk>` rules, then
+   `requires`/`imports` it in `ptx-exec.k`.
+4. **Visible steps**: an instruction touching shared state must be listed in
+   `isVisible` (ptx-exec-core.k) so the partial-order reduction yields before it.
+5. **Extra per-thread state**: store in `<regs>` under a key starting with
+   `%%` (e.g. `"%%cc.cf"`) so it cannot clash with PTX registers, or add a
+   cell to `ptx-configuration.k`.
+6. **Host directives**: `ptx-syntax.k` (`HarnessDir`) and `ptx-harness.k`.
+7. Add a program to `tests/` (generate its golden file with
+   `scripts/run-tests.sh --update tests/x.ptx`) and tick `ROADMAP.md`.
 
 ## What is modelled
 

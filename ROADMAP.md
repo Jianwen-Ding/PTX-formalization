@@ -12,7 +12,7 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 - [x] 41 Survey and reuse existing trusted formalizations (K semantics, PTX memory-model formalizations, IEEE test vectors) → `docs/prior-work.md`
 
 ## 1. Infrastructure
-- [ ] 1 Modularize semantics for parallel extension
+- [x] 1 Modularize semantics for parallel extension
 - [ ] 2 Complete PTX grammar and type coverage (`::` opcodes, b128/f16x2/bf16/tf32/fp8/fp6/fp4 types, vector decls, prototypes, branch targets, debug sections, ...)
 - [ ] 3 Warp-collective rendezvous infrastructure (+ `%lanemask_*`)
 - [ ] 4 Directed-rounding and FTZ float infrastructure (+ exact-rational fuzz reference)
