@@ -26,6 +26,11 @@ module PTX-EXEC-WARP
   rule isCollective("elect") => true
   rule isCollective("redux") => true
 
+  // bar.warp.sync membermask : all named lanes rendezvous (no data)
+  rule <tk> exec(opc("bar", M, _), ops(MM, .Operands), C) => #coll("bar.warp", rd(MM, ty("u", 32), C), .List, .List, .List) ... </tk>
+    requires "warp" in M
+  rule collCompute("bar.warp", _, Arr) => sameAll(keys_list(Arr), ListItem(0))      // no data; a non-empty result marks completion
+
   // d|p -> [d, p];  d -> [d]
   syntax List ::= dests(Operand) [function, total]
   rule dests(D:Reg | P:Reg) => ListItem(D) ListItem(P)

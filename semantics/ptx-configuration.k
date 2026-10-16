@@ -85,6 +85,8 @@ module PTX-CONFIGURATION
           <barCnt> .Map </barCnt>
           <barExp> .Map </barExp>
           <barGen> .Map </barGen>
+          <barVal> .Map </barVal>               // barrier id |-> reduction accumulated in the current generation
+          <barRes> .Map </barRes>               // barrier id |-> reduction result of the last completed generation
           <colls> .Map </colls>
           <wlive> .Map </wlive>                 // warp |-> mask of lanes that have not exited
           <threads>

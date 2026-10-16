@@ -22,8 +22,40 @@ module PTX-EXEC-SYNC
   rule <tk> exec(opc(OP, M, _), ops(A, N, .Operands), C) =>
             #bar(rd(A, ty("u", 32), C), rd(N, ty("u", 32), C), notBool "arrive" in M) ... </tk>
     requires isBar(OP, M)
-  // bar.warp.sync: warps are not modelled as lock-step units; no-op
-  rule <tk> exec(opc("bar", M, _), _, _) => .K ... </tk> requires "warp" in M
+  // bar.warp.sync is a warp collective with no data (ptx-exec-warp.k)
+
+  // bar.red.popc.u32 d, a{, b}, {!}c     bar.red.{and,or}.pred p, a{, b}, {!}c
+  // Every arriving thread contributes its predicate; once the barrier completes all
+  // participants receive the count of true predicates (popc) or their and / or.
+  syntax KItem ::= #barRed(Int, Int, String, Int, Operand) | #barWaitRed(Int, Int, Operand)
+  syntax String ::= redKind(Set) [function, total]
+  rule redKind(M) => pick(M, ListItem("popc") ListItem("and") ListItem("or"), "popc")
+  syntax Int ::= redStep(String, Int, Int) [function, total]      // kind, accumulator (or -1 = none yet), predicate value
+  rule redStep("popc", -1, V) => V
+  rule redStep("popc", A, V) => A +Int V requires A >=Int 0
+  rule redStep("and", -1, V) => V
+  rule redStep("and", A, V) => A &Int V requires A >=Int 0
+  rule redStep("or", -1, V) => V
+  rule redStep("or", A, V) => A |Int V requires A >=Int 0
+  rule redStep(_, _, V) => V [owise]
+  rule <tk> exec(opc(OP, M, _), ops(D, A, Pc, .Operands), C) =>
+            #barRed(rd(A, ty("u", 32), C), -1, redKind(M), b2i(rd(Pc, ty("p", 1), C) =/=Int 0), D) ... </tk>
+    requires isBarRed(OP, M)
+  rule <tk> exec(opc(OP, M, _), ops(D, A, N, Pc, .Operands), C) =>
+            #barRed(rd(A, ty("u", 32), C), rd(N, ty("u", 32), C), redKind(M), b2i(rd(Pc, ty("p", 1), C) =/=Int 0), D) ... </tk>
+    requires isBarRed(OP, M)
+  rule <tk> #barRed(B, X, K, V, D) => #barCheck(B) ~> #yield ~> #barWaitRed(B, {BG[B] orDefault 0}:>Int, D) ... </tk>
+       <status> running => waiting(B, {BG[B] orDefault 0}:>Int) </status>
+       <barGen> BG </barGen>
+       <barCnt> BC => BC[B <- {BC[B] orDefault 0}:>Int +Int 1] </barCnt>
+       <barExp> BX => BX[B <- X] </barExp>
+       <barVal> BV => BV[B <- redStep(K, {BV[B] orDefault -1}:>Int, V)] </barVal>
+  rule <tk> #barWaitRed(B, G, D) => .K ... </tk>
+       <status> running </status>
+       <barGen> BG </barGen>
+       <barRes> BR </barRes>
+       <regs> R => wr(R, D, {BR[B] orDefault 0}:>Int) </regs>
+    requires {BG[B] orDefault 0}:>Int >Int G
 
   rule <tk> #bar(B, X, W) => #barCheck(B) ~> #if W #then #yield #else .K #fi ... </tk>
        <status> running => #if W #then waiting(B, {BG[B] orDefault 0}:>Int) #else running #fi </status>
@@ -32,6 +64,8 @@ module PTX-EXEC-SYNC
        <barExp> BX => BX[B <- X] </barExp>
   rule <tk> #barCheck(B) => .K ... </tk>
        <barCnt> BC => BC[B <- undef] </barCnt>
+       <barVal> BV => BV[B <- undef] </barVal>
+       <barRes> BR => BR[B <- {BV[B] orDefault 0}:>Int] </barRes>
        <barGen> BG => BG[B <- {BG[B] orDefault 0}:>Int +Int 1] </barGen>
        <barExp> BX </barExp>
        <live> L </live>

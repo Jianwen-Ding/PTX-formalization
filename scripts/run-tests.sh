@@ -5,7 +5,7 @@
 #   scripts/run-tests.sh [--update] [test.ptx ...]
 set -u
 cd "$(dirname "$0")/.."
-DEF=build/ptx-kompiled
+DEF=${PTX_DEF:-build/ptx-kompiled}
 update=0
 if [ "${1:-}" = "--update" ]; then update=1; shift; fi
 tests=("$@")

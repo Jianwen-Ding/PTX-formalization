@@ -85,7 +85,7 @@ module PTX-EXEC-CORE
   rule isVisible(ins(_, opc(OP, M, _), _)) =>
        ((OP in (SetItem("ld") SetItem("st") SetItem("atom") SetItem("red")))
          andBool notBool spaceOf(M) in (SetItem("param") SetItem("local")))
-       orBool isBar(OP, M) orBool OP ==String "exit" orBool isCollective(OP)
+       orBool isBar(OP, M) orBool isBarRed(OP, M) orBool isBarWarp(OP, M) orBool OP ==String "exit" orBool isCollective(OP)
   rule isVisible(_) => false [owise]
 
   // Warp-collective instructions rendezvous through the CTA (ptx-exec-coll.k);
@@ -128,4 +128,8 @@ module PTX-EXEC-CORE
   syntax Bool ::= isBar(String, Set) [function, total]
   rule isBar(OP, M) => (OP ==String "bar" orBool OP ==String "barrier")
                        andBool notBool "warp" in M andBool notBool "red" in M
+  syntax Bool ::= isBarRed(String, Set) [function, total]
+  rule isBarRed(OP, M) => (OP ==String "bar" orBool OP ==String "barrier") andBool "red" in M andBool notBool "warp" in M
+  syntax Bool ::= isBarWarp(String, Set) [function, total]
+  rule isBarWarp(OP, M) => OP ==String "bar" andBool "warp" in M
 endmodule

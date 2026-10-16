@@ -4,7 +4,7 @@
 # schedules (0 = all `.expect` checks hold, 1 = some check fails).
 set -u
 cd "$(dirname "$0")/.."
-DEF=build/ptx-kompiled
+DEF=${PTX_DEF:-build/ptx-kompiled}
 
 outcomes() {
   krun -d $DEF "$1" --search --pattern '<exit-code> X:Int </exit-code>' 2>/dev/null \

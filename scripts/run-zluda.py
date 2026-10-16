@@ -21,7 +21,7 @@ env['JAVA_TOOL_OPTIONS'] = env.get('JAVA_TOOL_OPTIONS', '') + ' -Xss512m'
 
 def run(name):
     try:
-        r = subprocess.run(['krun', '-d', os.path.join(root, 'build/ptx-kompiled'),
+        r = subprocess.run(['krun', '-d', os.environ.get('PTX_DEF', os.path.join(root, 'build/ptx-kompiled')),
                             os.path.join(tests, name + '.ptx'), '--output', 'none'],
                            capture_output=True, text=True, timeout=300, env=env)
     except subprocess.TimeoutExpired:

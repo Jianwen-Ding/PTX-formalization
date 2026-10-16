@@ -34,7 +34,7 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 ## 4. Warp-level and synchronisation (after 3)
 - [x] 15 shfl.sync
 - [x] 16 vote.sync, activemask, match.sync, elect.sync, redux.sync
-- [ ] 17 Barrier variants (bar.warp.sync, bar.red, barrier.cta.*)
+- [x] 17 Barrier variants (bar.warp.sync, bar.red, barrier.cta.*)
 
 ## 5. Matrix (after 3, 12)
 - [ ] 18 wmma

@@ -140,7 +140,7 @@ generic and state-space addresses. Accesses to global addresses below 4096
 | control | `bra`, `call` (nvcc `.param` calling convention, recursion), `ret`, `exit`, `trap` |
 | warp-level | `shfl.sync` (all modes, predicate output), `vote.sync.{all,any,uni,ballot}`, `match.sync`, `elect.sync`, `redux.sync` (int and f32), `activemask` |
 | low precision | `cvt` to/from fp8 (`e4m3`, `e5m2`), fp6 (`e2m3`, `e3m2`), fp4 (`e2m1`) and `ue8m0` pairs |
-| synchronisation | `bar.sync` / `barrier.sync` (with optional thread count), `bar.arrive`; `membar`/`fence` are no-ops under SC; `bar.warp.sync` is a no-op |
+| synchronisation | `bar.sync` / `barrier.sync` (with optional thread count), `bar.arrive`, `bar.red.{popc,and,or}` (also `barrier.cta.red`), `bar.warp.sync`; `membar`/`fence` are no-ops under SC; `bar.warp.sync` is a no-op |
 
 Syntax accepted includes `.visible/.extern/.weak` linkage, `.align`,
 `.ptr`, array and initialiser declarations, `%r<N>` register ranges, nested
