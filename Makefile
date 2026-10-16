@@ -28,6 +28,7 @@ test: build
 
 fuzz: build
 	@scripts/ieee-fuzz.sh $(FUZZ_N) $(SEEDS)
+	@scripts/round-fuzz.sh 40 $(SEEDS)
 
 examples: build
 	@scripts/run-examples.sh

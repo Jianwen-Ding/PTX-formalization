@@ -9,9 +9,11 @@
 // (.rz/.rm/.rp) on float arithmetic and `.ftz` are accepted but not modelled.
 // =============================================================================
 requires "ptx-configuration.k"
+requires "ptx-float.k"
 
 module PTX-ALU
   imports PTX-CONFIGURATION
+  imports PTX-FLOAT
 
   syntax Int ::= b2i(Bool) [function, total]
   rule b2i(true) => 1
@@ -36,10 +38,10 @@ module PTX-ALU
 
   syntax Int ::= bin(String, Set, Ty, Int, Int) [function]
   // floating point
-  rule bin("add", M, T, A, B) => fres(fv(A, T) +Float fv(B, T), M, T) requires isF(T)
-  rule bin("sub", M, T, A, B) => fres(fv(A, T) -Float fv(B, T), M, T) requires isF(T)
-  rule bin("mul", M, T, A, B) => fres(fv(A, T) *Float fv(B, T), M, T) requires isF(T)
-  rule bin("div", M, T, A, B) => fres(fv(A, T) /Float fv(B, T), M, T) requires isF(T)
+  rule bin("add", M, T, A, B) => fpAdd(M, wid(T), A, B) requires isF(T)
+  rule bin("sub", M, T, A, B) => fpSub(M, wid(T), A, B) requires isF(T)
+  rule bin("mul", M, T, A, B) => fpMul(M, wid(T), A, B) requires isF(T)
+  rule bin("div", M, T, A, B) => fpDiv(M, wid(T), A, B) requires isF(T)
   rule bin("min", M, T, A, B) => fres(minFloat(fv(A, T), fv(B, T)), M, T) requires isF(T)
   rule bin("max", M, T, A, B) => fres(maxFloat(fv(A, T), fv(B, T)), M, T) requires isF(T)
   rule bin("copysign", _, T, A, B) =>      // copysign.f32 d, a, b: |b| with sign of a
@@ -79,9 +81,9 @@ module PTX-ALU
   syntax Int ::= un(String, Set, Ty, Int) [function]
   rule un("neg", _, T, A) => A xorInt (1 <<Int (wid(T) -Int 1)) requires isF(T)
   rule un("abs", _, T, A) => A &Int mask(wid(T) -Int 1)         requires isF(T)
-  rule un("sqrt",  M, T, A) => fres(sqrtF(fv(A, T)), M, T) requires isF(T)
+  rule un("sqrt",  M, T, A) => fpSqrt(M, wid(T), A) requires isF(T)
   rule un("rsqrt", M, T, A) => fres(fc(1.0, fv(A, T)) /Float sqrtF(fv(A, T)), M, T) requires isF(T)
-  rule un("rcp",   M, T, A) => fres(fc(1.0, fv(A, T)) /Float fv(A, T), M, T) requires isF(T)
+  rule un("rcp",   M, T, A) => fpRcp(M, wid(T), A) requires isF(T)
   rule un("sin",   M, T, A) => fres(sinFloat(fv(A, T)), M, T) requires isF(T)
   rule un("cos",   M, T, A) => fres(cosFloat(fv(A, T)), M, T) requires isF(T)
   rule un("lg2",   M, T, A) => fres(logFloat(fv(A, T)) /Float logFloat(fc(2.0, fv(A, T))), M, T) requires isF(T)
@@ -94,11 +96,6 @@ module PTX-ALU
   rule un("popc", _, _, A) => popc(A)
   rule un("clz",  _, T, A) => clz(A, wid(T))
   rule un("brev", _, T, A) => brev(A, wid(T))
-
-  // IEEE-754 requires sqrt(-0) = -0; MPFR's rootn returns +0, so zeros pass through
-  syntax Float ::= sqrtF(Float) [function]
-  rule sqrtF(F) => F requires F ==Float fc(0.0, F)
-  rule sqrtF(F) => rootFloat(F, 2) [owise]
 
   syntax Float ::= tanhF(Float) [function]
   rule tanhF(F) => (expFloat(F) -Float expFloat(--Float F)) /Float (expFloat(F) +Float expFloat(--Float F))
@@ -116,7 +113,7 @@ module PTX-ALU
 
   syntax Int ::= tern(String, Set, Ty, Int, Int, Int) [function]
   rule tern("selp", _, _, A, B, P) => #if P =/=Int 0 #then A #else B #fi
-  rule tern(_, M, T, A, B, C) => fres(fmaF(fv(A, T), fv(B, T), fv(C, T)), M, T) requires isF(T)
+  rule tern(_, M, T, A, B, C) => fpFma(M, wid(T), A, B, C) requires isF(T)
   rule tern("mad", M, T, A, B, C) => trunc(ival(A, T) *Int ival(B, T) +Int C, 2 *Int wid(T))
     requires notBool isF(T) andBool "wide" in M
   rule tern("mad", M, T, A, B, C) => trunc(((ival(A, T) *Int ival(B, T)) >>Int wid(T)) +Int C, wid(T))

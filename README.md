@@ -175,10 +175,18 @@ cross-checked against C `fma()`. This fuzzing found that K's `rootFloat` hook
 returns +0 for `sqrt(-0)`, which IEEE-754 says must be −0, and the semantics now
 handles that case.
 
-Modelling choices: results are rounded to nearest-even. `.approx`
+Directed rounding (`.rz .rm .rp`), `.ftz` and `.sat` are modelled for
+`add sub mul div fma sqrt rcp` on f16/f32/f64 (`semantics/ptx-float.k`). The
+directed modes round an exact (add/sub/mul/fma) or sticky-corrected
+(div/sqrt) wide result to the neighbouring floats, and are checked three ways:
+against Berkeley TestFloat vectors for `rz/rm/rp` (`tests/testfloat-r*.ptx`),
+and against an exact-rational reference that also covers `.ftz`, `.sat` and
+signed-zero rules (`scripts/ieee_ref.py`, `tests/rounding-diff-f*.ptx`,
+`make fuzz`).
+
+Modelling choices: `.approx`
 instructions return the correctly rounded value, which is within PTX's error
-bounds. Directed rounding on float arithmetic and `.ftz` are accepted but not
-modelled. NaN results are PTX's canonical NaN (`0x7FFFFFFF`).
+bounds. NaN results are PTX's canonical NaN (`0x7FFFFFFF`).
 Float-to-integer conversions saturate and map NaN to 0. Integer division by
 zero yields all ones (unspecified in PTX).
 

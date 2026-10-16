@@ -33,8 +33,10 @@ in `semantics/` remains the first executable one.
   libraries). `scripts/gen_testfloat.py` drives `testfloat_gen` to produce
   `tests/testfloat.ptx` (f32/f64 add, sub, mul, div, sqrt, fma, round to
   nearest even, 150 vectors each, spread across TestFloat's level-1 cases).
-  All 1800 vectors pass. Rounding modes, f16, bf16, conversions and
-  comparisons will be added as tasks 4, 11-14 land.
+  All 1800 vectors pass. The same generator also produced the directed-rounding
+  files `tests/testfloat-{rz,rm,rp}.ptx` (TestFloat modes `minMag`, `min`,
+  `max`; 60 vectors per op and format), which pass too. f16, bf16, conversions
+  and comparisons follow with tasks 11-14.
   Regenerate:
   ```sh
   git clone --depth 1 https://github.com/ucb-bar/berkeley-softfloat-3
