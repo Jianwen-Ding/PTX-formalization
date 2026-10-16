@@ -28,6 +28,7 @@ requires "ptx-exec-video.k"
 requires "ptx-exec-half.k"
 requires "ptx-exec-mini.k"
 requires "ptx-exec-warp.k"
+requires "ptx-exec-mma.k"
 
 module PTX-EXEC
   imports PTX-EXEC-CORE
@@ -44,6 +45,7 @@ module PTX-EXEC
   imports PTX-EXEC-HALF
   imports PTX-EXEC-MINI
   imports PTX-EXEC-WARP
+  imports PTX-EXEC-MMA
 
   // anything else is outside the modelled subset
   rule <tk> exec(O, _, _) => #unsupported(O) ... </tk> [owise]

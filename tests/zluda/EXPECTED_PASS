@@ -73,6 +73,9 @@ max
 membar
 min
 min_f16
+mma_m16n8k16_f32_bf16_bf16_f32
+mma_m16n8k16_f32_bf16_bf16_f32_2x
+mma_m16n8k16_f32_f16_f16_f32
 mov
 mov_address
 mul24_hi_s32
