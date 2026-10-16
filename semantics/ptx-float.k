@@ -37,7 +37,7 @@ module PTX-FLOAT
   rule isSubnB(B, W) => ((B >>Int (prec(W) -Int 1)) &Int mask(ebits(W))) ==Int 0
                         andBool (B &Int mask(prec(W) -Int 1)) =/=Int 0
   syntax Int ::= flushB(Int, Int) [function, total]          // sign-preserving flush
-  rule flushB(B, W) => B &Int (1 <<Int (W -Int 1)) requires isSubnB(B, W)
+  rule flushB(B, W) => B &Int (1 <<Int (cw(W) -Int 1)) requires isSubnB(B, W)
   rule flushB(B, _) => B [owise]
   syntax Int ::= ftzIn(Set, Int, Int)  [function, total]
                | ftzOut(Set, Int, Int) [function, total]
@@ -51,8 +51,16 @@ module PTX-FLOAT
   rule b2iF(true) => 1
   rule b2iF(false) => 0
 
+  // .sat clamps to [0, 1]; .relu clamps negative values (including -0.0) to +0.0
+  syntax Float ::= reluF(Float) [function, total]
+  rule reluF(F) => fc(0.0, F) requires notBool isNaN(F) andBool (F <Float fc(0.0, F) orBool (F ==Float fc(0.0, F) andBool signFloat(F)))
+  rule reluF(F) => F [owise]
+  syntax Float ::= clampF(Set, Float) [function, total]
+  rule clampF(M, F) => satF(F) requires "sat" in M
+  rule clampF(M, F) => reluF(F) requires "relu" in M
+  rule clampF(_, F) => F [owise]
   syntax Int ::= post(Set, Int, Float) [function, total]
-  rule post(M, W, F) => ftzOut(M, W, encodeF(#if "sat" in M #then satF(F) #else F #fi, W))
+  rule post(M, W, F) => ftzOut(M, W, encodeF(clampF(M, F), W))
 
   // ------------------------------------------------------------ neighbours
   syntax Float ::= nextUpF(Float, Int)   [function, total]
@@ -119,7 +127,7 @@ module PTX-FLOAT
     requires rndOf(M) ==String "rn"
   rule fpAdd(M, W, A, B) => fpAddW(M, W, wf(ftzIn(M, W, A), W, WP), wf(ftzIn(M, W, B), W, WP), false)
     requires rndOf(M) =/=String "rn"
-  rule fpSub(M, W, A, B) => fpAdd(M, W, A, B xorInt (1 <<Int (W -Int 1)))
+  rule fpSub(M, W, A, B) => fpAdd(M, W, A, B xorInt (1 <<Int (cw(W) -Int 1)))
   rule fpAddW(M, W, X, Y, _) => fpFin(M, W, #if (signFloat(X) =/=Bool signFloat(Y)) andBool X +Float Y ==Float fc(0.0, X)
                                               andBool rndOf(M) ==String "rm" #then --Float fc(0.0, X)
                                               #else X +Float Y #fi, 0)
@@ -180,13 +188,13 @@ module PTX-FLOAT
                | fpMM(Set, Int, Int, Int, Bool, Int) [function, total]       // ..., result sign
                | signB(Int, Int) [function, total]
                | isNaNB(Int, Int) [function, total]
-  rule signB(B, W) => (B >>Int (W -Int 1)) &Int 1
+  rule signB(B, W) => (B >>Int (cw(W) -Int 1)) &Int 1
   rule isNaNB(B, W) => b2iF(((B >>Int (prec(W) -Int 1)) &Int mask(ebits(W))) ==Int mask(ebits(W)) andBool (B &Int mask(prec(W) -Int 1)) =/=Int 0)
   rule fpMinMax(M, W, A0, B0, IsMin) =>
        fpMM(M, W, ftzIn(M, W, A0), ftzIn(M, W, B0), IsMin, signB(ftzIn(M, W, A0), W) xorInt signB(ftzIn(M, W, B0), W))
   rule fpMM(M, W, A, B, IsMin, XS) =>
        #if isNaNB(A, W) ==Int 1 orBool isNaNB(B, W) ==Int 1
-       #then #if "NaN" in M orBool (isNaNB(A, W) ==Int 1 andBool isNaNB(B, W) ==Int 1) #then mask(W -Int 1)
+       #then #if "NaN" in M orBool (isNaNB(A, W) ==Int 1 andBool isNaNB(B, W) ==Int 1) #then mask(cw(W) -Int 1)
              #else mmSign(M, W, #if isNaNB(A, W) ==Int 1 #then B #else A #fi, XS) #fi
        #else mmSign(M, W, mmPick(M, W, A, B, IsMin), XS) #fi
   // comparison: by value, -0.0 < +0.0; with .xorsign.abs by magnitude
@@ -195,14 +203,14 @@ module PTX-FLOAT
        #if mmLess(M, W, A, B) #then (#if IsMin #then A #else B #fi) #else (#if mmLess(M, W, B, A) #then (#if IsMin #then B #else A #fi)
          // equal values: only zeros of different sign can differ in bits
          #else (#if IsMin #then (A |Int B) #else (A &Int B) #fi) #fi) #fi
-    requires "xorsign" in M orBool (A &Int mask(W -Int 1)) =/=Int 0 orBool (B &Int mask(W -Int 1)) =/=Int 0
+    requires "xorsign" in M orBool (A &Int mask(cw(W) -Int 1)) =/=Int 0 orBool (B &Int mask(cw(W) -Int 1)) =/=Int 0
   rule mmPick(_, W, A, B, IsMin) => #if IsMin #then (A |Int B) #else (A &Int B) #fi [owise]       // both zero
   syntax Bool ::= mmLess(Set, Int, Int, Int) [function, total]
-  rule mmLess(M, W, A, B) => decodeF(A &Int mask(W -Int 1), W) <Float decodeF(B &Int mask(W -Int 1), W)
+  rule mmLess(M, W, A, B) => decodeF(A &Int mask(cw(W) -Int 1), W) <Float decodeF(B &Int mask(cw(W) -Int 1), W)
     requires "xorsign" in M
   rule mmLess(_, W, A, B) => decodeF(A, W) <Float decodeF(B, W) [owise]
   syntax Int ::= mmSign(Set, Int, Int, Int) [function, total]
-  rule mmSign(M, W, R, XS) => (R &Int mask(W -Int 1)) |Int (XS <<Int (W -Int 1)) requires "xorsign" in M
+  rule mmSign(M, W, R, XS) => (R &Int mask(cw(W) -Int 1)) |Int (XS <<Int (cw(W) -Int 1)) requires "xorsign" in M
   rule mmSign(_, _, R, _) => R [owise]
 
   rule fpRcp(M, W, A) => fpDiv(M, W, encodeF(Int2Float(1, prec(W), ebits(W)), W), A)

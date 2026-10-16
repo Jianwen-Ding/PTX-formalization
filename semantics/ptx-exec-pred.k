@@ -13,12 +13,12 @@ module PTX-EXEC-PRED
 
   // flush a subnormal float input when .ftz
   syntax Int ::= ftzSrc(Set, Ty, Int) [function, total]
-  rule ftzSrc(M, T, V) => flushB(V, wid(T)) requires "ftz" in M andBool isF(T)
+  rule ftzSrc(M, T, V) => flushB(V, fw(T)) requires "ftz" in M andBool isF(T)
   rule ftzSrc(_, _, V) => V [owise]
 
   // ---------------------------------------------------------------- set
   syntax Int ::= setRes(Bool, Ty) [function, total]               // truth, destination type
-  rule setRes(B, T) => #if B #then #if isF(T) #then encodeF(Int2Float(1, prec(wid(T)), ebits(wid(T))), wid(T))
+  rule setRes(B, T) => #if B #then #if isF(T) #then encodeF(Int2Float(1, prec(fw(T)), ebits(fw(T))), fw(T))
                                    #else mask(wid(T)) #fi
                        #else 0 #fi
 
@@ -30,7 +30,7 @@ module PTX-EXEC-PRED
 
   // ---------------------------------------------------------------- slct
   syntax Bool ::= nonNeg(Ty, Int) [function, total]
-  rule nonNeg(T, V) => notBool isNaN(decodeF(V, wid(T))) andBool decodeF(V, wid(T)) >=Float fc(0.0, decodeF(V, wid(T)))
+  rule nonNeg(T, V) => notBool isNaN(decodeF(V, fw(T))) andBool decodeF(V, fw(T)) >=Float fc(0.0, decodeF(V, fw(T)))
     requires isF(T)
   rule nonNeg(T, V) => ival(V, T) >=Int 0 [owise]
 

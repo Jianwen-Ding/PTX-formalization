@@ -42,7 +42,7 @@ def split_top(s):
     if cur.strip(): parts.append(cur)
     return [p.strip() for p in parts]
 
-TYPES = {'u8': ('B', 1), 'u16': ('H', 2), 'u32': ('I', 4), 'u64': ('Q', 8),
+TYPES = {'f16': ('e', 2), 'u8': ('B', 1), 'u16': ('H', 2), 'u32': ('I', 4), 'u64': ('Q', 8),
          'i8': ('b', 1), 'i16': ('h', 2), 'i32': ('i', 4), 'i64': ('q', 8),
          'f32': ('f', 4), 'f64': ('d', 8)}
 
@@ -75,6 +75,16 @@ def eval_elem(tok, ty):
     if m:
         v = math.pi / (float(m.group(2)) if m.group(2) else 1.0)
         return v, 'f' + m.group(1)
+    m = re.fullmatch(r'half::f16::(NAN|INFINITY|NEG_?INFINITY)(\.to_?bits\(\))?', tok)
+    if m:
+        bits = {'NAN': 0x7E00, 'INFINITY': 0x7C00, 'NEGINFINITY': 0xFC00, 'NEG_INFINITY': 0xFC00}[m.group(1)]
+        return (bits, 'u16') if m.group(2) else (struct.unpack('<e', struct.pack('<H', bits))[0], 'f16')
+    m = re.fullmatch(r'half::f16::from_?(f32|f64)\((.*)\)', tok)
+    if m:
+        return float(m.group(2)), 'f16'
+    m = re.fullmatch(r'half::f16::from_?bits\((.*)\)', tok)
+    if m:
+        return struct.unpack('<e', struct.pack('<H', int(num(m.group(1)), 0)))[0], 'f16'
     raise ValueError(tok)
 
 def to_bytes(expr):
@@ -95,7 +105,7 @@ def to_bytes(expr):
     out = bytearray()
     for v, _ in vals:
         if ty[0] == 'f':
-            out += struct.pack('<' + code, v)
+            out += struct.pack('<' + code, v) if not math.isnan(v) or ty != 'f16' else (0x7E00).to_bytes(2, 'little')
         else:
             w = size * 8
             out += (int(v) & ((1 << w) - 1)).to_bytes(size, 'little')

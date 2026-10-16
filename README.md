@@ -133,7 +133,7 @@ generic and state-space addresses. Accesses to global addresses below 4096
 | Group | Instructions |
 |---|---|
 | integer | `add sub mul{.lo,.hi,.wide} mad{.lo,.hi,.wide} div rem min max abs neg` with `.sat`; carry chains `add.cc addc sub.cc subc mad.cc madc` (CC.CF); bit-field `bfe bfi bfind fns bmsk szext prmt` (all modes), `lop3` (incl. predicate form), funnel shifts `shf`, `mul24 mad24 sad dp4a dp2a`, `.relu` min/max, packed `.u16x2/.s16x2` add/sub/min/max/neg/abs; `and or xor not cnot shl shr popc clz brev` |
-| floating point (f16/f32/f64) | `add sub mul div fma mad min max abs neg sqrt rsqrt rcp sin cos lg2 ex2 tanh copysign` with `.rn/.rz/.rm/.rp`, `.ftz`, `.sat`, and for min/max `.NaN` and `.xorsign.abs` |
+| floating point (f16/bf16/f32/f64, packed f16x2/bf16x2) | `add sub mul div fma mad min max abs neg sqrt rsqrt rcp sin cos lg2 ex2 tanh copysign` with `.rn/.rz/.rm/.rp`, `.ftz`, `.sat`, and for min/max `.NaN` and `.xorsign.abs`, `fma.relu`, `setp/set` on packed pairs |
 | comparison / selection | `set`, `slct`, `testp`, `setp.{eq,ne,lt,le,gt,ge,lo,ls,hi,hs,equ,neu,ltu,leu,gtu,geu,num,nan}[.and/.or/.xor]` with `p\|q` destinations, `selp`, predicated execution `@p` / `@!p`, `not/and/or/xor.pred` |
 | data movement | `mov` (incl. symbol addresses, special registers, vector pack/unpack), `cvt` (all int↔int, int↔float, float↔float, `.rni/.rzi/.rmi/.rpi`, `.sat`), `cvta[.to]` |
 | memory | `ld`, `st` (all state spaces, generic, `.v2/.v4`, sub-word sign/zero extension; cache qualifiers accepted), `atom` / `red` (`add exch cas min max and or xor inc dec`, integer and float `add`) |

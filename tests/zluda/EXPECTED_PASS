@@ -45,6 +45,9 @@ exit
 extern_shared
 extern_shared_call
 fma
+fma_bf16x2
+fma_f16x2
+fmax
 global_array
 global_array_f32
 ld_st
@@ -59,6 +62,7 @@ malformed_label
 max
 membar
 min
+min_f16
 mov
 mov_address
 mul24_hi_s32
@@ -91,6 +95,8 @@ rsqrt
 sad_s64
 selp
 selp_true
+set_f16
+set_gt_f16x2
 setp
 setp_bool_and
 setp_gt
@@ -125,6 +131,7 @@ sub_extended
 subc_cc_s32
 tanh
 tid
+uint_to_fp_bf16
 vector8
 vector_operand
 vshr_clamp

@@ -7,13 +7,14 @@ of PTX (.rn/.rz/.rm/.rp, .ftz, .sat).
 from fractions import Fraction
 from math import isqrt
 
-FMT = {16: (11, -14, 15, 5), 32: (24, -126, 127, 8), 64: (53, -1022, 1023, 11)}  # p, emin, emax, ebits
+FMT = {16: (11, -14, 15, 5), 32: (24, -126, 127, 8), 64: (53, -1022, 1023, 11), 116: (8, -126, 127, 8)}  # p, emin, emax, ebits
+CW = {16: 16, 32: 32, 64: 64, 116: 16}      # container width (116 = bfloat16)
 
-def canon_nan(w): return (1 << (w - 1)) - 1
+def canon_nan(w): return (1 << (CW[w] - 1)) - 1
 
 def classify(b, w):
     p, emin, emax, eb = FMT[w]
-    s = b >> (w - 1)
+    s = b >> (CW[w] - 1)
     e = (b >> (p - 1)) & ((1 << eb) - 1)
     m = b & ((1 << (p - 1)) - 1)
     if e == (1 << eb) - 1:
@@ -29,7 +30,7 @@ def is_subnormal(b, w):
     return ((b >> (p - 1)) & ((1 << eb) - 1)) == 0 and (b & ((1 << (p - 1)) - 1)) != 0
 
 def flush(b, w):
-    return b & (1 << (w - 1)) if is_subnormal(b, w) else b
+    return b & (1 << (CW[w] - 1)) if is_subnormal(b, w) else b
 
 def mag_to_bits(val, w):
     """bits of an exactly representable non-negative magnitude"""
@@ -100,7 +101,7 @@ def round_mag(q, sticky, mode, neg, w):
 def finish(q, sticky, neg, mode, w, ftz, sat):
     """q: exact signed value (Fraction) or None for special handled by caller"""
     mag = round_mag(abs(q), sticky, mode, neg, w)
-    return post((neg << (w - 1)) | mag, w, ftz, sat)
+    return post((neg << (CW[w] - 1)) | mag, w, ftz, sat)
 
 def post(b, w, ftz, sat):
     if ftz:
@@ -109,7 +110,7 @@ def post(b, w, ftz, sat):
         k, v, s = classify(b, w)
         if k == 'nan': return 0
         if k in ('zero',): return b          # sign of zero: callers avoid vectors where it matters
-        if k == 'inf': return (1 << (FMT[w][0] - 1)) * 0 + (0 if s else one_bits(w))
+        if k == 'inf': return 0 if s else one_bits(w)
         if s: return 0
         if v > 1: return one_bits(w)
     return b
@@ -119,9 +120,9 @@ def one_bits(w):
 
 def inf_bits(s, w):
     p, _, _, eb = FMT[w]
-    return (s << (w - 1)) | (((1 << eb) - 1) << (p - 1))
+    return (s << (CW[w] - 1)) | (((1 << eb) - 1) << (p - 1))
 
-def zero_bits(s, w): return s << (w - 1)
+def zero_bits(s, w): return s << (CW[w] - 1)
 
 def ref(op, args, mode, w, ftz=False, sat=False):
     args = [flush(a, w) if ftz else a for a in args]

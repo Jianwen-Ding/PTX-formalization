@@ -85,7 +85,12 @@ module PTX-COMMON
   rule bytes(ty(_, W)) => maxInt(W /Int 8, 1)
 
   syntax Bool ::= isF(Ty) [function, total] | isS(Ty) [function, total]
-  rule isF(ty(K, _)) => K ==String "f"
+  rule isF(ty(K, _)) => K in (SetItem("f") SetItem("bf") SetItem("tf"))
+  // format code for float types (see prec/ebits)
+  syntax Int ::= fw(Ty) [function, total]
+  rule fw(ty("bf", _)) => 116
+  rule fw(ty("tf", _)) => 132
+  rule fw(ty(_, W)) => W [owise]
   rule isS(ty(K, _)) => K ==String "s"
 
   syntax Ty ::= wide(Ty) [function, total]    // double-width version of a type
@@ -130,11 +135,19 @@ module PTX-COMMON
   syntax Int ::= prec(Int)  [function, total]
                | ebits(Int) [function, total]
                | fscale(Int) [function, total]  // log2 of 1/(smallest subnormal)
+  // format codes: 16 = binary16, 32 = binary32, 64 = binary64, 116 = bfloat16 (16-bit
+  // container), 132 = tf32 (binary32 container, 11-bit precision)
+  rule prec(116) => 8   rule ebits(116) => 8
+  rule prec(132) => 11  rule ebits(132) => 8
   rule prec(16) => 11   rule ebits(16) => 5
   rule prec(32) => 24   rule ebits(32) => 8
   rule prec(64) => 53   rule ebits(64) => 11
   rule prec(_)  => 53   [owise]
   rule ebits(_) => 11   [owise]
+  syntax Int ::= cw(Int) [function, total]          // container width of a format
+  rule cw(116) => 16
+  rule cw(132) => 32
+  rule cw(W) => W [owise]
   rule fscale(W) => prec(W) -Int 2 +Int ((1 <<Int (ebits(W) -Int 1)) -Int 1)
 
   // Wide-exponent working format: every binary16/32/64 value, scaled by
@@ -150,9 +163,11 @@ module PTX-COMMON
   rule pinf(W) => Int2Float(1, prec(W), ebits(W)) /Float Int2Float(0, prec(W), ebits(W))
   rule qnan(W) => Int2Float(0, prec(W), ebits(W)) /Float Int2Float(0, prec(W), ebits(W))
 
-  rule decodeF(B, W) => decodeAux((B >>Int (W -Int 1)) &Int 1,
+  rule decodeF(B, 132) => roundFloat(decodeF(B, 32), 11, 8)
+  rule decodeF(B, W) => decodeAux((B >>Int (cw(W) -Int 1)) &Int 1,
                                   (B >>Int (prec(W) -Int 1)) &Int mask(ebits(W)),
                                   B &Int mask(prec(W) -Int 1), W)
+    requires W =/=Int 132
   rule decodeAux(S, E, M, W) => #if M ==Int 0 #then signed(S, pinf(W)) #else qnan(W) #fi
     requires E ==Int mask(ebits(W))
   rule decodeAux(S, E, M, W) =>
@@ -171,9 +186,10 @@ module PTX-COMMON
   syntax Int ::= encodeF(Float, Int)        [function]   // value, width
                | encodeAux(Float, Int)      [function]
                | encFin(Int, Int, Int)      [function]   // sign, scaled magnitude, width
-  rule encodeF(F, W) => encodeAux(roundFloat(F, prec(W), ebits(W)), W)
-  rule encodeAux(F, W) => mask(W -Int 1) requires isNaN(F)            // canonical NaN
-  rule encodeAux(F, W) => (#if signFloat(F) #then 1 <<Int (W -Int 1) #else 0 #fi)
+  rule encodeF(F, 132) => encodeF(roundFloat(F, 11, 8), 32)
+  rule encodeF(F, W) => encodeAux(roundFloat(F, prec(W), ebits(W)), W) requires W =/=Int 132
+  rule encodeAux(F, W) => mask(cw(W) -Int 1) requires isNaN(F)            // canonical NaN
+  rule encodeAux(F, W) => (#if signFloat(F) #then 1 <<Int (cw(W) -Int 1) #else 0 #fi)
                           |Int (mask(ebits(W)) <<Int (prec(W) -Int 1))
     requires notBool isNaN(F) andBool isInfinite(F)
   rule encodeAux(F, W) =>
@@ -181,10 +197,10 @@ module PTX-COMMON
               Float2Int(roundFloat(absFloat(F), prec(W), WEXP)
                         *Float Int2Float(1 <<Int fscale(W), prec(W), WEXP)), W)
     requires notBool isNaN(F) andBool notBool isInfinite(F)
-  rule encFin(S, N, W) => (S <<Int (W -Int 1)) |Int N
+  rule encFin(S, N, W) => (S <<Int (cw(W) -Int 1)) |Int N
     requires N <Int (1 <<Int (prec(W) -Int 1))
   rule encFin(S, N, W) =>
-         (S <<Int (W -Int 1))
+         (S <<Int (cw(W) -Int 1))
     |Int ((log2Int(N) -Int prec(W) +Int 2) <<Int (prec(W) -Int 1))
     |Int ((N >>Int (log2Int(N) -Int (prec(W) -Int 1))) -Int (1 <<Int (prec(W) -Int 1)))
     [owise]
@@ -236,9 +252,9 @@ module PTX-COMMON
   rule hexStr(H) => Hex2String(H) [owise]
   rule hexBits(H, T) => hexBitsAux(substrString(hexStr(H), 1, 2),
                                    substrString(hexStr(H), 2, lengthString(hexStr(H))), T)
-  rule hexBitsAux(P, D, T) => encodeF(decodeF(String2Base(D, 16), 32), wid(T))
+  rule hexBitsAux(P, D, T) => encodeF(decodeF(String2Base(D, 16), 32), fw(T))
     requires (P ==String "f" orBool P ==String "F") andBool isF(T) andBool wid(T) =/=Int 32
-  rule hexBitsAux(P, D, T) => encodeF(decodeF(String2Base(D, 16), 64), wid(T))
+  rule hexBitsAux(P, D, T) => encodeF(decodeF(String2Base(D, 16), 64), fw(T))
     requires (P ==String "d" orBool P ==String "D") andBool isF(T) andBool wid(T) =/=Int 64
   rule hexBitsAux(P, D, T) => trunc(String2Base(D, 2), wid(T))
     requires P ==String "b" orBool P ==String "B"
@@ -247,9 +263,9 @@ module PTX-COMMON
   // integer / float literal interpreted at a type
   syntax Int ::= intLit(Int, Ty)   [function]
                | fltLit(Float, Ty) [function]
-  rule intLit(I, T) => encodeF(Int2Float(I, prec(wid(T)), ebits(wid(T))), wid(T)) requires isF(T)
+  rule intLit(I, T) => encodeF(Int2Float(I, prec(fw(T)), ebits(fw(T))), fw(T)) requires isF(T)
   rule intLit(I, T) => trunc(I, wid(T)) [owise]
-  rule fltLit(F, T) => encodeF(F, wid(T)) requires isF(T)
+  rule fltLit(F, T) => encodeF(F, fw(T)) requires isF(T)
   rule fltLit(F, T) => trunc(Float2Int(F), wid(T)) [owise]
 
   syntax Int ::= initBits(InitVal, Ty) [function]
@@ -259,7 +275,7 @@ module PTX-COMMON
 
   // ------------------------------------------------------------ formatting
   syntax String ::= fmtVal(Int, Ty) [function]
-  rule fmtVal(V, T) => fmtFloat(decodeF(V, wid(T))) requires isF(T)
+  rule fmtVal(V, T) => fmtFloat(decodeF(V, fw(T))) requires isF(T)
   rule fmtVal(V, T) => Int2String(ival(V, T)) [owise]
 
   // Human-readable rendering of K's "0.DDDDeXf" Float2String output,
