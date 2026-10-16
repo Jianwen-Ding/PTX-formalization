@@ -76,6 +76,12 @@ setp_pred2
 shared_ptr_32
 shared_ptr_take_address
 shared_variable
+shf_l
+shf_l_clamp
+shf_l_wrap
+shf_r
+shf_r_clamp
+shf_r_wrap
 shl
 shr
 shr_oob

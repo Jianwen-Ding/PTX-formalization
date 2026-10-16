@@ -94,7 +94,7 @@ module PTX-EXEC-BITS
   // ---------------------------------------------------------------- szext
   // szext.mode.type d, a, b : sign/zero-extend the low b bits of a
   syntax Int ::= szext(Bool, Ty, Int, Int) [function, total]       // clamp?, type, a, b
-  rule szext(true, T, A, B) => A requires B >=Int 32
+  rule szext(true, _, A, B) => A requires B >=Int 32
   rule szext(Clamp, T, A, B) => szextAux(T, A, #if Clamp #then B #else B &Int 31 #fi) [owise]
   syntax Int ::= szextAux(Ty, Int, Int) [function, total]
   rule szextAux(_, _, 0) => 0
@@ -141,4 +141,44 @@ module PTX-EXEC-BITS
        <regs> R => wr(R, D, prmt(pick(M, ListItem("f4e") ListItem("b4e") ListItem("rc8") ListItem("ecl")
                                          ListItem("ecr") ListItem("rc16"), ""),
                                  rd(A, ty("b", 32), C), rd(B, ty("b", 32), C), rd(Cn, ty("b", 32), C))) </regs>
+
+  // ---------------------------------------------------------------- lop3
+  // lop3.b32 d, a, b, c, immLut : d[i] = immLut[a[i]*4 + b[i]*2 + c[i]]
+  // lop3.BoolOp.b32 d|p, a, b, c, immLut, q : additionally p = (d != 0) BoolOp q
+  syntax Int ::= lop3(Int, Int, Int, Int) [function, total]
+  rule lop3(A, B, C, L) => lop3Bit(A, B, C, L, 0, 0)
+  syntax Int ::= lop3Bit(Int, Int, Int, Int, Int, Int) [function, total]     // ..., bit index, accumulator
+  rule lop3Bit(A, B, C, L, I, ACC) =>
+       lop3Bit(A, B, C, L, I +Int 1,
+               ACC |Int (bitAt(L, bitAt(A, I) *Int 4 +Int bitAt(B, I) *Int 2 +Int bitAt(C, I)) <<Int I))
+    requires I <Int 32
+  rule lop3Bit(_, _, _, _, _, ACC) => ACC [owise]
+
+  rule <tk> exec(opc("lop3", _, _), ops(D, A, B, Cn, L, .Operands), C) => .K ... </tk>
+       <regs> R => wr(R, D, lop3(rd(A, ty("b", 32), C), rd(B, ty("b", 32), C), rd(Cn, ty("b", 32), C),
+                                 rd(L, ty("b", 32), C))) </regs>
+    requires notBool isDual(D)
+  rule <tk> exec(opc("lop3", M, _), ops(D:Reg | P:Reg, A, B, Cn, L, Q, .Operands), C) => .K ... </tk>
+       <regs> R => wr(wr(R, D, lop3(rd(A, ty("b", 32), C), rd(B, ty("b", 32), C), rd(Cn, ty("b", 32), C), rd(L, ty("b", 32), C))),
+                      P, bopB(lop3(rd(A, ty("b", 32), C), rd(B, ty("b", 32), C), rd(Cn, ty("b", 32), C), rd(L, ty("b", 32), C)) =/=Int 0,
+                              M, rd(Q, ty("p", 1), C))) </regs>
+  syntax Bool ::= isDual(Operand) [function, total]
+  rule isDual(_:Reg | _:Reg) => true
+  rule isDual(_) => false [owise]
+  syntax Int ::= bopB(Bool, Set, Int) [function, total]
+  rule bopB(X, M, Q) => b2i(X andBool Q =/=Int 0) requires "and" in M
+  rule bopB(X, M, Q) => b2i(X orBool Q =/=Int 0)  requires "or" in M
+  rule bopB(X, _, _) => b2i(X) [owise]
+
+  // ---------------------------------------------------------------- shf
+  // shf.l/r.mode.b32 d, a, b, c : funnel shift of the 64-bit value {b:a} (b high)
+  syntax Int ::= shf(Bool, Bool, Int, Int, Int) [function, total]        // left?, clamp?, a, b, c
+  rule shf(Left, Clamp, A, B, C) => shfAux(Left, A |Int (B <<Int 32), #if Clamp #then minInt(C, 32) #else C &Int 31 #fi)
+  syntax Int ::= shfAux(Bool, Int, Int) [function, total]
+  rule shfAux(true,  V, S) => (((V <<Int S) &Int 18446744073709551615) >>Int 32) &Int 4294967295
+  rule shfAux(false, V, S) => (V >>Int S) &Int 4294967295
+
+  rule <tk> exec(opc("shf", M, _), ops(D, A, B, Cn, .Operands), C) => .K ... </tk>
+       <regs> R => wr(R, D, shf("l" in M, "clamp" in M, rd(A, ty("b", 32), C), rd(B, ty("b", 32), C),
+                                rd(Cn, ty("u", 32), C))) </regs>
 endmodule

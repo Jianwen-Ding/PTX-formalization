@@ -20,7 +20,7 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 ## 2. Integer
 - [x] 5 Extended precision: add.cc / addc / sub.cc / subc / mad.cc / madc
 - [x] 6 Bit-field and permute: bfe, bfi, bfind, fns, bmsk, szext, prmt
-- [ ] 7 lop3 and funnel shifts (shf)
+- [x] 7 lop3 and funnel shifts (shf)
 - [ ] 8 mul24/mad24, sad, dp4a/dp2a, .relu min/max, 16x2 SIMD integer ops
 - [ ] 9 set, slct, testp
 - [ ] 10 Video instructions (scalar and SIMD; lower priority)
