@@ -10,15 +10,15 @@ module PTX-EXEC-ALU
   // ------------------------------------------------------------ ALU
   rule <tk> exec(opc(OP, M, ListItem(T)), ops(D, A, B, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, bin(OP, M, T, rd(A, T, C), rd(B, src2Ty(OP, T), C))) </regs>
-    requires OP in BINOPS andBool notBool "cc" in M
+    requires OP in BINOPS andBool notBool "cc" in M andBool notBool isPacked(T)
 
   rule <tk> exec(opc(OP, M, ListItem(T)), ops(D, A, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, un(OP, M, T, rd(A, T, C))) </regs>
-    requires OP in UNOPS
+    requires OP in UNOPS andBool notBool isPacked(T)
 
   rule <tk> exec(opc(OP, M, ListItem(T)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, tern(OP, M, T, rd(A, T, C), rd(B, T, C), rd(X, src3Ty(OP, M, T), C))) </regs>
-    requires OP in TERNOPS andBool notBool "cc" in M
+    requires OP in TERNOPS andBool notBool "cc" in M andBool notBool isPacked(T)
 
   // setp.cmp[.bop].type  p[|q], a, b[, c]
   syntax Map ::= wrP(Map, Operand, Int, String, Int) [function, total]

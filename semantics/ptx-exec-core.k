@@ -53,6 +53,10 @@ module PTX-EXEC-CORE
     requires isS(T) andBool wid(T) <Int regW(RW, D)
   rule extReg(V, _, _, _) => V [owise]
 
+  // packed 2x16-bit types are handled lane-wise by dedicated rules
+  syntax Bool ::= isPacked(Ty) [function, total]
+  rule isPacked(ty(K, _)) => K in (SetItem("s16x2") SetItem("u16x2") SetItem("f16x2") SetItem("bf16x2"))
+
   syntax Bool ::= isRegName(Name, Ctx) [function, total]
   rule isRegName(N, ctx(_, _, _, _, RW)) => Name2String(N) in_keys(RW)
 

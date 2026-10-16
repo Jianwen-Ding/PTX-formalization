@@ -32,6 +32,8 @@ cvt_sat_s_u
 cvta
 div_ftz
 div_noftz
+dp2a
+dp4a
 exit
 extern_shared
 extern_shared_call
@@ -49,6 +51,10 @@ membar
 min
 mov
 mov_address
+mul24_hi_s32
+mul24_hi_u32
+mul24_lo_s32
+mul24_lo_u32
 mul_ftz
 mul_lo
 mul_non_ftz
@@ -66,6 +72,7 @@ prmt_signext
 prmt_slow
 reg_multi
 rem
+sad_s64
 selp
 selp_true
 setp

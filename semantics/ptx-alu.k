@@ -36,6 +36,11 @@ module PTX-ALU
   rule src2Ty("shr", _) => ty("u", 32)
   rule src2Ty(_, T) => T [owise]
 
+  // .relu on integer min/max: negative results become 0
+  syntax Int ::= relu(Set, Ty, Int) [function, total]
+  rule relu(M, T, V) => 0 requires "relu" in M andBool isS(T) andBool ival(V, T) <Int 0
+  rule relu(_, _, V) => V [owise]
+
   syntax Int ::= bin(String, Set, Ty, Int, Int) [function]
   // floating point
   rule bin("add", M, T, A, B) => fpAdd(M, wid(T), A, B) requires isF(T)
@@ -64,8 +69,8 @@ module PTX-ALU
   rule bin("rem", _, T, A, B) => #if ival(B, T) ==Int 0 #then A
                                  #else trunc(ival(A, T) %Int ival(B, T), wid(T)) #fi
     requires notBool isF(T)
-  rule bin("min", _, T, A, B) => #if ival(A, T) <=Int ival(B, T) #then A #else B #fi requires notBool isF(T)
-  rule bin("max", _, T, A, B) => #if ival(A, T) >=Int ival(B, T) #then A #else B #fi requires notBool isF(T)
+  rule bin("min", M, T, A, B) => relu(M, T, #if ival(A, T) <=Int ival(B, T) #then A #else B #fi) requires notBool isF(T)
+  rule bin("max", M, T, A, B) => relu(M, T, #if ival(A, T) >=Int ival(B, T) #then A #else B #fi) requires notBool isF(T)
   rule bin("and", _, _, A, B) => A &Int B
   rule bin("or",  _, _, A, B) => A |Int B
   rule bin("xor", _, _, A, B) => A xorInt B

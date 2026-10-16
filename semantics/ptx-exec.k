@@ -22,6 +22,7 @@ requires "ptx-exec-sync.k"
 requires "ptx-exec-coll.k"
 requires "ptx-exec-int.k"
 requires "ptx-exec-bits.k"
+requires "ptx-exec-intx.k"
 
 module PTX-EXEC
   imports PTX-EXEC-CORE
@@ -32,6 +33,7 @@ module PTX-EXEC
   imports PTX-EXEC-COLL
   imports PTX-EXEC-INT
   imports PTX-EXEC-BITS
+  imports PTX-EXEC-INTX
 
   // anything else is outside the modelled subset
   rule <tk> exec(O, _, _) => #unsupported(O) ... </tk> [owise]
