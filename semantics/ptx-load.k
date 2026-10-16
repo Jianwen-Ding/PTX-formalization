@@ -132,6 +132,11 @@ module PTX-LOAD
 
   rule pp1(N:Name :, pps(C, I, L, RW, SH)) => pps(C, I, L[Name2String(N) <- I], RW, SH)
   rule pp1(N:Name Os:Operands ;, P) => emit(ins(noG, decodeOpc(Name2String(N)), Os), P)
+  rule pp1(N:QName Os:Operands ;, P) => emit(ins(noG, decodeOpc(QName2String(N)), Os), P)
+  rule pp1(@ R:Reg N:QName Os:Operands ;, P) => emit(ins(g(Reg2String(R), false), decodeOpc(QName2String(N)), Os), P)
+  rule pp1(@ ! R:Reg N:QName Os:Operands ;, P) => emit(ins(g(Reg2String(R), true), decodeOpc(QName2String(N)), Os), P)
+  rule pp1(@ G:Name N:QName Os:Operands ;, P) => emit(ins(g(Name2String(G), false), decodeOpc(QName2String(N)), Os), P)
+  rule pp1(@ ! G:Name N:QName Os:Operands ;, P) => emit(ins(g(Name2String(G), true), decodeOpc(QName2String(N)), Os), P)
   rule pp1(@ R:Reg N:Name Os:Operands ;, P) =>
        emit(ins(g(Reg2String(R), false), decodeOpc(Name2String(N)), Os), P)
   rule pp1(@ ! R:Reg N:Name Os:Operands ;, P) =>

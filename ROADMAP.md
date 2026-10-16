@@ -29,11 +29,11 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 - [x] 11 f32/f64 rounding modes and modifiers (.rz/.rm/.rp, .ftz, .sat, .relu, .NaN, .xorsign.abs, approx variants)
 - [x] 12 f16 / f16x2 / bf16 / bf16x2 arithmetic
 - [x] 13 Complete cvt matrix (tf32, .rna, .satfinite, packing, cvt.pack, cvt.rs) (after 12)
-- [ ] 14 FP8 / FP6 / FP4 / UE8M0 conversions (after 12)
+- [x] 14 FP8 / FP6 / FP4 / UE8M0 conversions (after 12)
 
 ## 4. Warp-level and synchronisation (after 3)
-- [ ] 15 shfl.sync
-- [ ] 16 vote.sync, activemask, match.sync, elect.sync, redux.sync
+- [x] 15 shfl.sync
+- [x] 16 vote.sync, activemask, match.sync, elect.sync, redux.sync
 - [ ] 17 Barrier variants (bar.warp.sync, bar.red, barrier.cta.*)
 
 ## 5. Matrix (after 3, 12)

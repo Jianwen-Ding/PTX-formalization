@@ -1,4 +1,5 @@
 abs
+activemask
 add
 add_extended
 add_non_coherent
@@ -26,7 +27,15 @@ constant_f32
 constant_negative
 copysign
 cos
+cvt_f16x2_f32
 cvt_f64_f32
+cvt_pack
+cvt_relu_f16x2_f32
+cvt_rn_bf16x2_f32
+cvt_rn_f16x2_e4m3x2
+cvt_rn_f16x2_e5m2x2
+cvt_rn_satfinite_e4m3x2_f32
+cvt_rn_satfinite_e5m2x2_f32
 cvt_rni
 cvt_rni_u16_f32
 cvt_rzi
@@ -59,6 +68,7 @@ mad_extended
 mad_s32
 mad_wide
 malformed_label
+match_sync
 max
 membar
 min
@@ -89,6 +99,9 @@ prmt_signext
 prmt_slow
 rcp
 rcp_f64
+redux_sync_add_u32_partial
+redux_sync_op_s32
+redux_sync_op_u32
 reg_multi
 rem
 rsqrt
@@ -113,6 +126,15 @@ shf_l_wrap
 shf_r
 shf_r_clamp
 shf_r_wrap
+shfl_sync_bfly_b32_pred
+shfl_sync_bfly_dynamic_delta_b32_pred
+shfl_sync_down_b32_pred
+shfl_sync_down_dynamic_delta_b32_pred
+shfl_sync_idx_b32_pred
+shfl_sync_idx_dynamic_delta_b32_pred
+shfl_sync_mode_b32
+shfl_sync_up_b32_pred
+shfl_sync_up_dynamic_delta_b32_pred
 shl
 shr
 shr_oob
@@ -134,6 +156,9 @@ tid
 uint_to_fp_bf16
 vector8
 vector_operand
+vote_all
+vote_any
+vote_ballot
 vshr_clamp
 warp_sz
 xor

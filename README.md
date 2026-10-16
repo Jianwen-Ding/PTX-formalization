@@ -138,6 +138,8 @@ generic and state-space addresses. Accesses to global addresses below 4096
 | data movement | `mov` (incl. symbol addresses, special registers, vector pack/unpack), `cvt` (int↔int, int↔float, float↔float over f16/bf16/f32/f64/tf32 with `.rn/.rz/.rm/.rp/.rna`, `.rni/.rzi/.rmi/.rpi`, `.ftz`, `.sat`, `.relu`, `.satfinite`; packed `cvt.rn.f16x2.f32`/`bf16x2`; `cvt.pack.sat`), `cvta[.to]` |
 | memory | `ld`, `st` (all state spaces, generic, `.v2/.v4`, sub-word sign/zero extension; cache qualifiers accepted), `atom` / `red` (`add exch cas min max and or xor inc dec`, integer and float `add`) |
 | control | `bra`, `call` (nvcc `.param` calling convention, recursion), `ret`, `exit`, `trap` |
+| warp-level | `shfl.sync` (all modes, predicate output), `vote.sync.{all,any,uni,ballot}`, `match.sync`, `elect.sync`, `redux.sync` (int and f32), `activemask` |
+| low precision | `cvt` to/from fp8 (`e4m3`, `e5m2`), fp6 (`e2m3`, `e3m2`), fp4 (`e2m1`) and `ue8m0` pairs |
 | synchronisation | `bar.sync` / `barrier.sync` (with optional thread count), `bar.arrive`; `membar`/`fence` are no-ops under SC; `bar.warp.sync` is a no-op |
 
 Syntax accepted includes `.visible/.extern/.weak` linkage, `.align`,
@@ -147,8 +149,7 @@ Syntax accepted includes `.visible/.extern/.weak` linkage, `.align`,
 
 Video instructions (`vadd vsub vabsdiff vmin vmax vshl vshr vset`, SIMD `v*2`/`v*4`) are modelled best-effort from the ISA text (only `vshr` is hardware-checked); `vmad`, `.mask` destinations and permuting SIMD selectors are not modelled.
 
-**Not (yet) modelled:** warp-synchronous operations (`shfl`, `vote`,
-`match`, `activemask`, `redux`), textures and surfaces, `bfe/bfi/prmt`,
+**Not (yet) modelled:** `vote.sync` with a membermask larger than the set of lanes that actually reach it (ZLUDA's vote_all_sub; the rendezvous waits for every named lane), textures and surfaces, `bfe/bfi/prmt`,
 `addc/subc` carry chains, `f16x2`/`bf16`, tensor-core instructions, clusters,
 asynchronous copies, and the PTX weak memory model (scopes and orders are
 accepted but behave as SC). An instruction outside the subset gets stuck as

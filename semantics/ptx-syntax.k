@@ -24,7 +24,11 @@ module PTX-SYNTAX
   syntax #Layout ::= r"(\\/\\*([^\\*]|(\\*+([^\\*\\/])))*\\*+\\/)|(\\/\\/[^\\n\\r]*)|([\\ \\n\\r\\t])"
 
   // Identifiers; dotted forms are used for opcodes (add.s32, ld.global.u32 ...)
-  syntax Name   ::= r"[a-zA-Z_$][a-zA-Z0-9_$]*((\\.|::)[a-zA-Z0-9_$]+)*" [token]
+  syntax Name   ::= r"[a-zA-Z_$][a-zA-Z0-9_$]*(\\.[a-zA-Z0-9_$]+)*" [token]
+  // opcodes with `::` qualifiers (ld.shared::cta.u32, mbarrier.arrive.expect_tx.shared::cta.b64): a
+  // separate token that needs a lower-case start and at least one `::`, so that K's own `X::Sort`
+  // variable syntax in the builtin modules is not affected
+  syntax QName  ::= r"[a-z][a-zA-Z0-9_]*(\\.[a-zA-Z0-9_]+)*::[a-zA-Z0-9_]+((\\.|::)[a-zA-Z0-9_]+)*" [token]
   // Registers, including special registers such as %tid.x or %ctaid.y
   syntax Reg    ::= r"%[a-zA-Z_$][a-zA-Z0-9_$]*(\\.[a-zA-Z][a-zA-Z0-9]*)?" [token]
   // 0x1F (hex integer), 0b101 (binary), 0f3F800000 (f32 bit pattern),
@@ -71,6 +75,7 @@ module PTX-SYNTAX
   // ---------------------------------------------------------------- statements
   syntax Guard ::= "@" Reg | "@" "!" Reg | "@" Name | "@" "!" Name
   syntax Instr ::= Name Operands ";"
+                 | QName Operands ";"
 
   syntax DAttr  ::= ".visible" | ".extern" | ".weak" | ".common"
                   | ".global" | ".shared" | ".local" | ".const" | ".param" | ".reg"

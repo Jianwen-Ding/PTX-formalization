@@ -86,6 +86,7 @@ module PTX-CONFIGURATION
           <barExp> .Map </barExp>
           <barGen> .Map </barGen>
           <colls> .Map </colls>
+          <wlive> .Map </wlive>                 // warp |-> mask of lanes that have not exited
           <threads>
             <thread multiplicity="*" type="Map">
               <tid> 0 </tid>

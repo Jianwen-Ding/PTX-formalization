@@ -19,6 +19,7 @@ module PTX-COMMON
 
   // ------------------------------------------------------------ token -> string
   syntax String ::= Name2String(Name)     [function, total, hook(STRING.token2string)]
+                  | QName2String(QName)   [function, total, hook(STRING.token2string)]
                   | Reg2String(Reg)       [function, total, hook(STRING.token2string)]
                   | Hex2String(HexLit)    [function, total, hook(STRING.token2string)]
 
@@ -116,6 +117,11 @@ module PTX-COMMON
   rule minOf(T) => #if isS(T) #then 0 -Int (1 <<Int (wid(T) -Int 1)) #else 0 #fi
   rule maxOf(T) => #if isS(T) #then (1 <<Int (wid(T) -Int 1)) -Int 1 #else mask(wid(T)) #fi
   rule clamp(V, T) => minInt(maxInt(V, minOf(T)), maxOf(T))
+
+  // single set bit; used instead of parenthesised shifts in rule bodies, where "( ... )" can be
+  // parsed as the call-argument operand "(" Operands ")" of the PTX grammar
+  syntax Int ::= laneBit(Int) [function, total]
+  rule laneBit(L) => 1 <<Int L
 
   syntax Int ::= popc(Int)          [function, total]
                | brev(Int, Int)     [function, total]

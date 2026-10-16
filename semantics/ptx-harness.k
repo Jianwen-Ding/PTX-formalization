@@ -128,6 +128,7 @@ module PTX-HARNESS
        <funcs> ... K |-> fdef(_, _, _, _, _, FRW) ... </funcs>
        <cta>
          <ctaid> C </ctaid>
+         <wlive> WL => WL[T /Int 32 <- orBits({WL[T /Int 32] orDefault 0}:>Int, laneBit(T %Int 32))] </wlive>
          <threads> ... .Bag =>
            <thread>
              <tid> T </tid>
@@ -155,6 +156,8 @@ module PTX-HARNESS
        lanemasks(T %Int 32)
        "%laneid" |-> T %Int 32  "%warpid" |-> T /Int 32  "%nwarpid" |-> (vol(BD) +Int 31) /Int 32
        "%smid" |-> 0  "%gridid" |-> 0  "%clock" |-> 0  "%clock64" |-> 0  "%warpsize" |-> 32
+  syntax Int ::= orBits(Int, Int) [function, total]
+  rule orBits(A, B) => A |Int B
   syntax Map ::= lanemasks(Int) [function, total]
   // note: operands in `(...)` are avoided at value positions here, because the
   // PTX grammar's call-argument production "(" Operands ")" makes them ambiguous

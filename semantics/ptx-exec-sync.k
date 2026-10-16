@@ -12,6 +12,8 @@ module PTX-EXEC-SYNC
   // A thread arriving at barrier `a` records the barrier's current generation;
   // once the expected number of threads (b, or all live threads of the CTA)
   // has arrived the generation is bumped, releasing every waiter.
+  syntax Int ::= clearBit(Int, Int) [function, total]
+  rule clearBit(M, L) => M &Int ~Int laneBit(L)
   syntax KItem ::= #bar(Int, Int, Bool)            // id, expected (-1: all), wait?
                  | #barCheck(Int) | #barCheckAll(List)
 
@@ -43,6 +45,8 @@ module PTX-EXEC-SYNC
 
   // ------------------------------------------------------------ thread exit
   rule <tk> #exit => #barCheckAll(keys_list(BC)) ~> #die ... </tk>
+       <tid> T </tid>
+       <wlive> WL => WL[T /Int 32 <- clearBit({WL[T /Int 32] orDefault 0}:>Int, T %Int 32)] </wlive>
        <live> L => L -Int 1 </live>
        <barCnt> BC </barCnt>
   rule <tk> #barCheckAll(ListItem(B:Int) Bs) => #barCheck(B) ~> #barCheckAll(Bs) ... </tk>
