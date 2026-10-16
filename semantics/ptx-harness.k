@@ -65,6 +65,13 @@ module PTX-HARNESS
        <bufs> B => B[N <- buf(alignUp(G, 256), T, C)] </bufs>
        <gmem> M => initMem(M, alignUp(G, 256), T, Vs) </gmem>
 
+  rule <k> .append N T = { Vs } ; => .K ... </k>
+       <syms> ... N |-> sym(_, A) ... </syms>
+       <bufs> ... N |-> buf(A, T0, C => C +Int size(ivList(Vs))) ... </bufs>
+       <gtop> G => maxInt(G, A +Int (C +Int size(ivList(Vs))) *Int bytes(T0)) </gtop>
+       <gmem> M => initMem(M, A +Int C *Int bytes(T0), T0, ivList(Vs)) </gmem>
+    requires typeOf(T) ==K T0
+
   // ------------------------------------------------------------ launch
   syntax Dim3 ::= dimOf(Dim) [function, total]
   rule dimOf(X:Int) => dim3(X, 1, 1)
@@ -199,16 +206,18 @@ module PTX-HARNESS
   rule fmtList(M, A, T, N) => fmtVal(readBytes(M, A, bytes(T)), T) +String ", " +String fmtList(M, A +Int bytes(T), T, N -Int 1)
     requires N >Int 1
 
-  rule <k> .expect N T = { Vs } ; => #expect(Name2String(N), typeOf(T), ivList(Vs)) ... </k>
-  rule <k> #expect(N, T, Vs) => .K ... </k>
-       <syms> ... N |-> sym(_, A) ... </syms> <gmem> M </gmem>
+  rule <k> .expect N T = { Vs } ; => #expect(Name2String(N), typeOf(T), ivList(Vs), 0) ... </k>
+  rule <k> .expect N T @ O = { Vs } ; => #expect(Name2String(N), typeOf(T), ivList(Vs), O) ... </k>
+  syntax KItem ::= #expect(String, Ty, List, Int)
+  rule <k> #expect(N, T, Vs, O) => .K ... </k>
+       <syms> ... N |-> sym(_, A0) ... </syms> <gmem> M </gmem>
        <out> ... .List => ListItem("PASS " +String N +String "\n") </out>
-    requires mismatches(M, A, T, Vs, 0) ==String ""
-  rule <k> #expect(N, T, Vs) => .K ... </k>
-       <syms> ... N |-> sym(_, A) ... </syms> <gmem> M </gmem>
+    requires mismatches(M, A0 +Int O *Int bytes(T), T, Vs, O) ==String ""
+  rule <k> #expect(N, T, Vs, O) => .K ... </k>
+       <syms> ... N |-> sym(_, A0) ... </syms> <gmem> M </gmem>
        <fails> F => F +Int 1 </fails>
-       <out> ... .List => ListItem("FAIL " +String N +String "\n" +String mismatches(M, A, T, Vs, 0)) </out>
-    requires mismatches(M, A, T, Vs, 0) =/=String ""
+       <out> ... .List => ListItem("FAIL " +String N +String "\n" +String mismatches(M, A0 +Int O *Int bytes(T), T, Vs, O)) </out>
+    requires mismatches(M, A0 +Int O *Int bytes(T), T, Vs, O) =/=String ""
 
   syntax String ::= mismatches(Bytes, Int, Ty, List, Int) [function]
   rule mismatches(_, _, _, .List, _) => ""

@@ -35,6 +35,13 @@ module PTX-EXEC-COLL
   // default: every lane gets back its own contribution
   rule collCompute(_, _, Arr) => Arr [owise]
 
+  // collectives whose kind starts with "wg" rendezvous the 128 threads of a warpgroup
+  syntax Int ::= collW(String) [function, total]
+  syntax String ::= ckKind(CollKey) [function, total]
+  rule collW(K) => 128 requires findString(K, "wg", 0) ==Int 0
+  rule collW(_) => 32 [owise]
+  rule ckKind(ck(_, K, _, _)) => K
+
   syntax Coll ::= collArrive(Map, CollKey, String, List, Int, Int, List) [function, total]
   rule collArrive(Cs, Key, K, D, M, L, Cn) =>
        collFinish(K, D, M, arrivals(Cs, Key)[L <- Cn])
@@ -52,15 +59,15 @@ module PTX-EXEC-COLL
   syntax String  ::= seqKey(String, Int) [function, total]
   syntax CollKey ::= mkKey(Int, String, Int, Map) [function, total]
   rule seqKey(K, M) => K +String ":" +String Int2String(M)
-  rule mkKey(T, K, M, CS) => ck(T /Int 32, K, M, {CS[seqKey(K, M)] orDefault 0}:>Int)
+  rule mkKey(T, K, M, CS) => ck(T /Int collW(K), K, M, {CS[seqKey(K, M)] orDefault 0}:>Int)
   rule <tk> #coll(K, M, D, Cn, Ds) => #yield ~> #collWait(mkKey(T, K, M, CS), Ds) ... </tk>
        <tid> T </tid>
        <cseq> CS => CS[seqKey(K, M) <- {CS[seqKey(K, M)] orDefault 0}:>Int +Int 1] </cseq>
-       <colls> Cs => Cs[mkKey(T, K, M, CS) <- collArrive(Cs, mkKey(T, K, M, CS), K, D, M, T %Int 32, Cn)] </colls>
-    requires ((M >>Int (T %Int 32)) &Int 1) ==Int 1
-  rule <tk> #coll(_, M, _, _, _) => #fault("lane not in membermask", M) ... </tk>
+       <colls> Cs => Cs[mkKey(T, K, M, CS) <- collArrive(Cs, mkKey(T, K, M, CS), K, D, M, T %Int collW(K), Cn)] </colls>
+    requires ((M >>Int (T %Int collW(K))) &Int 1) ==Int 1
+  rule <tk> #coll(K, M, _, _, _) => #fault("lane not in membermask", M) ... </tk>
        <tid> T </tid>
-    requires ((M >>Int (T %Int 32)) &Int 1) ==Int 0
+    requires ((M >>Int (T %Int collW(K))) &Int 1) ==Int 0
 
   // the instance is complete once results exist; each lane takes its own
   syntax Map ::= collWrite(Map, List, List) [function, total]
@@ -74,15 +81,15 @@ module PTX-EXEC-COLL
   rule <tk> #collWait(Key, Ds) => .K ... </tk>
        <tid> T </tid>
        <turn> -1 </turn>
-       <regs> R => collWrite(R, Ds, laneRes(Res, T %Int 32)) </regs>
+       <regs> R => collWrite(R, Ds, laneRes(Res, T %Int collW(ckKind(Key)))) </regs>
        <colls> ... Key |-> coll(_, _, M, _, Res, Cn => Cn +Int 1) ... </colls>
-    requires laneRes(Res, T %Int 32) =/=K .List andBool Cn +Int 1 <Int popc(M)
+    requires laneRes(Res, T %Int collW(ckKind(Key))) =/=K .List andBool Cn +Int 1 <Int popc(M)
   rule <tk> #collWait(Key, Ds) => .K ... </tk>
        <tid> T </tid>
        <turn> -1 </turn>
-       <regs> R => collWrite(R, Ds, laneRes(Res, T %Int 32)) </regs>
+       <regs> R => collWrite(R, Ds, laneRes(Res, T %Int collW(ckKind(Key)))) </regs>
        <colls> ... Key |-> coll(_, _, M, _, Res, Cn) => .Map ... </colls>
-    requires laneRes(Res, T %Int 32) =/=K .List andBool Cn +Int 1 ==Int popc(M)
+    requires laneRes(Res, T %Int collW(ckKind(Key))) =/=K .List andBool Cn +Int 1 ==Int popc(M)
 
   // ---------------------------------------------------------------- self-test
   // coll_test.sum.u32 d, a, mask   : d = sum of a over the lanes in mask

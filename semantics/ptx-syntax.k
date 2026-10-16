@@ -159,6 +159,8 @@ module PTX-SYNTAX
                       | ".print" Name Type ";"
                       | ".print" Name Type Int ";"
                       | ".expect" Name Type "=" "{" InitVals "}" ";"
+                      | ".expect" Name Type "@" Int "=" "{" InitVals "}" ";"     // from element offset
+                      | ".append" Name Type "=" "{" InitVals "}" ";"            // extend the most recent buffer (keeps text small)
 
   // ---------------------------------------------------------------- modules
   syntax Names   ::= NeList{Name, ","}
