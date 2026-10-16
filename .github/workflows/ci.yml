@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    env:
+      K_VERSION: 7.1.337
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the K Framework
+        run: |
+          deb="kframework_${K_VERSION}_amd64_ubuntu_noble.deb"
+          curl -fsSL -o "/tmp/$deb" \
+            "https://github.com/runtimeverification/k/releases/download/v${K_VERSION}/$deb"
+          sudo apt-get update
+          sudo apt-get install -y "/tmp/$deb"
+          kompile --version
+
+      - name: Build semantics
+        run: make build
+
+      - name: Tests
+        run: make test
+
+      - name: Differential IEEE-754 fuzzing
+        run: make fuzz SEEDS="1 2 3 4"
+
+      - name: Interleaving exploration examples
+        run: make examples

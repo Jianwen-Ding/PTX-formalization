@@ -1,0 +1,109 @@
+// Device function calls using the PTX calling convention emitted by nvcc
+// (.param argument/return variables in nested call scopes), recursion, and
+// per-thread local memory accessed through generic addresses.
+.version 8.0
+.target sm_80
+.address_size 64
+
+.visible .func  (.param .b32 func_retval0) _Z3addii(
+    .param .b32 _Z3addii_param_0,
+    .param .b32 _Z3addii_param_1
+)
+{
+    .reg .b32   %r<4>;
+    ld.param.u32    %r1, [_Z3addii_param_0];
+    ld.param.u32    %r2, [_Z3addii_param_1];
+    add.s32         %r3, %r2, %r1;
+    st.param.b32    [func_retval0+0], %r3;
+    ret;
+}
+
+// recursive factorial
+.visible .func  (.param .b64 func_retval0) _Z4factm(
+    .param .b64 _Z4factm_param_0
+)
+{
+    .reg .pred  %p<2>;
+    .reg .b64   %rd<6>;
+    ld.param.u64    %rd1, [_Z4factm_param_0];
+    setp.gt.u64     %p1, %rd1, 1;
+    @%p1 bra        $L__rec;
+    mov.u64         %rd5, 1;
+    st.param.b64    [func_retval0+0], %rd5;
+    ret;
+$L__rec:
+    add.s64         %rd2, %rd1, -1;
+    {
+    .param .b64 param0;
+    st.param.b64    [param0+0], %rd2;
+    .param .b64 retval0;
+    call.uni (retval0), _Z4factm, (param0);
+    ld.param.b64    %rd3, [retval0+0];
+    }
+    mul.lo.s64      %rd4, %rd3, %rd1;
+    st.param.b64    [func_retval0+0], %rd4;
+    ret;
+}
+
+// void fill(int *out): each thread computes add(tid, 100), fact(tid) and
+// round-trips a value through a local array addressed generically
+.visible .entry _Z4fillPiPl(
+    .param .u64 _Z4fillPiPl_param_0,
+    .param .u64 _Z4fillPiPl_param_1
+)
+{
+    .local .align 8 .b8     __local_depot2[16];
+    .reg .b64   %SP;
+    .reg .b64   %SPL;
+    .reg .b32   %r<8>;
+    .reg .b64   %rd<12>;
+
+    mov.u64         %SPL, __local_depot2;
+    cvta.local.u64  %SP, %SPL;
+    ld.param.u64    %rd1, [_Z4fillPiPl_param_0];
+    ld.param.u64    %rd2, [_Z4fillPiPl_param_1];
+    cvta.to.global.u64 %rd3, %rd1;
+    cvta.to.global.u64 %rd4, %rd2;
+    mov.u32         %r1, %tid.x;
+    mov.u32         %r2, 100;
+    { // callseq 0, 0
+    .reg .b32 temp_param_reg;
+    .param .b32 param0;
+    st.param.b32    [param0+0], %r1;
+    .param .b32 param1;
+    st.param.b32    [param1+0], %r2;
+    .param .b32 retval0;
+    call.uni (retval0), _Z3addii, (param0, param1);
+    ld.param.b32    %r3, [retval0+0];
+    } // callseq 0
+
+    // local memory: store through the generic pointer, reload via .local
+    add.u64         %rd5, %SP, 4;
+    st.u32          [%rd5], %r3;
+    ld.local.u32    %r4, [%SPL+4];
+
+    mul.wide.u32    %rd6, %r1, 4;
+    add.s64         %rd7, %rd3, %rd6;
+    st.global.u32   [%rd7], %r4;
+
+    cvt.u64.u32     %rd8, %r1;
+    {
+    .param .b64 param0;
+    st.param.b64    [param0+0], %rd8;
+    .param .b64 retval0;
+    call.uni (retval0), _Z4factm, (param0);
+    ld.param.b64    %rd9, [retval0+0];
+    }
+    mul.wide.u32    %rd10, %r1, 8;
+    add.s64         %rd11, %rd4, %rd10;
+    st.global.u64   [%rd11], %rd9;
+    ret;
+}
+
+.buffer OUT .s32 [6];
+.buffer FACT .s64 [6];
+.launch _Z4fillPiPl <<< 1, 6 >>> (OUT, FACT);
+.print OUT .s32;
+.print FACT .s64;
+.expect OUT .s32 = { 100, 101, 102, 103, 104, 105 };
+.expect FACT .s64 = { 1, 1, 2, 6, 24, 120 };

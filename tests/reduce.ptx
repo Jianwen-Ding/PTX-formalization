@@ -1,0 +1,72 @@
+// Tree reduction in shared memory with __syncthreads (bar.sync), one partial
+// sum per CTA.  Shape follows nvcc output for the classic reduction kernel.
+.version 8.0
+.target sm_80
+.address_size 64
+
+.visible .entry _Z6reducePKfPf(
+    .param .u64 _Z6reducePKfPf_param_0,
+    .param .u64 _Z6reducePKfPf_param_1
+)
+{
+    .reg .pred  %p<5>;
+    .reg .f32   %f<6>;
+    .reg .b32   %r<16>;
+    .reg .b64   %rd<9>;
+    // __shared__ float sdata[256];
+    .shared .align 4 .b8 _ZZ6reducePKfPfE5sdata[1024];
+
+    ld.param.u64        %rd2, [_Z6reducePKfPf_param_0];
+    ld.param.u64        %rd3, [_Z6reducePKfPf_param_1];
+    cvta.to.global.u64  %rd4, %rd2;
+    mov.u32             %r1, %tid.x;
+    mov.u32             %r6, %ctaid.x;
+    mov.u32             %r2, %ntid.x;
+    mad.lo.s32          %r7, %r6, %r2, %r1;
+    mul.wide.u32        %rd5, %r7, 4;
+    add.s64             %rd6, %rd4, %rd5;
+    ld.global.f32       %f1, [%rd6];
+    shl.b32             %r8, %r1, 2;
+    mov.u32             %r9, _ZZ6reducePKfPfE5sdata;
+    add.s32             %r3, %r9, %r8;
+    st.shared.f32       [%r3], %f1;
+    bar.sync            0;
+    shr.u32             %r15, %r2, 1;
+    setp.eq.s32         %p1, %r15, 0;
+    @%p1 bra            $L__BB0_5;
+
+$L__BB0_2:
+    setp.ge.u32         %p2, %r1, %r15;
+    @%p2 bra            $L__BB0_4;
+    shl.b32             %r10, %r15, 2;
+    add.s32             %r11, %r3, %r10;
+    ld.shared.f32       %f2, [%r11];
+    ld.shared.f32       %f3, [%r3];
+    add.f32             %f4, %f3, %f2;
+    st.shared.f32       [%r3], %f4;
+
+$L__BB0_4:
+    bar.sync            0;
+    shr.u32             %r15, %r15, 1;
+    setp.ne.s32         %p3, %r15, 0;
+    @%p3 bra            $L__BB0_2;
+
+$L__BB0_5:
+    setp.ne.s32         %p4, %r1, 0;
+    @%p4 bra            $L__BB0_7;
+    ld.shared.f32       %f5, [_ZZ6reducePKfPfE5sdata];
+    cvta.to.global.u64  %rd7, %rd3;
+    mul.wide.u32        %rd8, %r6, 4;
+    add.s64             %rd1, %rd7, %rd8;
+    st.global.f32       [%rd1], %f5;
+
+$L__BB0_7:
+    ret;
+}
+
+.buffer IN .f32 = { 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
+                    10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0 };
+.buffer OUT .f32 [2];
+.launch _Z6reducePKfPf <<< 2, 8 >>> (IN, OUT);
+.print OUT .f32;
+.expect OUT .f32 = { 36.0, 360.0 };

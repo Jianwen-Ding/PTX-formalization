@@ -1,0 +1,28 @@
+// Barrier deadlock: even threads wait on barrier 0, odd threads on barrier 1.
+// Each barrier expects every live thread of the CTA, so neither completes.
+// krun stops with all threads `waiting(...)`, the harness stuck at
+// `#waitGrid`, and exit code 1.
+//
+// (Threads that *exit* stop counting towards a barrier, as on current GPUs,
+//  so `@%p bra skip; bar.sync 0; skip: ret;` does not deadlock.)
+.version 8.0
+.target sm_80
+.address_size 64
+
+.visible .entry split_barriers()
+{
+    .reg .pred %p<2>;
+    .reg .b32  %r<3>;
+    mov.u32         %r1, %tid.x;
+    and.b32         %r2, %r1, 1;
+    setp.ne.u32     %p1, %r2, 0;
+    @%p1 bra        $L__odd;
+    bar.sync        0;
+    bra.uni         $L__done;
+$L__odd:
+    bar.sync        1;
+$L__done:
+    ret;
+}
+
+.launch split_barriers <<< 1, 4 >>> ();

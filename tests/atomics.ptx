@@ -1,0 +1,89 @@
+// Atomic read-modify-write operations on global and shared memory.
+.version 8.0
+.target sm_80
+.address_size 64
+
+.global .align 4 .u32 counter;
+.global .align 4 .u32 maxTid;
+.global .align 4 .u32 lock = 0;
+
+.visible .entry histogram(
+    .param .u64 histogram_param_0,     // u32 data[]
+    .param .u64 histogram_param_1,     // u32 bins[4]
+    .param .u64 histogram_param_2      // f32 *sum
+)
+{
+    .reg .pred  %p<2>;
+    .reg .b32   %r<16>;
+    .reg .f32   %f<3>;
+    .reg .b64   %rd<12>;
+    .shared .align 4 .u32 blockCount;
+
+    ld.param.u64    %rd1, [histogram_param_0];
+    ld.param.u64    %rd2, [histogram_param_1];
+    ld.param.u64    %rd3, [histogram_param_2];
+    mov.u32         %r1, %ctaid.x;
+    mov.u32         %r2, %ntid.x;
+    mov.u32         %r3, %tid.x;
+    mad.lo.s32      %r4, %r1, %r2, %r3;          // global thread id
+
+    // bins[data[i] % 4] += 1
+    mul.wide.u32    %rd4, %r4, 4;
+    add.s64         %rd5, %rd1, %rd4;
+    ld.global.u32   %r5, [%rd5];
+    rem.u32         %r6, %r5, 4;
+    mul.wide.u32    %rd6, %r6, 4;
+    add.s64         %rd7, %rd2, %rd6;
+    atom.global.add.u32 %r7, [%rd7], 1;
+
+    // counter++ (unique ticket per thread), maxTid = max(maxTid, gid)
+    atom.global.inc.u32 %r8, [counter], 1000;
+    atom.global.max.u32 %r9, [maxTid], %r4;
+
+    // per-block count in shared memory, then one global add per block
+    atom.shared.add.u32 %r10, [blockCount], 1;
+    bar.sync        0;
+    setp.ne.s32     %p1, %r3, 0;
+    @%p1 bra        $L__done;
+    ld.shared.u32   %r11, [blockCount];
+    red.global.add.u32 [lock], %r11;
+
+$L__done:
+    // *sum += (float) data[i]
+    cvt.rn.f32.u32  %f1, %r5;
+    red.global.add.f32 [%rd3], %f1;
+    ret;
+}
+
+.visible .entry cas_test(.param .u64 cas_test_param_0)
+{
+    .reg .b32 %r<6>;
+    .reg .b64 %rd<3>;
+    ld.param.u64    %rd1, [cas_test_param_0];
+    atom.global.cas.b32  %r1, [%rd1], 7, 42;      // succeeds: 7 -> 42
+    atom.global.cas.b32  %r2, [%rd1], 7, 99;      // fails: stays 42
+    atom.global.exch.b32 %r3, [%rd1+4], 5;
+    atom.global.dec.u32  %r4, [%rd1+8], 3;        // 0 -> 3 (wraps to bound)
+    atom.global.min.s32  %r5, [%rd1+12], -9;
+    st.global.u32   [%rd1+16], %r1;
+    st.global.u32   [%rd1+20], %r2;
+    st.global.u32   [%rd1+24], %r3;
+    st.global.u32   [%rd1+28], %r4;
+    ret;
+}
+
+.buffer DATA .u32 = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21 };
+.buffer BINS .u32 [4];
+.buffer SUM .f32 [1];
+.launch histogram <<< 2, 11 >>> (DATA, BINS, SUM);
+.print BINS .u32;
+.expect BINS .u32 = { 6, 6, 5, 5 };
+.expect counter .u32 = { 22 };
+.expect maxTid .u32 = { 21 };
+.expect lock .u32 = { 22 };
+.expect SUM .f32 = { 231.0 };
+
+.buffer CAS .s32 = { 7, 1, 0, 3, 0, 0, 0, 0 };
+.launch cas_test <<< 1, 1 >>> (CAS);
+.print CAS .s32;
+.expect CAS .s32 = { 42, 5, 3, -9, 7, 42, 1, 0 };

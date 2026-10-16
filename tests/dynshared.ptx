@@ -1,0 +1,42 @@
+// Reverse each block's slice of an array through dynamically sized shared
+// memory (extern __shared__ int s[]), alongside a static shared variable.
+.version 8.0
+.target sm_80
+.address_size 64
+
+.extern .shared .align 16 .b8 dyn_smem[];
+
+.visible .entry reverse(.param .u64 reverse_param_0)
+{
+    .reg .b32   %r<12>;
+    .reg .b64   %rd<5>;
+    .shared .align 4 .u32 marker;
+
+    ld.param.u64        %rd1, [reverse_param_0];
+    cvta.to.global.u64  %rd2, %rd1;
+    mov.u32             %r1, %tid.x;
+    mov.u32             %r2, %ntid.x;
+    mov.u32             %r3, %ctaid.x;
+    mad.lo.s32          %r4, %r3, %r2, %r1;
+    mul.wide.s32        %rd3, %r4, 4;
+    add.s64             %rd4, %rd2, %rd3;
+    ld.global.u32       %r5, [%rd4];
+    mov.u32             %r6, dyn_smem;
+    shl.b32             %r7, %r1, 2;
+    add.s32             %r8, %r6, %r7;
+    st.shared.u32       [%r8], %r5;
+    st.shared.u32       [marker], 7;
+    bar.sync            0;
+    sub.s32             %r9, %r2, %r1;
+    add.s32             %r9, %r9, -1;
+    shl.b32             %r10, %r9, 2;
+    add.s32             %r11, %r6, %r10;
+    ld.shared.u32       %r5, [%r11];
+    st.global.u32       [%rd4], %r5;
+    ret;
+}
+
+.buffer X .s32 = { 1, 2, 3, 4, 5, 6, 7, 8 };
+.launch reverse <<< 2, 4, 16 >>> (X);
+.print X .s32;
+.expect X .s32 = { 4, 3, 2, 1, 8, 7, 6, 5 };

@@ -1,0 +1,4 @@
+build/
+*.kompiled/
+.krun-*
+__pycache__/

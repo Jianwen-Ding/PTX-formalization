@@ -1,0 +1,95 @@
+// Integer arithmetic edge cases: wrap-around, signedness, .hi/.wide, shifts,
+// saturation, division by zero, bit manipulation, predicates, selp, vectors.
+.version 8.0
+.target sm_80
+.address_size 64
+
+.visible .entry intops(.param .u64 intops_param_0)
+{
+    .reg .pred  %p<6>;
+    .reg .b16   %rs<3>;
+    .reg .b32   %r<40>;
+    .reg .b64   %rd<8>;
+
+    ld.param.u64    %rd1, [intops_param_0];
+    mov.u32         %r1, 0xFFFFFFFF;
+    add.u32         %r2, %r1, 1;                 // 0 (wrap)
+    st.global.u32   [%rd1+0], %r2;
+    mov.s32         %r3, -7;
+    div.s32         %r4, %r3, 2;                 // -3 (truncation)
+    st.global.u32   [%rd1+4], %r4;
+    rem.s32         %r5, %r3, 2;                 // -1
+    st.global.u32   [%rd1+8], %r5;
+    div.u32         %r6, %r3, 2;                 // 2147483644 (unsigned view)
+    st.global.u32   [%rd1+12], %r6;
+    shr.s32         %r7, %r3, 1;                 // -4 (arithmetic)
+    st.global.u32   [%rd1+16], %r7;
+    shr.u32         %r8, %r3, 28;                // 15 (logical)
+    st.global.u32   [%rd1+20], %r8;
+    shl.b32         %r9, 1, 40;                  // 0 (shift >= width)
+    st.global.u32   [%rd1+24], %r9;
+    mul.hi.u32      %r10, %r1, %r1;              // 0xFFFFFFFE
+    st.global.u32   [%rd1+28], %r10;
+    mul.hi.s32      %r11, %r3, 1000000000;       // -2
+    st.global.u32   [%rd1+32], %r11;
+    add.sat.s32     %r12, 2147483647, 1;         // INT_MAX
+    st.global.u32   [%rd1+36], %r12;
+    div.u32         %r13, 5, 0;                  // all ones
+    st.global.u32   [%rd1+40], %r13;
+    popc.b32        %r14, 0xF0F0;                // 8
+    st.global.u32   [%rd1+44], %r14;
+    clz.b32         %r15, 1;                     // 31
+    st.global.u32   [%rd1+48], %r15;
+    brev.b32        %r16, 1;                     // 0x80000000
+    st.global.u32   [%rd1+52], %r16;
+    min.s32         %r17, %r3, 3;                // -7
+    st.global.u32   [%rd1+56], %r17;
+    min.u32         %r18, %r3, 3;                // 3
+    st.global.u32   [%rd1+60], %r18;
+    setp.lt.s32     %p1, %r3, 0;                 // true
+    setp.lo.u32     %p2, %r3, 0;                 // false
+    selp.u32        %r19, 11, 22, %p1;           // 11
+    st.global.u32   [%rd1+64], %r19;
+    selp.u32        %r20, 11, 22, %p2;           // 22
+    st.global.u32   [%rd1+68], %r20;
+    setp.gt.and.s32 %p3|%p4, %r3, -10, %p1;      // p3 = true, p4 = false
+    selp.u32        %r21, 1, 0, %p4;
+    st.global.u32   [%rd1+72], %r21;
+    not.pred        %p5, %p4;
+    @!%p5 st.global.u32 [%rd1+72], 99;           // guarded off
+    cvt.s32.s8      %r22, 200;                   // -56
+    st.global.u32   [%rd1+76], %r22;
+    cvt.sat.u8.s32  %r23, %r3;                   // 0
+    st.global.u32   [%rd1+80], %r23;
+    cvt.u16.u32     %rs1, 70000;                 // 4464
+    cvt.u32.u16     %r24, %rs1;
+    st.global.u32   [%rd1+84], %r24;
+    mul.wide.s32    %rd2, %r3, 1000000000;       // -7e9
+    st.global.u64   [%rd1+88], %rd2;
+    mov.b64         {%r25, %r26}, %rd2;          // unpack lo/hi
+    mov.b64         %rd3, {%r26, %r25};          // swap halves
+    st.global.v2.u32 [%rd1+96], {%r25, %r26};
+    st.global.u64   [%rd1+104], %rd3;
+    st.global.s8    [%rd1+112], -2;              // sub-word store
+    ld.global.s8    %r27, [%rd1+112];            // sign-extending load: -2
+    ld.global.u8    %r28, [%rd1+112];            // zero-extending load: 254
+    st.global.u32   [%rd1+116], %r27;
+    st.global.u32   [%rd1+120], %r28;
+    ld.global.v4.u32 {%r29, %r30, %r31, %r32}, [%rd1+0];
+    add.s32         %r33, %r30, %r31;            // -3 + -1
+    st.global.u32   [%rd1+124], %r33;
+    mad.lo.s32      %r34, %r3, %r3, 1;           // 50
+    st.global.u32   [%rd1+128], %r34;
+    ret;
+}
+
+.buffer R .s32 [33];
+.launch intops <<< 1, 1 >>> (R);
+.print R .s32;
+.expect R .s32 = { 0, -3, -1, 2147483644, -4, 15, 0, -2, -2, 2147483647,
+                   -1, 8, 31, -2147483648, -7, 3, 11, 22, 0, -56,
+                   0, 4464,
+                   1589934592, -2,             // -7e9 as two s32 words
+                   1589934592, -2,             // v2 store of {lo, hi}
+                   -2, 1589934592,             // halves swapped
+                   254, -2, 254, -4, 50 };

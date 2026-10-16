@@ -1,0 +1,8 @@
+BINS = [6, 6, 5, 5]
+PASS BINS
+PASS counter
+PASS maxTid
+PASS lock
+PASS SUM
+CAS = [42, 5, 3, -9, 7, 42, 1, 0]
+PASS CAS

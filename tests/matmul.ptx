@@ -1,0 +1,78 @@
+// C = A * B for N x N row-major matrices, 2-D grid of 2-D blocks.
+// __global__ void matmul(const float *A, const float *B, float *C, int n)
+.version 8.0
+.target sm_80
+.address_size 64
+
+.visible .entry _Z6matmulPKfS0_Pfi(
+    .param .u64 _Z6matmulPKfS0_Pfi_param_0,
+    .param .u64 _Z6matmulPKfS0_Pfi_param_1,
+    .param .u64 _Z6matmulPKfS0_Pfi_param_2,
+    .param .u32 _Z6matmulPKfS0_Pfi_param_3
+)
+{
+    .reg .pred  %p<4>;
+    .reg .f32   %f<6>;
+    .reg .b32   %r<16>;
+    .reg .b64   %rd<14>;
+
+    ld.param.u64        %rd4, [_Z6matmulPKfS0_Pfi_param_0];
+    ld.param.u64        %rd5, [_Z6matmulPKfS0_Pfi_param_1];
+    ld.param.u64        %rd6, [_Z6matmulPKfS0_Pfi_param_2];
+    ld.param.u32        %r7, [_Z6matmulPKfS0_Pfi_param_3];
+    mov.u32             %r8, %ctaid.y;
+    mov.u32             %r9, %ntid.y;
+    mov.u32             %r10, %tid.y;
+    mad.lo.s32          %r1, %r8, %r9, %r10;          // row
+    mov.u32             %r11, %ctaid.x;
+    mov.u32             %r12, %ntid.x;
+    mov.u32             %r13, %tid.x;
+    mad.lo.s32          %r2, %r11, %r12, %r13;        // col
+    setp.ge.s32         %p1, %r1, %r7;
+    setp.ge.s32         %p2, %r2, %r7;
+    or.pred             %p3, %p1, %p2;
+    @%p3 bra            $L__BB0_4;
+
+    cvta.to.global.u64  %rd1, %rd4;
+    cvta.to.global.u64  %rd2, %rd5;
+    mov.f32             %f5, 0f00000000;
+    mov.u32             %r15, 0;
+    mul.lo.s32          %r4, %r1, %r7;                // row * n
+$L__BB0_2:
+    add.s32             %r14, %r4, %r15;
+    mul.wide.s32        %rd7, %r14, 4;
+    add.s64             %rd8, %rd1, %rd7;
+    ld.global.nc.f32    %f3, [%rd8];                  // A[row*n + k]
+    mad.lo.s32          %r5, %r15, %r7, %r2;
+    mul.wide.s32        %rd9, %r5, 4;
+    add.s64             %rd10, %rd2, %rd9;
+    ld.global.nc.f32    %f4, [%rd10];                 // B[k*n + col]
+    fma.rn.f32          %f5, %f3, %f4, %f5;
+    add.s32             %r15, %r15, 1;
+    setp.lt.s32         %p1, %r15, %r7;
+    @%p1 bra            $L__BB0_2;
+
+    add.s32             %r6, %r4, %r2;
+    cvta.to.global.u64  %rd11, %rd6;
+    mul.wide.s32        %rd12, %r6, 4;
+    add.s64             %rd13, %rd11, %rd12;
+    st.global.f32       [%rd13], %f5;
+$L__BB0_4:
+    ret;
+}
+
+.buffer A .f32 = { 1.0, 2.0, 0.0, -1.0,
+                   0.0, 1.0, 3.0,  2.0,
+                   4.0, 0.0, 1.0,  1.0,
+                   2.0, 2.0, 2.0,  2.0 };
+.buffer B .f32 = { 1.0, 0.0, 0.0, 0.0,
+                   0.0, 2.0, 0.0, 0.0,
+                   0.0, 0.0, 3.0, 0.0,
+                   1.0, 1.0, 1.0, 1.0 };
+.buffer C .f32 [16];
+.launch _Z6matmulPKfS0_Pfi <<< (2, 2), (2, 2) >>> (A, B, C, 4);
+.print C .f32;
+.expect C .f32 = { 0.0, 3.0, -1.0, -1.0,
+                   2.0, 4.0, 11.0,  2.0,
+                   5.0, 1.0,  4.0,  1.0,
+                   4.0, 6.0,  8.0,  2.0 };

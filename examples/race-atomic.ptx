@@ -1,0 +1,17 @@
+// The race-free version of examples/race.ptx: every interleaving yields 2,
+// so `krun --search --pattern '<exit-code> 1 </exit-code>'` finds no solution.
+.version 8.0
+.target sm_80
+.address_size 64
+
+.global .align 4 .u32 counter;
+
+.visible .entry atomic_inc()
+{
+    .reg .b32 %r<2>;
+    atom.global.add.u32 %r1, [counter], 1;
+    ret;
+}
+
+.launch atomic_inc <<< 1, 2 >>> ();
+.expect counter .u32 = { 2 };

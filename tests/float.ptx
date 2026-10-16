@@ -1,0 +1,133 @@
+// IEEE-754 behaviour: rounding, fma vs mul+add, conversions with every
+// integer rounding mode, saturation, NaN/inf comparisons, subnormals,
+// double precision and half precision.
+.version 8.0
+.target sm_80
+.address_size 64
+
+.visible .entry fops(.param .u64 fops_param_0, .param .u64 fops_param_1, .param .u64 fops_param_2)
+{
+    .reg .pred  %p<8>;
+    .reg .b16   %h<4>;
+    .reg .b32   %r<30>;
+    .reg .f32   %f<30>;
+    .reg .f64   %fd<10>;
+    .reg .b64   %rd<4>;
+
+    ld.param.u64    %rd1, [fops_param_0];
+    ld.param.u64    %rd2, [fops_param_1];
+    ld.param.u64    %rd3, [fops_param_2];
+
+    // fma is fused: (1+2^-12)^2 - (1+2^-11) = 2^-24 exactly, mul+add loses it
+    mov.f32         %f1, 0f3F800800;             // 1 + 2^-12
+    mov.f32         %f2, 0fBF801000;             // -(1 + 2^-11)
+    fma.rn.f32      %f3, %f1, %f1, %f2;          // 2^-24
+    mul.rn.f32      %f4, %f1, %f1;
+    add.rn.f32      %f5, %f4, %f2;               // 0
+    st.global.f32   [%rd1+0], %f3;
+    st.global.f32   [%rd1+4], %f5;
+
+    // round-to-integer conversions of 2.5 and -2.5
+    mov.f32         %f6, 2.5;
+    cvt.rni.s32.f32 %r1, %f6;                    // 2 (ties to even)
+    cvt.rzi.s32.f32 %r2, %f6;                    // 2
+    cvt.rmi.s32.f32 %r3, %f6;                    // 2
+    cvt.rpi.s32.f32 %r4, %f6;                    // 3
+    neg.f32         %f7, %f6;
+    cvt.rni.s32.f32 %r5, %f7;                    // -2
+    cvt.rmi.s32.f32 %r6, %f7;                    // -3
+    cvt.rni.f32.f32 %f8, 3.5;                    // 4.0
+    st.global.f32   [%rd1+8], %f8;
+
+    // saturating conversions: float -> int clamps, NaN -> 0
+    mov.f32         %f9, 0f7FC00000;             // NaN
+    cvt.rzi.s32.f32 %r7, %f9;                    // 0
+    mov.f32         %f10, 1e20;
+    cvt.rzi.s32.f32 %r8, %f10;                   // INT_MAX
+    cvt.rzi.u32.f32 %r9, %f7;                    // 0 (negative -> unsigned)
+
+    // comparisons with NaN: ordered false, unordered true
+    setp.eq.f32     %p1, %f9, %f9;
+    setp.ne.f32     %p2, %f9, %f9;
+    setp.equ.f32    %p3, %f9, %f9;
+    setp.nan.f32    %p4, %f9, %f6;
+    selp.u32        %r10, 1, 0, %p1;             // 0
+    selp.u32        %r11, 1, 0, %p2;             // 0
+    selp.u32        %r12, 1, 0, %p3;             // 1
+    selp.u32        %r13, 1, 0, %p4;             // 1
+
+    // division by zero and overflow
+    div.rn.f32      %f11, 1.0, 0.0;              // +inf
+    mul.f32         %f12, 0f7F7FFFFF, 2.0;       // +inf (overflow)
+    sub.f32         %f13, %f11, %f12;            // NaN
+    st.global.f32   [%rd1+12], %f11;
+    st.global.f32   [%rd1+16], %f13;
+
+    // subnormals: smallest normal / 2 is exact
+    mov.f32         %f14, 0f00800000;
+    mul.f32         %f15, %f14, 0.5;             // 0x00400000
+    st.global.f32   [%rd1+20], %f15;
+    mov.b32         %r14, %f15;                  // bit pattern
+    // saturate to [0, 1]
+    add.sat.f32     %f16, %f6, 0.0;              // 1.0
+    st.global.f32   [%rd1+24], %f16;
+    sqrt.rn.f32     %f17, 2.0;
+    st.global.f32   [%rd1+28], %f17;
+    min.f32         %f18, %f9, %f6;              // 2.5 (NaN ignored)
+    st.global.f32   [%rd1+32], %f18;
+    abs.f32         %f19, %f7;
+    st.global.f32   [%rd1+36], %f19;
+    // 16777217 is not representable in f32: rounds to even
+    cvt.rn.f32.s32  %f20, 16777217;
+    st.global.f32   [%rd1+40], %f20;
+
+    // double precision
+    cvt.f64.f32     %fd1, %f17;                  // exact widening
+    mul.f64         %fd2, %fd1, %fd1;            // not exactly 2
+    sqrt.rn.f64     %fd3, 2.0;
+    mul.f64         %fd4, %fd3, %fd3;            // 2.0000000000000004
+    cvt.rn.f32.f64  %f21, %fd4;                  // 2.0
+    st.global.f32   [%rd1+44], %f21;
+    div.rn.f64      %fd5, 1.0, 3.0;
+    st.global.f64   [%rd2+0], %fd5;
+    st.global.f64   [%rd2+8], %fd4;
+    mov.f64         %fd6, 0d400921FB54442D18;    // pi
+    st.global.f64   [%rd2+16], %fd6;
+
+    // half precision round trip: 1/3 in f16 is 0x3555 = 0.333251953125
+    cvt.rn.f16.f32  %h1, 0f3EAAAAAB;
+    cvt.f32.f16     %f22, %h1;
+    st.global.f32   [%rd1+48], %f22;
+    cvt.rn.f16.f32  %h2, 70000.0;                // overflow -> inf
+    cvt.f32.f16     %f23, %h2;
+    st.global.f32   [%rd1+52], %f23;
+
+    // integer results
+    st.global.u32   [%rd3+0], %r1;
+    st.global.u32   [%rd3+4], %r2;
+    st.global.u32   [%rd3+8], %r3;
+    st.global.u32   [%rd3+12], %r4;
+    st.global.u32   [%rd3+16], %r5;
+    st.global.u32   [%rd3+20], %r6;
+    st.global.u32   [%rd3+24], %r7;
+    st.global.u32   [%rd3+28], %r8;
+    st.global.u32   [%rd3+32], %r9;
+    st.global.u32   [%rd3+36], %r10;
+    st.global.u32   [%rd3+40], %r11;
+    st.global.u32   [%rd3+44], %r12;
+    st.global.u32   [%rd3+48], %r13;
+    st.global.u32   [%rd3+52], %r14;
+    ret;
+}
+
+.buffer F .f32 [14];
+.buffer I .s32 [14];
+.buffer D .f64 [3];
+.launch fops <<< 1, 1 >>> (F, D, I);
+.print F .f32;
+.print I .s32;
+.print D .f64;
+.expect F .f32 = { 0f33800000, 0.0, 4.0, 0f7F800000, 0f7FFFFFFF, 0f00400000,
+                   1.0, 0f3FB504F3, 2.5, 2.5, 16777216.0, 2.0, 0f3EAAA000, 0f7F800000 };
+.expect I .s32 = { 2, 2, 2, 3, -2, -3, 0, 2147483647, 0, 0, 0, 1, 1, 0x00400000 };
+.expect D .f64 = { 0d3FD5555555555555, 0d4000000000000001, 0d400921FB54442D18 };
