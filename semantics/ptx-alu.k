@@ -47,8 +47,8 @@ module PTX-ALU
   rule bin("sub", M, T, A, B) => fpSub(M, wid(T), A, B) requires isF(T)
   rule bin("mul", M, T, A, B) => fpMul(M, wid(T), A, B) requires isF(T)
   rule bin("div", M, T, A, B) => fpDiv(M, wid(T), A, B) requires isF(T)
-  rule bin("min", M, T, A, B) => fres(minFloat(fv(A, T), fv(B, T)), M, T) requires isF(T)
-  rule bin("max", M, T, A, B) => fres(maxFloat(fv(A, T), fv(B, T)), M, T) requires isF(T)
+  rule bin("min", M, T, A, B) => fpMinMax(M, wid(T), A, B, true) requires isF(T)
+  rule bin("max", M, T, A, B) => fpMinMax(M, wid(T), A, B, false) requires isF(T)
   rule bin("copysign", _, T, A, B) =>      // copysign.f32 d, a, b: |b| with sign of a
        (B &Int mask(wid(T) -Int 1)) |Int (A &Int (1 <<Int (wid(T) -Int 1))) requires isF(T)
   // integers (two's complement, wrap-around unless .sat)
@@ -84,16 +84,16 @@ module PTX-ALU
                 SetItem("sin") SetItem("cos") SetItem("lg2") SetItem("ex2") SetItem("tanh")
 
   syntax Int ::= un(String, Set, Ty, Int) [function]
-  rule un("neg", _, T, A) => A xorInt (1 <<Int (wid(T) -Int 1)) requires isF(T)
-  rule un("abs", _, T, A) => A &Int mask(wid(T) -Int 1)         requires isF(T)
+  rule un("neg", M, T, A) => ftzIn(M, wid(T), A) xorInt (1 <<Int (wid(T) -Int 1)) requires isF(T)
+  rule un("abs", M, T, A) => ftzIn(M, wid(T), A) &Int mask(wid(T) -Int 1)         requires isF(T)
   rule un("sqrt",  M, T, A) => fpSqrt(M, wid(T), A) requires isF(T)
-  rule un("rsqrt", M, T, A) => fres(fc(1.0, fv(A, T)) /Float sqrtF(fv(A, T)), M, T) requires isF(T)
+  rule un("rsqrt", M, T, A) => post(M, wid(T), fc(1.0, fv(ftzIn(M, wid(T), A), T)) /Float sqrtF(fv(ftzIn(M, wid(T), A), T))) requires isF(T)
   rule un("rcp",   M, T, A) => fpRcp(M, wid(T), A) requires isF(T)
-  rule un("sin",   M, T, A) => fres(sinFloat(fv(A, T)), M, T) requires isF(T)
-  rule un("cos",   M, T, A) => fres(cosFloat(fv(A, T)), M, T) requires isF(T)
-  rule un("lg2",   M, T, A) => fres(logFloat(fv(A, T)) /Float logFloat(fc(2.0, fv(A, T))), M, T) requires isF(T)
-  rule un("ex2",   M, T, A) => fres(fc(2.0, fv(A, T)) ^Float fv(A, T), M, T) requires isF(T)
-  rule un("tanh",  M, T, A) => fres(tanhF(fv(A, T)), M, T) requires isF(T)
+  rule un("sin",   M, T, A) => post(M, wid(T), sinFloat(fv(ftzIn(M, wid(T), A), T))) requires isF(T)
+  rule un("cos",   M, T, A) => post(M, wid(T), cosFloat(fv(ftzIn(M, wid(T), A), T))) requires isF(T)
+  rule un("lg2",   M, T, A) => post(M, wid(T), logFloat(fv(ftzIn(M, wid(T), A), T)) /Float logFloat(fc(2.0, fv(A, T)))) requires isF(T)
+  rule un("ex2",   M, T, A) => post(M, wid(T), fc(2.0, fv(A, T)) ^Float fv(ftzIn(M, wid(T), A), T)) requires isF(T)
+  rule un("tanh",  M, T, A) => post(M, wid(T), tanhF(fv(ftzIn(M, wid(T), A), T))) requires isF(T)
   rule un("neg",  _, T, A) => trunc(0 -Int A, wid(T))            requires notBool isF(T)
   rule un("abs",  _, T, A) => trunc(absInt(ival(A, T)), wid(T))  requires notBool isF(T)
   rule un("not",  _, T, A) => trunc(~Int A, wid(T))
@@ -118,7 +118,7 @@ module PTX-ALU
 
   syntax Int ::= tern(String, Set, Ty, Int, Int, Int) [function]
   rule tern("selp", _, _, A, B, P) => #if P =/=Int 0 #then A #else B #fi
-  rule tern(_, M, T, A, B, C) => fpFma(M, wid(T), A, B, C) requires isF(T)
+  rule tern(OP, M, T, A, B, C) => fpFma(M, wid(T), A, B, C) requires isF(T) andBool OP in (SetItem("fma") SetItem("mad"))
   rule tern("mad", M, T, A, B, C) => trunc(ival(A, T) *Int ival(B, T) +Int C, 2 *Int wid(T))
     requires notBool isF(T) andBool "wide" in M
   rule tern("mad", M, T, A, B, C) => trunc(((ival(A, T) *Int ival(B, T)) >>Int wid(T)) +Int C, wid(T))

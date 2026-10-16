@@ -47,6 +47,10 @@ module PTX-FLOAT
   rule ftzOut(_, _, B) => B [owise]
 
   // result of an operation: apply .sat, encode, apply .ftz to the result
+  syntax Int ::= b2iF(Bool) [function, total]
+  rule b2iF(true) => 1
+  rule b2iF(false) => 0
+
   syntax Int ::= post(Set, Int, Float) [function, total]
   rule post(M, W, F) => ftzOut(M, W, encodeF(#if "sat" in M #then satF(F) #else F #fi, W))
 
@@ -168,6 +172,38 @@ module PTX-FLOAT
   syntax Float ::= sqrtF(Float) [function]
   rule sqrtF(F) => F requires notBool isNaN(F) andBool F ==Float fc(0.0, F)
   rule sqrtF(F) => rootFloat(F, 2) [owise]
+
+  // ---------------------------------------------------------------- min / max
+  // min{.ftz}{.NaN}{.xorsign.abs}: a NaN operand is ignored unless .NaN (or both are NaN);
+  // -0.0 < +0.0; .xorsign.abs compares magnitudes and gives the result sign(a) xor sign(b)
+  syntax Int ::= fpMinMax(Set, Int, Int, Int, Bool) [function, total]
+               | fpMM(Set, Int, Int, Int, Bool, Int) [function, total]       // ..., result sign
+               | signB(Int, Int) [function, total]
+               | isNaNB(Int, Int) [function, total]
+  rule signB(B, W) => (B >>Int (W -Int 1)) &Int 1
+  rule isNaNB(B, W) => b2iF(((B >>Int (prec(W) -Int 1)) &Int mask(ebits(W))) ==Int mask(ebits(W)) andBool (B &Int mask(prec(W) -Int 1)) =/=Int 0)
+  rule fpMinMax(M, W, A0, B0, IsMin) =>
+       fpMM(M, W, ftzIn(M, W, A0), ftzIn(M, W, B0), IsMin, signB(ftzIn(M, W, A0), W) xorInt signB(ftzIn(M, W, B0), W))
+  rule fpMM(M, W, A, B, IsMin, XS) =>
+       #if isNaNB(A, W) ==Int 1 orBool isNaNB(B, W) ==Int 1
+       #then #if "NaN" in M orBool (isNaNB(A, W) ==Int 1 andBool isNaNB(B, W) ==Int 1) #then mask(W -Int 1)
+             #else mmSign(M, W, #if isNaNB(A, W) ==Int 1 #then B #else A #fi, XS) #fi
+       #else mmSign(M, W, mmPick(M, W, A, B, IsMin), XS) #fi
+  // comparison: by value, -0.0 < +0.0; with .xorsign.abs by magnitude
+  syntax Int ::= mmPick(Set, Int, Int, Int, Bool) [function, total]
+  rule mmPick(M, W, A, B, IsMin) =>
+       #if mmLess(M, W, A, B) #then (#if IsMin #then A #else B #fi) #else (#if mmLess(M, W, B, A) #then (#if IsMin #then B #else A #fi)
+         // equal values: only zeros of different sign can differ in bits
+         #else (#if IsMin #then (A |Int B) #else (A &Int B) #fi) #fi) #fi
+    requires "xorsign" in M orBool (A &Int mask(W -Int 1)) =/=Int 0 orBool (B &Int mask(W -Int 1)) =/=Int 0
+  rule mmPick(_, W, A, B, IsMin) => #if IsMin #then (A |Int B) #else (A &Int B) #fi [owise]       // both zero
+  syntax Bool ::= mmLess(Set, Int, Int, Int) [function, total]
+  rule mmLess(M, W, A, B) => decodeF(A &Int mask(W -Int 1), W) <Float decodeF(B &Int mask(W -Int 1), W)
+    requires "xorsign" in M
+  rule mmLess(_, W, A, B) => decodeF(A, W) <Float decodeF(B, W) [owise]
+  syntax Int ::= mmSign(Set, Int, Int, Int) [function, total]
+  rule mmSign(M, W, R, XS) => (R &Int mask(W -Int 1)) |Int (XS <<Int (W -Int 1)) requires "xorsign" in M
+  rule mmSign(_, _, R, _) => R [owise]
 
   rule fpRcp(M, W, A) => fpDiv(M, W, encodeF(Int2Float(1, prec(W), ebits(W)), W), A)
 endmodule
