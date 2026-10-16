@@ -143,6 +143,31 @@ module PTX-CONFIGURATION
   rule ivList(V:InitVal, Rest:InitVals) => ListItem(V) ivList(Rest) [owise]
   rule ivList(.InitVals) => .List
 
+  // Symbolic initializers (sym, sym+4, generic(sym), a-b) are resolved against
+  // the symbol table before being turned into bits.
+  syntax InitVal ::= resolveV(Map, InitVal) [function, total]
+  syntax Int ::= symRaw(Map, Name) [function, total]
+               | symGen(Map, Name) [function, total]
+  rule symRaw(S, N) => symA({S[Name2String(N)]}:>Sym) requires Name2String(N) in_keys(S)
+  rule symRaw(_, _) => 0 [owise]
+  rule symGen(S, N) => winBase(symSp({S[Name2String(N)]}:>Sym)) +Int symRaw(S, N) requires Name2String(N) in_keys(S)
+  rule symGen(_, _) => 0 [owise]
+  syntax Int ::= symA(Sym) [function, total]
+  rule symA(sym(_, A)) => A
+  rule symA(noSym(_)) => 0
+  syntax String ::= symSp(Sym) [function, total]
+  rule symSp(sym(SP, _)) => SP
+  rule symSp(noSym(_)) => "global"
+  rule resolveV(S, N:Name) => symRaw(S, N)
+  rule resolveV(S, N:Name I:Int) => symRaw(S, N) +Int I
+  rule resolveV(S, N:Name + I:Int) => symRaw(S, N) +Int I
+  rule resolveV(S, A:Name - B:Name) => symRaw(S, A) -Int symRaw(S, B)
+  rule resolveV(S, generic ( N:Name )) => symGen(S, N)
+  rule resolveV(_, V) => V [owise]
+  syntax List ::= resolveL(Map, List) [function, total]
+  rule resolveL(S, ListItem(V:InitVal) L) => ListItem(resolveV(S, V)) resolveL(S, L)
+  rule resolveL(_, _) => .List [owise]
+
   syntax Bytes ::= initMem(Bytes, Int, Ty, List) [function]
   rule initMem(M, A, T, ListItem(V:InitVal) L) => initMem(writeBytes(M, A, bytes(T), initBits(V, T)), A +Int bytes(T), T, L)
   rule initMem(M, _, _, _) => M [owise]

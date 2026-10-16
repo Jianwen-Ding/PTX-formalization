@@ -36,6 +36,8 @@ module PTX-EXEC-CORE
   rule rd(F:Float, T, _)  => fltLit(F, T)
   rule rd(H:HexLit, T, _) => hexBits(H, T)
   rule rd(N:Name, T, C)   => trunc(symAddr(lookupSym(Name2String(N), C)), wid(T))  // &var
+    requires Name2String(N) =/=String "WARP_SZ"
+  rule rd(N:Name, T, _)   => trunc(32, wid(T)) requires Name2String(N) ==String "WARP_SZ"
 
   syntax Map ::= wr(Map, Operand, Int) [function, total]
   rule wr(R, D:Reg, V) => R[Reg2String(D) <- V]

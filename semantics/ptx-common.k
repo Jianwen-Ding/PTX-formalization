@@ -35,6 +35,19 @@ module PTX-COMMON
   rule typeOf(.b32) => ty("b", 32)   rule typeOf(.b64) => ty("b", 64)
   rule typeOf(.f16) => ty("f", 16)   rule typeOf(.f32) => ty("f", 32)
   rule typeOf(.f64) => ty("f", 64)   rule typeOf(.pred) => ty("p", 1)
+  rule typeOf(.b128) => ty("b", 128)
+  // Types that are not scalar IEEE binary formats are kept as raw bit
+  // patterns of the given container width; instructions interpret them.
+  rule typeOf(.bf16) => ty("bf", 16)      rule typeOf(.tf32) => ty("tf", 32)
+  rule typeOf(.f16x2) => ty("f16x2", 32)  rule typeOf(.bf16x2) => ty("bf16x2", 32)
+  rule typeOf(.s16x2) => ty("s16x2", 32)  rule typeOf(.u16x2) => ty("u16x2", 32)
+  rule typeOf(.e4m3) => ty("e4m3", 8)     rule typeOf(.e5m2) => ty("e5m2", 8)
+  rule typeOf(.e4m3x2) => ty("e4m3x2", 16) rule typeOf(.e5m2x2) => ty("e5m2x2", 16)
+  rule typeOf(.e4m3x4) => ty("e4m3x4", 32) rule typeOf(.e5m2x4) => ty("e5m2x4", 32)
+  rule typeOf(.e2m3x2) => ty("e2m3x2", 16) rule typeOf(.e3m2x2) => ty("e3m2x2", 16)
+  rule typeOf(.e2m3x4) => ty("e2m3x4", 32) rule typeOf(.e3m2x4) => ty("e3m2x4", 32)
+  rule typeOf(.e2m1x2) => ty("e2m1x2", 8)  rule typeOf(.e2m1x4) => ty("e2m1x4", 16)
+  rule typeOf(.ue8m0x2) => ty("ue8m0x2", 16)
 
   syntax Bool ::= isTyStr(String) [function, total]
   rule isTyStr(S) => S in tyStrs
@@ -43,11 +56,28 @@ module PTX-COMMON
                  SetItem("s8") SetItem("s16") SetItem("s32") SetItem("s64")
                  SetItem("b8") SetItem("b16") SetItem("b32") SetItem("b64")
                  SetItem("f16") SetItem("f32") SetItem("f64") SetItem("pred")
+                 SetItem("b128") SetItem("bf16") SetItem("tf32")
+                 SetItem("f16x2") SetItem("bf16x2") SetItem("s16x2") SetItem("u16x2")
+                 SetItem("e4m3") SetItem("e5m2") SetItem("e4m3x2") SetItem("e5m2x2")
+                 SetItem("e4m3x4") SetItem("e5m2x4") SetItem("e2m3x2") SetItem("e3m2x2")
+                 SetItem("e2m3x4") SetItem("e3m2x4") SetItem("e2m1x2") SetItem("e2m1x4")
+                 SetItem("ue8m0x2")
 
   syntax Ty ::= strTy(String) [function]
   rule strTy("pred") => ty("p", 1)
+  rule strTy("b128") => ty("b", 128)
+  rule strTy("bf16") => ty("bf", 16)      rule strTy("tf32") => ty("tf", 32)
+  rule strTy("f16x2") => ty("f16x2", 32)  rule strTy("bf16x2") => ty("bf16x2", 32)
+  rule strTy("s16x2") => ty("s16x2", 32)  rule strTy("u16x2") => ty("u16x2", 32)
+  rule strTy("e4m3") => ty("e4m3", 8)     rule strTy("e5m2") => ty("e5m2", 8)
+  rule strTy("e4m3x2") => ty("e4m3x2", 16) rule strTy("e5m2x2") => ty("e5m2x2", 16)
+  rule strTy("e4m3x4") => ty("e4m3x4", 32) rule strTy("e5m2x4") => ty("e5m2x4", 32)
+  rule strTy("e2m3x2") => ty("e2m3x2", 16) rule strTy("e3m2x2") => ty("e3m2x2", 16)
+  rule strTy("e2m3x4") => ty("e2m3x4", 32) rule strTy("e3m2x4") => ty("e3m2x4", 32)
+  rule strTy("e2m1x2") => ty("e2m1x2", 8)  rule strTy("e2m1x4") => ty("e2m1x4", 16)
+  rule strTy("ue8m0x2") => ty("ue8m0x2", 16)
   rule strTy(S) => ty(substrString(S, 0, 1), String2Int(substrString(S, 1, lengthString(S))))
-    requires S =/=String "pred"
+    [owise]
 
   syntax Int ::= wid(Ty)   [function, total]
                | bytes(Ty) [function, total]
@@ -205,6 +235,8 @@ module PTX-COMMON
     requires (P ==String "f" orBool P ==String "F") andBool isF(T) andBool wid(T) =/=Int 32
   rule hexBitsAux(P, D, T) => encodeF(decodeF(String2Base(D, 16), 64), wid(T))
     requires (P ==String "d" orBool P ==String "D") andBool isF(T) andBool wid(T) =/=Int 64
+  rule hexBitsAux(P, D, T) => trunc(String2Base(D, 2), wid(T))
+    requires P ==String "b" orBool P ==String "B"
   rule hexBitsAux(_, D, T) => trunc(String2Base(D, 16), wid(T)) [owise]
 
   // integer / float literal interpreted at a type
@@ -279,9 +311,14 @@ module PTX-COMMON
   rule decOpc(ListItem(B) L, opc("", .Set, .List)) => decOpc(L, opc(B, .Set, .List))
   rule decOpc(ListItem(T:String) L, opc(B, M, TS)) => decOpc(L, opc(B, M, TS ListItem(strTy(T))))
     requires B =/=String "" andBool isTyStr(T)
-  rule decOpc(ListItem(X:String) L, opc(B, M, TS)) => decOpc(L, opc(B, M SetItem(X), TS))
+  rule decOpc(ListItem(X:String) L, opc(B, M, TS)) => decOpc(L, opc(B, (M SetItem(X)) |Set pfx(X), TS))
     requires B =/=String "" andBool notBool isTyStr(X)
   rule decOpc(.List, O) => O
+
+  // `shared::cta` is recorded as both "shared::cta" and "shared"
+  syntax Set ::= pfx(String) [function, total]
+  rule pfx(X) => SetItem(substrString(X, 0, findString(X, "::", 0))) requires findString(X, "::", 0) >Int 0
+  rule pfx(_) => .Set [owise]
 
   // first element of a candidate list that occurs in a modifier set
   syntax String ::= pick(Set, List, String) [function, total]
@@ -290,6 +327,8 @@ module PTX-COMMON
   rule pick(_, .List, D) => D
 
   syntax String ::= spaceOf(Set) [function, total]
+  rule spaceOf(M) => "shared_cluster" requires "shared::cluster" in M
   rule spaceOf(M) => pick(M, ListItem("global") ListItem("shared") ListItem("local")
                              ListItem("param") ListItem("const"), "generic")
+    requires notBool "shared::cluster" in M
 endmodule

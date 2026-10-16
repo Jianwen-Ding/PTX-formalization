@@ -19,6 +19,12 @@ module PTX-HARNESS
   rule <k> .address_size _ => .K ... </k>
   rule <k> .file _ _       => .K ... </k>
   rule <k> .file _ _ , _ , _ => .K ... </k>
+  rule <k> (.pragma _:String ;):TopDecl => .K ... </k>
+  rule <k> .section _ { _:SecItems } => .K ... </k>          // debug info is ignored
+  rule <k> _:DAttrs _:TexKind _:DItems ; => .K ... </k>       // textures: see task 35
+  rule <k> .alias A , B ; => .K ... </k>
+       <funcs> F => F[Name2String(A) <- {F[Name2String(B)]}:>FDef] </funcs>
+    requires Name2String(B) in_keys(F)
 
   rule <k> A:DAttrs H:FuncHead _:PerfDirs { Ss:Stmts } =>
            #addFunc(fname(H), fkind(H), frets(H), fparams(H), pp(Ss, pps(.Map, 0, .Map, .Map, .List))) ... </k>
@@ -44,7 +50,7 @@ module PTX-HARNESS
   rule <k> #static(ListItem(sdecl(SP, N, T, SZ, AL, false, I)) L) => #static(L) ... </k>
        <syms> S => S[N <- sym(SP, alignUp(G, AL))] </syms>
        <gtop> G => alignUp(G, AL) +Int maxInt(SZ, 1) </gtop>
-       <gmem> M => initMem(M, alignUp(G, AL), T, I) </gmem>
+       <gmem> M => initMem(M, alignUp(G, AL), T, resolveL(S, I)) </gmem>
     requires SP ==String "global" orBool SP ==String "const"
   rule <k> #static(ListItem(_) L) => #static(L) ... </k> [owise]
 

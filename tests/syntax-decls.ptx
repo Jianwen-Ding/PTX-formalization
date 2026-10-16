@@ -1,0 +1,124 @@
+// Parse-and-load corpus for the full PTX declaration grammar, plus execution
+// of the constructs that have semantics (shared::cta, arrays, binary literals,
+// WARP_SZ, nested scopes, prototypes, extended .loc).
+.version 8.5
+.target sm_90a, texmode_independent
+.address_size 64
+
+.file 1 "kernel.cu"
+.file 2 "/usr/include/x.h", 1700000000, 1234
+.pragma "nounroll";
+
+// linkage, attributes, vector variables, multi-dimensional arrays
+.visible .global .align 16 .b8 g_bytes[16] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+.extern .shared .align 16 .b8 dyn_extern[];
+.weak .const .align 4 .u32 c_tab[2][2] = {{1, 2}, {3, 4}};
+.global .align 4 .u32 cube[2][2][2];
+.global .attribute(.managed) .align 4 .f32 managed_x;
+.global .align 8 .u64 ptr_to_gb = generic(g_bytes);
+.global .align 8 .u64 ptr_off = g_bytes + 4;
+.global .align 4 .b32 g_bin = 0b1010;
+.global .texref tex0;
+.global .samplerref smp0;
+.global .surfref surf0;
+.global .align 16 .b128 wide[2];
+.global .align 4 .f16x2 hv[2];
+.global .align 4 .bf16x2 bv[2];
+.global .align 2 .bf16 bs[2];
+.global .align 4 .tf32 tf[2];
+.global .align 1 .e4m3x2 f8[2];
+.global .align 1 .e2m1x2 f4[2];
+.global .align 1 .ue8m0x2 sc[2];
+.global .align 4 .u16x2 uv[2];
+
+// function prototypes and attributes
+.extern .func (.param .b32 func_retval0) ext_fn(.param .b32 ext_fn_param_0);
+.visible .func noret_fn() .noreturn;
+
+.visible .entry ker(
+    .param .u64 ker_param_0,
+    .param .align 8 .b8 ker_param_1[16]
+)
+.maxntid 32, 1, 1
+.minnctapersm 1
+.maxnreg 64
+.pragma "nounroll"
+{
+    .reg .pred  %p<3>;
+    .reg .b32   %r<20>;
+    .reg .b64   %rd<8>;
+    .reg .v4 .f32 %vq;
+    .local .align 4 .b8 __local_depot[16];
+    .shared .align 4 .b8 sm[256];
+    .shared .align 4 .u32 sm2[4][4];
+
+    .loc 1 10 5
+    .loc 1 11 5, function_name $L__info_string0
+    .loc 1 12 5 prologue_end
+    .loc 2 13 7, inlined_at 1 14 3
+    ld.param.u64    %rd1, [ker_param_0];
+    cvta.to.global.u64 %rd2, %rd1;
+    mov.u32         %r1, %tid.x;
+    mov.u32         %r2, WARP_SZ;                // 32
+    mov.u32         %r3, 0b1111;                 // 15
+    add.u32         %r4, %r2, %r3;               // 47
+    mul.wide.u32    %rd3, %r1, 4;
+    mov.u32         %r5, sm;
+    add.u32         %r6, %r5, %r1;
+    // qualified state-space / cache modifiers containing "::"
+    st.shared::cta.u32 [%r6], %r4;
+    ld.shared::cta.u32 %r7, [%r6];
+    ld.global.L1::no_allocate.L2::128B.u32 %r8, [%rd2];
+    st.global.L1::no_allocate.u32 [%rd2], %r7;
+    {
+        .reg .b32 %t<2>;
+        mov.u32 %t0, 1;
+        add.u32 %r9, %r7, %t0;                   // 48
+    }
+    st.global.u32   [%rd2+4], %r9;
+    st.global.u32   [%rd2+8], %r2;
+    st.global.u32   [%rd2+12], %r3;
+
+prototype_0: .callprototype (.param .b32 _) _ (.param .b32 _);
+prototype_1: .callprototype _ ();
+Ltargets: .branchtargets $L__a, $L__b;
+$L__a:
+$L__b:
+    ret;
+}
+
+.visible .func parse_only(.param .b32 po_param_0)
+{
+    .reg .b32 %r<8>;
+    .reg .f32 %f<12>;
+    .reg .b64 %rd<4>;
+    tex.2d.v4.f32.f32 {%f1, %f2, %f3, %f4}, [tex0, {%f5, %f6}];
+    tex.2d.v4.f32.f32 {%f1, %f2, %f3, %f4}, [tex0, smp0, {%f5, %f6}];
+    sust.b.2d.v4.b32.trap [surf0, {%r1, %r2}], {%r3, %r4, %r5, %r6};
+    suld.b.1d.b32.zero %r1, [surf0, {%r2}];
+    mov.u64 %rd1, ker;
+    call (%r7), %rd1, (%r1), prototype_0;
+    brx.idx %r1, Ltargets;
+Ltargets: .branchtargets $L__x, $L__y;
+$L__x:
+$L__y:
+    ret;
+}
+
+.alias kalias, ker;          // the aliasee must already be defined
+
+.section .debug_abbrev
+{
+    .b8 1
+    .b8 17, 1, 37, 8
+$L__dbg_begin:
+    .b32 $L__dbg_end-$L__dbg_begin
+    .b64 $L__dbg_begin
+}
+
+.buffer OUT .u32 [4];
+.launch ker <<< 1, 1 >>> (OUT, 0);
+.expect OUT .u32 = { 47, 48, 32, 15 };
+.expect g_bin .u32 = { 10 };
+.expect c_tab .u32 = { 1, 2, 3, 4 };
+.expect g_bytes .u8 = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };

@@ -31,6 +31,10 @@ module PTX-LOAD
   rule aset(.param   R:DAttrs) => SetItem("param")   aset(R)
   rule aset(.reg     R:DAttrs) => SetItem("reg")     aset(R)
   rule aset(.ptr     R:DAttrs) => SetItem("ptr")     aset(R)
+  rule aset(.v2      R:DAttrs) => SetItem("v2")      aset(R)
+  rule aset(.v4      R:DAttrs) => SetItem("v4")      aset(R)
+  rule aset(.v8      R:DAttrs) => SetItem("v8")      aset(R)
+  rule aset(.attribute ( .managed ) R:DAttrs) => SetItem("managed") aset(R)
   rule aset(.align _:Int R:DAttrs) => aset(R)
   rule aset(.DAttrs) => .Set
 
@@ -55,15 +59,21 @@ module PTX-LOAD
   rule itemName(N:Name)          => Name2String(N)
   rule itemName(R:Reg)           => Reg2String(R)
   rule itemName(R:Reg < _ >)     => Reg2String(R)
-  rule itemName(N:Name [ _ ])    => Name2String(N)
-  rule itemName(N:Name [ ])      => Name2String(N)
-  rule itemName(N:Name [ _ ] [ _ ]) => Name2String(N)
+  rule itemName(N:Name _:ArrDims) => Name2String(N)
 
   syntax Int ::= itemSize(DItem, Ty) [function, total]
-  rule itemSize(_:Name [ N ], T)        => N *Int bytes(T)
-  rule itemSize(_:Name [ ], _)          => 0
-  rule itemSize(_:Name [ N ] [ M ], T)  => N *Int M *Int bytes(T)
+  rule itemSize(_:Name D:ArrDims, T)    => dimsCount(D) *Int bytes(T)
   rule itemSize(_, T)                   => bytes(T) [owise]
+
+  syntax Int ::= dimsCount(ArrDims) [function, total]
+  rule dimsCount([ N:Int ] R:ArrDims) => N *Int dimsCount(R)
+  rule dimsCount([ N:Int ]) => N
+  rule dimsCount([ ]) => 0
+
+  syntax List ::= namesL(Names) [function, total]
+  rule namesL(N:Name, Ns:Names) => ListItem(Name2String(N)) namesL(Ns)
+  rule namesL(N:Name) => ListItem(Name2String(N))
+  rule namesL(_) => .List [owise]
 
   // static variables (module scope, or .shared/.global/.const in a body)
   syntax List ::= sdecls(Set, Int, Ty, List, List) [function, total]
@@ -127,7 +137,15 @@ module PTX-LOAD
        emit(ins(g(Reg2String(R), true), decodeOpc(Name2String(N)), Os), P)
   rule pp1({ Ss:Stmts }, P) => pp(Ss, P)
   rule pp1(.pragma _ ;, P) => P
-  rule pp1(.loc _ _ _, P) => P
+  rule pp1(.loc _:Int _:Int _:Int _:LocOpts, P) => P
+  rule pp1(_:Name : .callprototype ( _:ParamDecls ) _:Name ( _:ParamDecls ) _:PerfDirs ;, P) => P
+  rule pp1(_:Name : .callprototype _:Name ( _:ParamDecls ) _:PerfDirs ;, P) => P
+  rule pp1(_:DAttrs _:TexKind _:DItems ;, P) => P      // textures: see task 35
+  // target lists are kept in the label table under "@calltargets:L" / "@branchtargets:L"
+  rule pp1(N:Name : .calltargets Ns:Names ;, pps(C, I, L, RW, SH)) =>
+       pps(C, I, L[("@calltargets:" +String Name2String(N)) <- namesL(Ns)], RW, SH)
+  rule pp1(N:Name : .branchtargets Ns:Names ;, pps(C, I, L, RW, SH)) =>
+       pps(C, I, L[("@branchtargets:" +String Name2String(N)) <- namesL(Ns)], RW, SH)
   rule pp1(A1:DAttrs T:Type A2:DAttrs Is:DItems ;, P) =>
        ppDecl(dspace(aset(A1) |Set aset(A2)), aset(A1) |Set aset(A2),
               alignOr(A1, A2, typeOf(T)), typeOf(T), itemsL(Is), P)
