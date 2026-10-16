@@ -79,7 +79,7 @@ decimal, `0x` hex, or PTX bit patterns (`0f3F800000`, `0d3FF0000000000000`).
 | `semantics/ptx-configuration.k` | machine state, state-space address map, byte memories |
 | `semantics/ptx-load.k` | flattening function bodies to code maps, labels, register widths, static allocation |
 | `semantics/ptx-alu.k` | pure semantics of arithmetic, logic, comparisons, conversions and atomics |
-| `semantics/ptx-exec*.k` | per-thread execution, one module per area: `-core` (operands, scheduling, fetch), `-alu`, `-mem`, `-ctrl` (branches, calls, exit), `-sync` (barriers); `ptx-exec.k` assembles them |
+| `semantics/ptx-exec*.k` | per-thread execution, one module per area: `-core` (operands, scheduling, fetch), `-alu`, `-mem`, `-ctrl` (branches, calls, exit), `-sync` (barriers), `-coll` (warp-collective rendezvous); `ptx-exec.k` assembles them |
 | `semantics/ptx-harness.k` | host side: module loading, buffers, grid launch, `.print`/`.expect` |
 | `tests/` | regression programs and golden outputs |
 | `examples/` | `--search` demonstrations (races, barriers, deadlock) |
@@ -104,7 +104,11 @@ Features are added as new modules, so independent areas do not conflict:
    `%%` (e.g. `"%%cc.cf"`) so it cannot clash with PTX registers, or add a
    cell to `ptx-configuration.k`.
 6. **Host directives**: `ptx-syntax.k` (`HarnessDir`) and `ptx-harness.k`.
-7. Add a program to `tests/` (generate its golden file with
+7. **Warp-collective (`.sync`) instructions** use the rendezvous in
+   `ptx-exec-coll.k`: add `rule isCollective("op") => true`, rewrite the
+   instruction to `#coll(kind, mask, data, contribution, dests)`, and define
+   `collCompute(kind, data, arrivals)`. See the header of that file.
+8. Add a program to `tests/` (generate its golden file with
    `scripts/run-tests.sh --update tests/x.ptx`) and tick `ROADMAP.md`.
 
 ## What is modelled

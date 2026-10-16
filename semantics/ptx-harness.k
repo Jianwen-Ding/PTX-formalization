@@ -152,8 +152,22 @@ module PTX-HARNESS
                | sizeRegs(String, Dim3) [function, total]
   rule sregs(C, T, GD, BD) =>
        dimRegs("%tid", T, BD) dimRegs("%ctaid", C, GD) sizeRegs("%ntid", BD) sizeRegs("%nctaid", GD)
+       lanemasks(T %Int 32)
        "%laneid" |-> T %Int 32  "%warpid" |-> T /Int 32  "%nwarpid" |-> (vol(BD) +Int 31) /Int 32
        "%smid" |-> 0  "%gridid" |-> 0  "%clock" |-> 0  "%clock64" |-> 0  "%warpsize" |-> 32
+  syntax Map ::= lanemasks(Int) [function, total]
+  // note: operands in `(...)` are avoided at value positions here, because the
+  // PTX grammar's call-argument production "(" Operands ")" makes them ambiguous
+  syntax Int ::= lmEq(Int) [function, total] | lmLt(Int) [function, total] | lmLe(Int) [function, total]
+               | lmGt(Int) [function, total] | lmGe(Int) [function, total]
+  rule lmEq(L) => 1 <<Int L
+  rule lmLt(L) => lmEq(L) -Int 1
+  rule lmLe(L) => lmLt(L) |Int lmEq(L)
+  rule lmGt(L) => 4294967295 &Int (~Int lmLe(L))
+  rule lmGe(L) => 4294967295 &Int (~Int lmLt(L))
+  rule lanemasks(L) =>
+       "%lanemask_eq" |-> lmEq(L)  "%lanemask_lt" |-> lmLt(L)  "%lanemask_le" |-> lmLe(L)
+       "%lanemask_gt" |-> lmGt(L)  "%lanemask_ge" |-> lmGe(L)
   rule dimRegs(P, I, dim3(X, Y, _)) =>
        (P +String ".x") |-> I %Int X  (P +String ".y") |-> (I /Int X) %Int Y  (P +String ".z") |-> I /Int (X *Int Y)
   rule sizeRegs(P, dim3(X, Y, Z)) =>

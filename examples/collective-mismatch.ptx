@@ -1,0 +1,26 @@
+// Warp-collective with an inconsistent mask: even lanes name mask 0xF (all four
+// lanes) but the odd lanes never execute that instance, so the even lanes wait
+// forever while the odd lanes (mask 0xA, consistent) finish.  The final
+// configuration shows the two even threads stuck at #collWait.
+// (Uses the internal coll_test instruction of the rendezvous infrastructure.)
+.version 8.0
+.target sm_80
+.address_size 64
+
+.visible .entry mismatch()
+{
+    .reg .pred %p<2>;
+    .reg .b32  %r<6>;
+    mov.u32         %r1, %tid.x;
+    and.b32         %r2, %r1, 1;
+    setp.ne.u32     %p1, %r2, 0;
+    @%p1 bra        $L__odd;
+    coll_test.sum.u32 %r3, %r1, 15;
+    bra.uni         $L__done;
+$L__odd:
+    coll_test.sum.u32 %r3, %r1, 10;
+$L__done:
+    ret;
+}
+
+.launch mismatch <<< 1, 4 >>> ();

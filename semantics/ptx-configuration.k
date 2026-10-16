@@ -47,6 +47,12 @@ module PTX-CONFIGURATION
   // symbol environment, local-memory top
   syntax Frame ::= frame(String, Int, Map, Map, Map, Int)
 
+  // warp-collective rendezvous (see ptx-exec-coll.k): key = (warp, kind, mask,
+  // per-thread sequence number); entry = (kind, data, mask, arrivals: lane |->
+  // contribution, results: lane |-> result, number of lanes that took their result)
+  syntax CollKey ::= ck(Int, String, Int, Int)
+  syntax Coll    ::= coll(String, List, Int, Map, Map, Int)
+
   // buffer allocated by the harness: address, element type, element count
   syntax Buf ::= buf(Int, Ty, Int)
 
@@ -79,6 +85,7 @@ module PTX-CONFIGURATION
           <barCnt> .Map </barCnt>
           <barExp> .Map </barExp>
           <barGen> .Map </barGen>
+          <colls> .Map </colls>
           <threads>
             <thread multiplicity="*" type="Map">
               <tid> 0 </tid>
@@ -93,6 +100,7 @@ module PTX-CONFIGURATION
               <sregs> .Map </sregs>
               <pmem> .Bytes </pmem>
               <ptop> 0 </ptop>
+              <cseq> .Map </cseq>
               <lmem> .Bytes </lmem>
               <ltop> 0 </ltop>
             </thread>

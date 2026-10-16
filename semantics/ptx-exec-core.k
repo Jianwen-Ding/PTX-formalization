@@ -63,8 +63,14 @@ module PTX-EXEC-CORE
   rule isVisible(ins(_, opc(OP, M, _), _)) =>
        ((OP in (SetItem("ld") SetItem("st") SetItem("atom") SetItem("red")))
          andBool notBool spaceOf(M) in (SetItem("param") SetItem("local")))
-       orBool isBar(OP, M) orBool OP ==String "exit"
+       orBool isBar(OP, M) orBool OP ==String "exit" orBool isCollective(OP)
   rule isVisible(_) => false [owise]
+
+  // Warp-collective instructions rendezvous through the CTA (ptx-exec-coll.k);
+  // later modules extend this set with shfl, vote, match, ...
+  // Each such module adds `rule isCollective("name") => true`.
+  syntax Bool ::= isCollective(String) [function, total]
+  rule isCollective(_) => false [owise]
 
   // fetch: allowed when holding the turn (local instruction) or when the turn
   // is free (any instruction; the thread then takes the turn)
