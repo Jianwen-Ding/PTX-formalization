@@ -37,7 +37,7 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 - [x] 17 Barrier variants (bar.warp.sync, bar.red, barrier.cta.*)
 
 ## 5. Matrix (after 3, 12)
-- [ ] 18 wmma
+- [x] 18 wmma
 - [ ] 19 mma.sync with specified fragment layouts
 - [ ] 20 ldmatrix / stmatrix / movmatrix (after 19)
 - [ ] 21 mma.sp (after 19)

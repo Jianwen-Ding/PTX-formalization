@@ -20,13 +20,14 @@
 // =============================================================================
 requires "ptx-exec-mini.k"
 requires "ptx-exec-warp.k"
+requires "ptx-exec-mem.k"
 
 module PTX-EXEC-MMA
   imports PTX-EXEC-MINI
   imports PTX-EXEC-WARP
+  imports PTX-EXEC-MEM
 
   rule isCollective("mma") => true
-  rule isCollective("wmma") => false
 
   // ---------------------------------------------------------------- shapes
   syntax Int ::= shM(String) [function, total] | shN(String) [function, total] | shK(String) [function, total]
@@ -226,4 +227,146 @@ module PTX-EXEC-MMA
             #coll("mma", 4294967295, ListItem(shapeOf(M)) ListItem(DT) ListItem(AT) ListItem(BT) ListItem(CT) ListItem(M),
                   vecRegs(Av, AT, C) vecRegs(Bv, BT, C) vecRegs(Cv, CT, C), vecOps(Dv)) ... </tk>
     requires "sync" in M
+
+  // ================================================================ wmma
+  // Fragment layouts of wmma are unspecified in PTX, so any consistent assignment is
+  // valid: element I of lane L holds matrix element ((L * NEL + I) mod size) in row-major
+  // order, which covers the matrix and replicates elements when the fragments are larger
+  // than the matrix (as the register counts in the ISA require).
+  syntax Int ::= wmRegs(String, String, Ty) [function, total]          // matrix (a/b/c/d), shape, element type
+  rule wmRegs("c", S, T) => 4 requires T ==K ty("f", 16)
+  rule wmRegs("c", S, T) => 2 requires shM(S) ==Int 8 andBool shN(S) ==Int 8 andBool notBool T ==K ty("f", 16)
+  rule wmRegs("c", S, T) => 8 requires shM(S) ==Int 16 andBool shN(S) ==Int 16 andBool notBool T ==K ty("f", 16)
+  rule wmRegs("c", _, _) => 8 [owise]
+  rule wmRegs("d", S, T) => wmRegs("c", S, T)
+  rule wmRegs(Mat, S, T) => 8 requires (Mat ==String "a" orBool Mat ==String "b") andBool T ==K ty("f", 16)
+  rule wmRegs(Mat, S, ty("bf", _)) => #if Mat ==String "a" #then (#if S ==String "m16n16k16" #then 4 #else #if S ==String "m8n32k16" #then 2 #else 8 #fi #fi)
+                                       #else (#if S ==String "m16n16k16" #then 4 #else #if S ==String "m8n32k16" #then 8 #else 2 #fi #fi) #fi
+    requires Mat ==String "a" orBool Mat ==String "b"
+  rule wmRegs(Mat, _, ty("tf", _)) => 4 requires Mat ==String "a" orBool Mat ==String "b"
+  rule wmRegs(Mat, _, ty("f", 64)) => 1 requires Mat ==String "a" orBool Mat ==String "b"
+  rule wmRegs(Mat, S, ty(K, 8)) => #if Mat ==String "a" #then (#if S ==String "m16n16k16" #then 2 #else #if S ==String "m8n32k16" #then 1 #else 4 #fi #fi)
+                                    #else (#if S ==String "m16n16k16" #then 2 #else #if S ==String "m8n32k16" #then 4 #else 1 #fi #fi) #fi
+    requires (Mat ==String "a" orBool Mat ==String "b") andBool (K ==String "s" orBool K ==String "u")
+  rule wmRegs(Mat, _, ty(_, 4)) => 1 requires Mat ==String "a" orBool Mat ==String "b"
+  rule wmRegs(Mat, _, ty("b", 1)) => 1 requires Mat ==String "a" orBool Mat ==String "b"
+  rule wmRegs(_, _, _) => 1 [owise]
+
+  syntax Int ::= wmNel(String, String, Ty) [function, total]            // elements per lane
+  rule wmNel(Mat, S, T) => wmRegs(Mat, S, T) *Int perReg(T)
+  syntax Int ::= wmRows(String, String) [function, total] | wmCols(String, String) [function, total]
+  rule wmRows("a", S) => shM(S)   rule wmCols("a", S) => shK(S)
+  rule wmRows("b", S) => shK(S)   rule wmCols("b", S) => shN(S)
+  rule wmRows(_, S) => shM(S) [owise]   rule wmCols(_, S) => shN(S) [owise]
+  // matrix position of element I of lane L (fragment of `Mat`, element type T)
+  syntax Int ::= wmPos(String, String, Ty, Int, Int) [function, total]
+  rule wmPos(Mat, S, T, L, I) => rc(((L *Int wmNel(Mat, S, T) +Int I) %Int (wmRows(Mat, S) *Int wmCols(Mat, S))) /Int wmCols(Mat, S),
+                                    ((L *Int wmNel(Mat, S, T) +Int I) %Int (wmRows(Mat, S) *Int wmCols(Mat, S))) %Int wmCols(Mat, S))
+
+  // ---------------------------------------------------------------- wmma.mma
+  syntax Map ::= wmFill(String, String, Ty, Map, List, Int, Map) [function, total]       // matrix, shape, type, arrivals, lanes, reg offset, acc
+  rule wmFill(Mat, S, T, Arr, ListItem(L:Int) Ls, Off, Acc) =>
+       wmFill(Mat, S, T, Arr, Ls, Off, wmFillLane(Mat, S, T, listAt(Arr, L), L, 0, Off, Acc))
+  rule wmFill(_, _, _, _, _, _, Acc) => Acc [owise]
+  syntax Map ::= wmFillLane(String, String, Ty, List, Int, Int, Int, Map) [function, total]
+  rule wmFillLane(Mat, S, T, Rs, L, I, Off, Acc) =>
+       wmFillLane(Mat, S, T, Rs, L, I +Int 1, Off, Acc[wmPos(Mat, S, T, L, I) <- fragBits(Rs, Off, T, I)])
+    requires I <Int wmNel(Mat, S, T)
+  rule wmFillLane(_, _, _, _, _, _, _, Acc) => Acc [owise]
+
+  syntax List ::= wmLaneRegs(String, Ty, Map, Int, Int, List) [function, total]          // shape, type, D values, lane, reg, acc
+  rule wmLaneRegs(S, T, DV, L, R, Acc) => wmLaneRegs(S, T, DV, L, R +Int 1, Acc ListItem(wmPack(S, T, DV, L, R *Int perReg(T), 0)))
+    requires R <Int wmRegs("c", S, T)
+  rule wmLaneRegs(_, _, _, _, _, Acc) => Acc [owise]
+  syntax Int ::= wmPack(String, Ty, Map, Int, Int, Int) [function, total]
+  rule wmPack(S, T, DV, L, I, J) => ({DV[wmPos("c", S, T, L, I +Int J)] orDefault 0}:>Int <<Int (ew(T) *Int J)) |Int wmPack(S, T, DV, L, I, J +Int 1)
+    requires J <Int perReg(T)
+  rule wmPack(_, _, _, _, _, _) => 0 [owise]
+  syntax Map ::= wmScatter(String, Ty, Map, List) [function, total]
+  rule wmScatter(S, T, DV, ListItem(L:Int) Ls) => (L |-> wmLaneRegs(S, T, DV, L, 0, .List)) wmScatter(S, T, DV, Ls)
+  rule wmScatter(_, _, _, _) => .Map [owise]
+
+  // positions in D follow the layout of the accumulator fragment: re-key the result matrix
+  rule collCompute("wmma", Data, Arr) =>
+       wmScatter(shapeD(Data), dTy(Data),
+                 resRows(shapeD(Data), dTy(Data), aTy(Data), bTy(Data), cTy(Data),
+                         wmFill("a", shapeD(Data), aTy(Data), Arr, keys_list(Arr), 0, .Map),
+                         wmFill("b", shapeD(Data), bTy(Data), Arr, keys_list(Arr), wmRegs("a", shapeD(Data), aTy(Data)), .Map),
+                         wmFill("c", shapeD(Data), cTy(Data), Arr, keys_list(Arr), wmRegs("a", shapeD(Data), aTy(Data)) +Int wmRegs("b", shapeD(Data), bTy(Data)), .Map),
+                         0, 0, modsD(Data), .Map),
+                 keys_list(Arr))
+
+  // wmma.mma.sync.aligned.alayout.blayout.shape.dtype.ctype d, a, b, c           (f16)
+  // wmma.mma.sync.aligned.alayout.blayout.shape.dtype.atype.btype.ctype d, a, b, c
+  rule isCollective("wmma") => true
+  rule <tk> exec(opc("wmma", M, ListItem(DT) ListItem(CT)), ops(Dv, Av, Bv, Cv, .Operands), C) =>
+            #coll("wmma", 4294967295, ListItem(shapeOf(M)) ListItem(DT) ListItem(ty("f", 16)) ListItem(ty("f", 16)) ListItem(CT) ListItem(M),
+                  vecRegs(Av, ty("f", 16), C) vecRegs(Bv, ty("f", 16), C) vecRegs(Cv, CT, C), vecOps(Dv)) ... </tk>
+    requires "mma" in M
+  rule <tk> exec(opc("wmma", M, ListItem(DT) ListItem(AT) ListItem(BT) ListItem(CT)), ops(Dv, Av, Bv, Cv, .Operands), C) =>
+            #coll("wmma", 4294967295, ListItem(shapeOf(M)) ListItem(DT) ListItem(AT) ListItem(BT) ListItem(CT) ListItem(M),
+                  vecRegs(Av, AT, C) vecRegs(Bv, BT, C) vecRegs(Cv, CT, C), vecOps(Dv)) ... </tk>
+    requires "mma" in M
+
+  // ---------------------------------------------------------------- wmma.load / wmma.store
+  // element (r, c) of a matrix in memory: row layout p + (r*stride + c) elements, col layout p + (c*stride + r)
+  syntax Int ::= elemIndex(Bool, Int, Int, Int) [function, total]                 // col-major?, r, c, stride
+  rule elemIndex(Col, R, Cn, St) => #if Col #then Cn *Int St +Int R #else R *Int St +Int Cn #fi
+  // a fragment element in memory: (byte location, bit offset in that byte)
+  syntax WmEl ::= wmEl(Loc, Int)
+  syntax List ::= wmLocs(String, String, Ty, Int, Bool, Int, Loc, Int, Int) [function, total]   // mat, shape, type, lane, col?, stride, base, I, N
+  rule wmLocs(Mat, S, T, L, Col, St, loc(Sp, A), I, N) =>
+       ListItem(wmEl(loc(Sp, A +Int (elemIndex(Col, wmPos(Mat, S, T, L, I) /Int 1024, wmPos(Mat, S, T, L, I) %Int 1024, St) *Int ew(T)) /Int 8),
+                    (elemIndex(Col, wmPos(Mat, S, T, L, I) /Int 1024, wmPos(Mat, S, T, L, I) %Int 1024, St) *Int ew(T)) %Int 8))
+       wmLocs(Mat, S, T, L, Col, St, loc(Sp, A), I +Int 1, N)
+    requires I <Int N
+  rule wmLocs(_, _, _, _, _, _, _, _, _) => .List [owise]
+  rule wmLocs(Mat, S, T, L, Col, St, badLoc(E), I, N) => ListItem(wmEl(badLoc(E), 0)) [priority(40)]
+  syntax Int ::= wmBytes(Ty) [function, total]
+  rule wmBytes(T) => #if ew(T) <Int 8 #then 1 #else ew(T) /Int 8 #fi
+
+  syntax KItem ::= #wmLoad(List, List, Ty, Operand) | #wmGot(Int, Ty, List, List, Operand)
+                 | #wmWr(List, List) | #wmStore(List, List, Ty)
+  syntax List ::= wmPackRegs(List, Ty) [function, total]          // elements -> registers
+  rule wmPackRegs(Es, T) => ListItem(wmPackOne(Es, T, 0)) wmPackRegs(dropN(Es, perReg(T)), T) requires size(Es) >Int 0
+  rule wmPackRegs(_, _) => .List [owise]
+  syntax Int ::= wmPackOne(List, Ty, Int) [function, total]
+  rule wmPackOne(Es, T, J) => ((at(Es, J) &Int mask(ew(T))) <<Int (ew(T) *Int J)) |Int wmPackOne(Es, T, J +Int 1) requires J <Int perReg(T) andBool J <Int size(Es)
+  rule wmPackOne(_, _, _) => 0 [owise]
+  syntax List ::= dropN(List, Int) [function, total]
+  rule dropN(ListItem(_) Ls, N) => dropN(Ls, N -Int 1) requires N >Int 0
+  rule dropN(Ls, _) => Ls [owise]
+
+  rule <tk> exec(opc("wmma", M, ListItem(T)), ops(Dv, [ A ], St, .Operands), C) =>
+            #wmLoad(wmLocs(pick(M, ListItem("a") ListItem("b") ListItem("c"), "a"), shapeOf(M), T, TID %Int 32, "col" in M,
+                           rd(St, ty("u", 32), C), ea(A, spaceOf(M), C), 0, wmNel(pick(M, ListItem("a") ListItem("b") ListItem("c"), "a"), shapeOf(M), T)),
+                    .List, T, Dv) ... </tk>
+       <tid> TID </tid>
+    requires "load" in M
+  rule <tk> #wmLoad(ListItem(wmEl(L, O)) Ls, Acc, T, Dv) =>
+            #mem(L, rdOp(wmBytes(T))) ~> #wmGot(O, T, Ls, Acc, Dv) ... </tk>
+  rule <tk> #wmLoad(ListItem(wmEl(badLoc(S), _)) _, _, _, _) => #fault(S, 0) ... </tk> [priority(40)]
+  rule <tk> #res(V) ~> #wmGot(O, T, Ls, Acc, Dv) => #wmLoad(Ls, Acc ListItem((V >>Int O) &Int mask(ew(T))), T, Dv) ... </tk>
+  rule <tk> #wmLoad(.List, Acc, T, Dv) => #wmWr(vecOps(Dv), wmPackRegs(Acc, T)) ... </tk>
+  rule <tk> #wmWr(ListItem(D:Operand) Ds, ListItem(V:Int) Vs) => #wmWr(Ds, Vs) ... </tk>
+       <regs> R => wr(R, D, V) </regs>
+  rule <tk> #wmWr(_, _) => .K ... </tk> [owise]
+
+  // wmma.store.d.sync.aligned.layout.shape.space.type [p], {r...}, stride
+  rule <tk> exec(opc("wmma", M, ListItem(T)), ops([ A ], Vs, St, .Operands), C) =>
+            #wmStore(wmLocs("c", shapeOf(M), T, TID %Int 32, "col" in M,
+                            rd(St, ty("u", 32), C), ea(A, spaceOf(M), C), 0, wmNel("c", shapeOf(M), T)),
+                     wmElems(vecRegs(Vs, T, C), T, 0, wmNel("c", shapeOf(M), T)), T) ... </tk>
+       <tid> TID </tid>
+    requires "store" in M
+  syntax List ::= wmElems(List, Ty, Int, Int) [function, total]
+  rule wmElems(Rs, T, I, N) => ListItem(fragBits(Rs, 0, T, I)) wmElems(Rs, T, I +Int 1, N) requires I <Int N
+  rule wmElems(_, _, _, _) => .List [owise]
+  rule <tk> #wmStore(ListItem(wmEl(L, O)) Ls, ListItem(V:Int) Vs, T) =>
+            #mem(L, wmStOp(T, O, V)) ~> #drop ~> #wmStore(Ls, Vs, T) ... </tk>
+  rule <tk> #wmStore(ListItem(wmEl(badLoc(S), _)) _, _, _) => #fault(S, 0) ... </tk> [priority(40)]
+  rule <tk> #wmStore(.List, _, _) => .K ... </tk>
+  syntax MemOp ::= wmStOp(Ty, Int, Int) [function, total]
+  rule wmStOp(T, O, V) => insOp(O, ew(T), V) requires ew(T) <Int 8
+  rule wmStOp(T, _, V) => wrOp(ew(T) /Int 8, V) [owise]
 endmodule

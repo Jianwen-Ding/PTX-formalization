@@ -33,6 +33,7 @@ module PTX-EXEC-MEM
   rule symLoc(noSym(N), _) => badLoc("undefined symbol " +String N)
 
   syntax MemOp ::= rdOp(Int)                       // bytes
+                 | insOp(Int, Int, Int)            // bit offset within the byte, width, value (sub-byte element store)
                  | wrOp(Int, Int)                  // bytes, value
                  | atOp(String, Ty, Int, Int)      // op, type, b, c
   syntax KItem ::= #mem(Loc, MemOp) | #res(Int)
@@ -42,6 +43,8 @@ module PTX-EXEC-MEM
   rule memNew(rdOp(_), M, _) => M
   rule memNew(wrOp(N, V), M, A) => writeBytes(M, A, N, V)
   rule memNew(atOp(OP, T, B, X), M, A) => writeBytes(M, A, bytes(T), atomNew(OP, T, readBytes(M, A, bytes(T)), B, X))
+  rule memNew(insOp(O, W, V), M, A) => writeBytes(M, A, 1, (readBytes(M, A, 1) &Int (~Int (mask(W) <<Int O))) |Int ((V &Int mask(W)) <<Int O))
+  rule memVal(insOp(_, _, _), _, _) => 0
   rule memVal(rdOp(N), M, A) => readBytes(M, A, N)
   rule memVal(wrOp(_, _), _, _) => 0
   rule memVal(atOp(_, T, _, _), M, A) => readBytes(M, A, bytes(T))
