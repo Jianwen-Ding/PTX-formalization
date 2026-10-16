@@ -80,14 +80,14 @@ module PTX-EXEC-MMA
   rule posA(S, 1, L, I) => rc(L /Int 4 +Int 8 *Int ((I /Int 32) %Int 2), 32 *Int (L %Int 4) +Int I %Int 32 +Int 128 *Int (I /Int 64)) requires S ==String "m16n8k256"
   rule posA(_, _, _, _) => 0 -Int 1 [owise]
 
-  rule posB(S, 16, L, I) => rc(2 *Int (L %Int 4) +Int I %Int 2 +Int 8 *Int (I /Int 2), L /Int 4) requires S ==String "m16n8k16"
+  rule posB(S, 16, L, I) => rc(2 *Int (L %Int 4) +Int I %Int 2 +Int 8 *Int (I /Int 2), L /Int 4) requires S ==String "m16n8k16" orBool S ==String "m16n8k32"
   rule posB(S, 16, L, I) => rc(2 *Int (L %Int 4) +Int I, L /Int 4) requires S ==String "m16n8k8"
-  rule posB(S, 32, L, I) => rc(L %Int 4 +Int 4 *Int I, L /Int 4) requires S ==String "m16n8k8" orBool S ==String "m16n8k4"
+  rule posB(S, 32, L, I) => rc(L %Int 4 +Int 4 *Int I, L /Int 4) requires S ==String "m16n8k8" orBool S ==String "m16n8k4" orBool S ==String "m16n8k16"
   rule posB(S, 64, L, I) => rc(L %Int 4 +Int 4 *Int I, L /Int 4) requires S ==String "m8n8k4" orBool S ==String "m16n8k4" orBool S ==String "m16n8k8" orBool S ==String "m16n8k16"
   rule posB(S, 8, L, I) => rc(4 *Int (L %Int 4) +Int I, L /Int 4) requires S ==String "m8n8k16" orBool S ==String "m16n8k16"
-  rule posB(S, 8, L, I) => rc(4 *Int (L %Int 4) +Int I %Int 4 +Int 16 *Int (I /Int 4), L /Int 4) requires S ==String "m16n8k32"
+  rule posB(S, 8, L, I) => rc(4 *Int (L %Int 4) +Int I %Int 4 +Int 16 *Int (I /Int 4), L /Int 4) requires S ==String "m16n8k32" orBool S ==String "m16n8k64"
   rule posB(S, 4, L, I) => rc(8 *Int (L %Int 4) +Int I, L /Int 4) requires S ==String "m8n8k32" orBool S ==String "m16n8k32"
-  rule posB(S, 4, L, I) => rc(8 *Int (L %Int 4) +Int I %Int 8 +Int 32 *Int (I /Int 8), L /Int 4) requires S ==String "m16n8k64"
+  rule posB(S, 4, L, I) => rc(8 *Int (L %Int 4) +Int I %Int 8 +Int 32 *Int (I /Int 8), L /Int 4) requires S ==String "m16n8k64" orBool S ==String "m16n8k128"
   rule posB(S, 1, L, I) => rc(32 *Int (L %Int 4) +Int I, L /Int 4) requires S ==String "m8n8k128" orBool S ==String "m16n8k128"
   rule posB(S, 1, L, I) => rc(32 *Int (L %Int 4) +Int I %Int 32 +Int 128 *Int (I /Int 32), L /Int 4) requires S ==String "m16n8k256"
   rule posB(_, _, _, _) => 0 -Int 1 [owise]
@@ -226,7 +226,7 @@ module PTX-EXEC-MMA
   rule <tk> exec(opc("mma", M, ListItem(DT) ListItem(AT) ListItem(BT) ListItem(CT)), ops(Dv, Av, Bv, Cv, .Operands), C) =>
             #coll("mma", 4294967295, ListItem(shapeOf(M)) ListItem(DT) ListItem(AT) ListItem(BT) ListItem(CT) ListItem(M),
                   vecRegs(Av, AT, C) vecRegs(Bv, BT, C) vecRegs(Cv, CT, C), vecOps(Dv)) ... </tk>
-    requires "sync" in M
+    requires "sync" in M andBool notBool "sp" in M
 
   // ================================================================ wmma
   // Fragment layouts of wmma are unspecified in PTX, so any consistent assignment is

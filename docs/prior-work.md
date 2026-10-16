@@ -71,3 +71,14 @@ in `semantics/` remains the first executable one.
   results, and the carry polarity of `sub.cc`.
 * **gpgpu-sim** (BSD-style licence): its functional PTX simulator was used as an
   independent reading of `prmt` modes, `bfe`, `bfi` and `bfind`.
+
+## Sparse mma.sp metadata layout (assumption)
+
+The PTX ISA text specifies the register fragments of the compressed matrix A with formulas, but
+gives the metadata (`e`) layout only in figures (Figures 122-142), which are not available as
+text.  `semantics/ptx-exec-sp.k` therefore uses the assignment implied by the formulas: a row of
+`nc` chunks needs `4*nc` bits; 16 bits -> lane `4g+f` holds rows g/g+8 in its low/high half;
+32 bits -> lane `4g+2f+rowhalf`; 64 bits -> lane `4g+2*(chunk div 8)+rowhalf`.  Nibbles are
+stored little-endian in chunk order.  Tests `tests/sp-*.ptx` are generated with the same
+assumption, so they check the arithmetic and the A/B/C fragment formulas, not this layout; it
+should be validated against hardware (e.g. CUTLASS' sparse metadata reorder tables).

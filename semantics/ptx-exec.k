@@ -30,6 +30,7 @@ requires "ptx-exec-mini.k"
 requires "ptx-exec-warp.k"
 requires "ptx-exec-mma.k"
 requires "ptx-exec-ldm.k"
+requires "ptx-exec-sp.k"
 
 module PTX-EXEC
   imports PTX-EXEC-CORE
@@ -48,6 +49,7 @@ module PTX-EXEC
   imports PTX-EXEC-WARP
   imports PTX-EXEC-MMA
   imports PTX-EXEC-LDM
+  imports PTX-EXEC-SP
 
   // anything else is outside the modelled subset
   rule <tk> exec(O, _, _) => #unsupported(O) ... </tk> [owise]
