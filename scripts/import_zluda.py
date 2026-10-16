@@ -47,29 +47,34 @@ TYPES = {'u8': ('B', 1), 'u16': ('H', 2), 'u32': ('I', 4), 'u64': ('Q', 8),
          'f32': ('f', 4), 'f64': ('d', 8)}
 
 def eval_elem(tok, ty):
-    tok = tok.strip().replace('_', '')
-    m = re.fullmatch(r'(-?)(0x[0-9a-fA-F]+|0b[01]+|\d+)(u8|u16|u32|u64|i8|i16|i32|i64)?', tok)
+    tok = tok.strip()
+    num = lambda t: t.replace('_', '')
+    m = re.fullmatch(r'(-?)(0x[0-9a-fA-F_]+|0b[01_]+|[0-9][0-9_]*)(u8|u16|u32|u64|i8|i16|i32|i64)?', tok)
     if m and not re.fullmatch(r'\d+\.\d*', tok):
         sign, lit, t = m.groups()
-        v = int(lit, 0) * (-1 if sign else 1)
+        v = int(num(lit), 0) * (-1 if sign else 1)
         return v, t
-    m = re.fullmatch(r'(-?)(\d+\.\d*(?:e-?\d+)?|\d+e-?\d+)(f32|f64)?', tok)
+    m = re.fullmatch(r'(-?)([0-9][0-9_]*\.[0-9_]*(?:e-?\d+)?|[0-9][0-9_]*e-?\d+|[0-9][0-9_]*(?=f(?:32|64)))(f32|f64)?', tok)
     if m:
-        return float(m.group(2)) * (-1 if m.group(1) else 1), m.group(3)
-    m = re.fullmatch(r'f(32|64)::from_bits\((.*)\)', tok)
+        return float(num(m.group(2))) * (-1 if m.group(1) else 1), m.group(3)
+    m = re.fullmatch(r'f(32|64)::(?:from_?bits)\((.*)\)', tok)
     if m:
-        bits = int(m.group(2).replace('_', ''), 0)
+        bits = int(num(m.group(2)), 0)
         return (struct.unpack('<f', struct.pack('<I', bits))[0] if m.group(1) == '32'
                 else struct.unpack('<d', struct.pack('<Q', bits))[0]), 'f' + m.group(1)
-    m = re.fullmatch(r'(u8|u16|u32|u64|i8|i16|i32|i64)::(MAX|MIN|max_value\(\)|min_value\(\))', tok)
+    m = re.fullmatch(r'(u8|u16|u32|u64|i8|i16|i32|i64)::(MAX|MIN|max_?value\(\)|min_?value\(\))', tok)
     if m:
         t, w = m.group(1), TYPES[m.group(1)][1] * 8
         mx = m.group(2).startswith('MAX') or m.group(2).startswith('max')
         if t[0] == 'u': return ((1 << w) - 1 if mx else 0), t
         return ((1 << (w - 1)) - 1 if mx else -(1 << (w - 1))), t
-    m = re.fullmatch(r'f(32|64)::(NAN|INFINITY|NEG_INFINITY)', tok)
+    m = re.fullmatch(r'f(32|64)::(NAN|INFINITY|NEG_?INFINITY)', tok)
     if m:
-        return {'NAN': math.nan, 'INFINITY': math.inf, 'NEG_INFINITY': -math.inf}[m.group(2)], 'f' + m.group(1)
+        return {'NAN': math.nan, 'INFINITY': math.inf, 'NEGINFINITY': -math.inf, 'NEG_INFINITY': -math.inf}[m.group(2)], 'f' + m.group(1)
+    m = re.fullmatch(r'std::f(32|64)::consts::PI(?:\s*/\s*([0-9.]+)(?:f32|f64)?)?', tok)
+    if m:
+        v = math.pi / (float(m.group(2)) if m.group(2) else 1.0)
+        return v, 'f' + m.group(1)
     raise ValueError(tok)
 
 def to_bytes(expr):
@@ -84,7 +89,8 @@ def to_bytes(expr):
         elems = split_top(body)
     vals = [eval_elem(e, None) for e in elems]
     ty = next((t for _, t in vals if t), None)
-    if ty is None: raise ValueError('untyped array: ' + expr)
+    if ty is None:
+        ty = 'f32' if any(isinstance(v, float) for v, _ in vals) else 'u32'    # untyped: assume 32-bit
     code, size = TYPES[ty]
     out = bytearray()
     for v, _ in vals:
@@ -108,6 +114,8 @@ for kind, body in find_calls(src):
             inp, out, threads = b'', to_bytes(parts[1]), 64
         else:
             inp, out, threads = to_bytes(parts[1]), to_bytes(parts[2]), 1
+    except IndexError:
+        continue        # llvm-only test with no recorded inputs/outputs
     except Exception as e:
         print(f'skip {name}: {e}', file=sys.stderr)
         continue

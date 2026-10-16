@@ -23,7 +23,7 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 - [x] 7 lop3 and funnel shifts (shf)
 - [x] 8 mul24/mad24, sad, dp4a/dp2a, .relu min/max, 16x2 SIMD integer ops
 - [x] 9 set, slct, testp
-- [ ] 10 Video instructions (scalar and SIMD; lower priority)
+- [x] 10 Video instructions (scalar and SIMD; lower priority)
 
 ## 3. Floating point
 - [ ] 11 f32/f64 rounding modes and modifiers (.rz/.rm/.rp, .ftz, .sat, .relu, .NaN, .xorsign.abs, approx variants)

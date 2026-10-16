@@ -145,6 +145,8 @@ Syntax accepted includes `.visible/.extern/.weak` linkage, `.align`,
 `{ }` scopes, labels, `.maxntid`-style performance directives, `.pragma`,
 `.loc` and `.file`, and `//` and `/* */` comments.
 
+Video instructions (`vadd vsub vabsdiff vmin vmax vshl vshr vset`, SIMD `v*2`/`v*4`) are modelled best-effort from the ISA text (only `vshr` is hardware-checked); `vmad`, `.mask` destinations and permuting SIMD selectors are not modelled.
+
 **Not (yet) modelled:** warp-synchronous operations (`shfl`, `vote`,
 `match`, `activemask`, `redux`), textures and surfaces, `bfe/bfi/prmt`,
 `addc/subc` carry chains, `f16x2`/`bf16`, tensor-core instructions, clusters,

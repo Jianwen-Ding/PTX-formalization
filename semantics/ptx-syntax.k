@@ -26,7 +26,7 @@ module PTX-SYNTAX
   // Identifiers; dotted forms are used for opcodes (add.s32, ld.global.u32 ...)
   syntax Name   ::= r"[a-zA-Z_$][a-zA-Z0-9_$]*((\\.|::)[a-zA-Z0-9_$]+)*" [token]
   // Registers, including special registers such as %tid.x or %ctaid.y
-  syntax Reg    ::= r"%[a-zA-Z_$][a-zA-Z0-9_$]*(\\.[a-zA-Z]+)?"      [token]
+  syntax Reg    ::= r"%[a-zA-Z_$][a-zA-Z0-9_$]*(\\.[a-zA-Z][a-zA-Z0-9]*)?" [token]
   // 0x1F (hex integer), 0b101 (binary), 0f3F800000 (f32 bit pattern),
   // 0d3FF0000000000000 (f64 bit pattern)
   syntax HexLit ::= r"0[xXfFdDbB][0-9a-fA-F]+[uU]?"                  [token]

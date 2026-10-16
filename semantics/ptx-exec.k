@@ -24,6 +24,7 @@ requires "ptx-exec-int.k"
 requires "ptx-exec-bits.k"
 requires "ptx-exec-intx.k"
 requires "ptx-exec-pred.k"
+requires "ptx-exec-video.k"
 
 module PTX-EXEC
   imports PTX-EXEC-CORE
@@ -36,6 +37,7 @@ module PTX-EXEC
   imports PTX-EXEC-BITS
   imports PTX-EXEC-INTX
   imports PTX-EXEC-PRED
+  imports PTX-EXEC-VIDEO
 
   // anything else is outside the modelled subset
   rule <tk> exec(O, _, _) => #unsupported(O) ... </tk> [owise]
