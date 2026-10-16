@@ -19,7 +19,7 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 
 ## 2. Integer
 - [x] 5 Extended precision: add.cc / addc / sub.cc / subc / mad.cc / madc
-- [ ] 6 Bit-field and permute: bfe, bfi, bfind, fns, bmsk, szext, prmt
+- [x] 6 Bit-field and permute: bfe, bfi, bfind, fns, bmsk, szext, prmt
 - [ ] 7 lop3 and funnel shifts (shf)
 - [ ] 8 mul24/mad24, sad, dp4a/dp2a, .relu min/max, 16x2 SIMD integer ops
 - [ ] 9 set, slct, testp
@@ -63,7 +63,11 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 ## 8. Memory model
 - [ ] 36 PTX weak memory consistency model (reuse existing formalization; litmus suite)
 
-## 9. Quality
+## 9. Found while importing ZLUDA's conformance programs
+- [ ] 42 Vector registers and `.reg`-parameter functions
+- [ ] 43 Scope-aware register shadowing
+
+## 10. Quality
 - [ ] 37 Version / target legality checking
 - [ ] 38 Realistic kernel corpus (after 15, 19, 22, 28, 30)
 - [ ] 39 Interpreter performance

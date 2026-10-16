@@ -8,7 +8,7 @@ module PTX-EXEC-CTRL
   imports PTX-EXEC-CORE
 
   // ------------------------------------------------------------ control flow
-  rule <tk> exec(opc("bra", _, _), ops(N:Name, .Operands), ctx(_, _, _, L)) => .K ... </tk>
+  rule <tk> exec(opc("bra", _, _), ops(N:Name, .Operands), ctx(_, _, _, L, _)) => .K ... </tk>
        <pc> _ => {L[Name2String(N)]}:>Int </pc>
     requires Name2String(N) in_keys(L)
   rule <tk> exec(opc("ret", _, _), ops(.Operands), _) => #ret ... </tk>

@@ -29,7 +29,7 @@ module PTX-SYNTAX
   syntax Reg    ::= r"%[a-zA-Z_$][a-zA-Z0-9_$]*(\\.[a-zA-Z]+)?"      [token]
   // 0x1F (hex integer), 0b101 (binary), 0f3F800000 (f32 bit pattern),
   // 0d3FF0000000000000 (f64 bit pattern)
-  syntax HexLit ::= r"0[xXfFdDbB][0-9a-fA-F]+"                      [token]
+  syntax HexLit ::= r"0[xXfFdDbB][0-9a-fA-F]+[uU]?"                  [token]
   // debug section names
   syntax SecName ::= r"\\.debug_[a-z_0-9]+"                          [token]
 
@@ -62,11 +62,13 @@ module PTX-SYNTAX
                    | "{" Operands "}"          // vector operand
                    | "(" Operands ")"          // call argument / return list
                    | Reg "|" Reg               // setp dual destination
+                   | Name "|" Name             // same, for registers declared without %
                    | "!" Reg                   // negated predicate source
+                   | "!" Name
   syntax Operands ::= List{Operand, ","}
 
   // ---------------------------------------------------------------- statements
-  syntax Guard ::= "@" Reg | "@" "!" Reg
+  syntax Guard ::= "@" Reg | "@" "!" Reg | "@" Name | "@" "!" Name
   syntax Instr ::= Name Operands ";"
 
   syntax DAttr  ::= ".visible" | ".extern" | ".weak" | ".common"
@@ -79,6 +81,7 @@ module PTX-SYNTAX
 
   syntax DItem  ::= Name | Reg
                   | Reg "<" Int ">"           // %r<10>  declares %r0 .. %r9
+                  | Name "<" Int ">"          // tmp<4>  declares tmp0 .. tmp3
                   | Name ArrDims              // arrays of any rank
   syntax ArrDims ::= "[" Int "]" ArrDims | "[" Int "]" | "[" "]"
   syntax DItems ::= NeList{DItem, ","}

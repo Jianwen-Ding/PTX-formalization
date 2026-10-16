@@ -58,3 +58,16 @@ in `semantics/` remains the first executable one.
   TestFloat supports (f16, bf16, directed rounding, int/float conversions).
 * Task 39: the TestFloat test takes ~55 s because every store copies the
   whole `Bytes` memory; this is the first performance target.
+
+## Imported test corpora (added during task 6)
+
+* **ZLUDA** (https://github.com/vosen/ZLUDA, MIT OR Apache-2.0): ~190 small PTX
+  programs with inputs and outputs recorded from real NVIDIA hardware.
+  `scripts/import_zluda.py` converts them into self-contained programs for this
+  semantics (`tests/zluda/`), `scripts/run-zluda.py` runs them and keeps
+  `tests/zluda/EXPECTED_PASS` as a regression list. Importing them already
+  exposed missing grammar (registers without `%`, `U`-suffixed literals), a
+  wrong `setp.num` with NaNs, missing sign extension for narrow `cvt`/`ld`
+  results, and the carry polarity of `sub.cc`.
+* **gpgpu-sim** (BSD-style licence): its functional PTX simulator was used as an
+  independent reading of `prmt` modes, `bfe`, `bfi` and `bfind`.

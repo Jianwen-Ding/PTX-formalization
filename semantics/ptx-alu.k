@@ -152,6 +152,7 @@ module PTX-ALU
     requires (isNaN(X) orBool isNaN(Y)) andBool lengthString(OP) ==Int 2
   rule cmpF(OP, X, Y) => true
     requires (isNaN(X) orBool isNaN(Y)) andBool lengthString(OP) ==Int 3
+     andBool OP =/=String "num" andBool OP =/=String "nan"
   rule cmpF(OP, X, Y) => cmpOrd(substrString(OP, 0, 2), X, Y)
     requires notBool (isNaN(X) orBool isNaN(Y)) andBool OP =/=String "num" andBool OP =/=String "nan"
   syntax Bool ::= cmpOrd(String, Float, Float) [function]

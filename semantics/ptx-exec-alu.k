@@ -24,6 +24,8 @@ module PTX-EXEC-ALU
   syntax Map ::= wrP(Map, Operand, Int, String, Int) [function, total]
   rule wrP(R, P:Reg | Q:Reg, V, BO, X) =>
        R[Reg2String(P) <- bop(V, BO, X)][Reg2String(Q) <- bop(1 -Int V, BO, X)]
+  rule wrP(R, P:Name | Q:Name, V, BO, X) =>
+       R[Name2String(P) <- bop(V, BO, X)][Name2String(Q) <- bop(1 -Int V, BO, X)]
   rule wrP(R, D, V, BO, X) => wr(R, D, bop(V, BO, X)) [owise]
   rule <tk> exec(opc("setp", M, ListItem(T)), ops(D, A, B, .Operands), C) => .K ... </tk>
        <regs> R => wrP(R, D, cmp(cmpOp(M), T, rd(A, T, C), rd(B, T, C)), "none", 0) </regs>
@@ -48,7 +50,7 @@ module PTX-EXEC-ALU
 
   // cvt.[mods].dtype.stype
   rule <tk> exec(opc("cvt", M, ListItem(DT) ListItem(ST)), ops(D, A, .Operands), C) => .K ... </tk>
-       <regs> R => wr(R, D, cvt(M, DT, ST, rd(A, ST, C))) </regs>
+       <regs> R => wr(R, D, extReg(cvt(M, DT, ST, rd(A, ST, C)), DT, RW, D)) </regs> <rw> RW </rw>
 
   // cvta[.to].space.size: move between a state space and the generic space
   rule <tk> exec(opc("cvta", M, ListItem(T)), ops(D, A, .Operands), C) => .K ... </tk>

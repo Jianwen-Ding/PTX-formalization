@@ -229,8 +229,13 @@ module PTX-COMMON
   // ------------------------------------------------------------ literals
   syntax Int ::= hexBits(HexLit, Ty) [function]
                | hexBitsAux(String, String, Ty) [function]
-  rule hexBits(H, T) => hexBitsAux(substrString(Hex2String(H), 1, 2),
-                                   substrString(Hex2String(H), 2, lengthString(Hex2String(H))), T)
+  // a trailing U/u (unsigned suffix) is ignored
+  syntax String ::= hexStr(HexLit) [function, total]
+  rule hexStr(H) => substrString(Hex2String(H), 0, lengthString(Hex2String(H)) -Int 1)
+    requires substrString(Hex2String(H), lengthString(Hex2String(H)) -Int 1, lengthString(Hex2String(H))) in (SetItem("u") SetItem("U"))
+  rule hexStr(H) => Hex2String(H) [owise]
+  rule hexBits(H, T) => hexBitsAux(substrString(hexStr(H), 1, 2),
+                                   substrString(hexStr(H), 2, lengthString(hexStr(H))), T)
   rule hexBitsAux(P, D, T) => encodeF(decodeF(String2Base(D, 16), 32), wid(T))
     requires (P ==String "f" orBool P ==String "F") andBool isF(T) andBool wid(T) =/=Int 32
   rule hexBitsAux(P, D, T) => encodeF(decodeF(String2Base(D, 16), 64), wid(T))

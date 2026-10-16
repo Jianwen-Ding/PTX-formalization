@@ -6,8 +6,10 @@
 //
 // Each thread has a one-bit carry flag CC.CF, kept in its register file under
 // the reserved key "%%cc.cf".  Instructions without `.cc` leave it untouched.
-// Carry-out of an addition is the unsigned carry out of the type's width; for
-// subtraction CC.CF is the *borrow* (a < b + borrow-in as unsigned values).
+// Carry-out of an addition is the unsigned carry out of the type's width.
+// Subtraction is a + ~b + CF (CF = 1 means "no borrow"), so sub.cc sets CC.CF
+// to 1 exactly when a >= b (unsigned) -- this is what hardware does, and what
+// the ZLUDA conformance test subc_cc_s32 observes.
 // =============================================================================
 requires "ptx-exec-core.k"
 
@@ -21,10 +23,10 @@ module PTX-EXEC-INT
   syntax List ::= ccOp(String, Set, Ty, Int, Int, Int, Int) [function, total]   // op, mods, type, cin, a, b, c
   rule ccOp(OP, _, T, CIN, A, B, _) => ccSum(trunc(A, wid(T)) +Int trunc(B, wid(T)) +Int CIN, wid(T))
     requires OP ==String "add" orBool OP ==String "addc"
-  rule ccOp(OP, _, T, CIN, A, B, _) =>
-       ListItem(trunc(trunc(A, wid(T)) -Int trunc(B, wid(T)) -Int CIN, wid(T)))
-       ListItem(b2i(trunc(A, wid(T)) <Int trunc(B, wid(T)) +Int CIN))
-    requires OP ==String "sub" orBool OP ==String "subc"
+  rule ccOp("sub", _, T, _, A, B, _) =>
+       ccSum(trunc(A, wid(T)) +Int trunc(~Int B, wid(T)) +Int 1, wid(T))
+  rule ccOp("subc", _, T, CIN, A, B, _) =>
+       ccSum(trunc(A, wid(T)) +Int trunc(~Int B, wid(T)) +Int CIN, wid(T))
   rule ccOp(OP, M, T, CIN, A, B, C) =>
        ccSum(madHalf(M, T, A, B) +Int trunc(C, wid(T)) +Int CIN, wid(T))
     requires OP ==String "mad" orBool OP ==String "madc"

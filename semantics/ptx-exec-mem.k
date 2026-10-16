@@ -15,9 +15,12 @@ module PTX-EXEC-MEM
   rule ea(R:Reg, S, C)         => mkLoc(S, rreg(Reg2String(R), C))
   rule ea(R:Reg I:Int, S, C)   => mkLoc(S, rreg(Reg2String(R), C) +Int I)
   rule ea(R:Reg + I:Int, S, C) => mkLoc(S, rreg(Reg2String(R), C) +Int I)
-  rule ea(N:Name, _, C)         => symLoc(lookupSym(Name2String(N), C), 0)
-  rule ea(N:Name I:Int, _, C)   => symLoc(lookupSym(Name2String(N), C), I)
-  rule ea(N:Name + I:Int, _, C) => symLoc(lookupSym(Name2String(N), C), I)
+  rule ea(N:Name, S, C)         => mkLoc(S, rreg(Name2String(N), C)) requires isRegName(N, C)
+  rule ea(N:Name I:Int, S, C)   => mkLoc(S, rreg(Name2String(N), C) +Int I) requires isRegName(N, C)
+  rule ea(N:Name + I:Int, S, C) => mkLoc(S, rreg(Name2String(N), C) +Int I) requires isRegName(N, C)
+  rule ea(N:Name, _, C)         => symLoc(lookupSym(Name2String(N), C), 0) requires notBool isRegName(N, C)
+  rule ea(N:Name I:Int, _, C)   => symLoc(lookupSym(Name2String(N), C), I) requires notBool isRegName(N, C)
+  rule ea(N:Name + I:Int, _, C) => symLoc(lookupSym(Name2String(N), C), I) requires notBool isRegName(N, C)
   rule ea(I:Int, S, _)          => mkLoc(S, I)
 
   rule mkLoc("generic", A) => loc("local", A -Int LOCBASE) requires A >=Int LOCBASE
@@ -65,9 +68,7 @@ module PTX-EXEC-MEM
        <regs> R => wr(R, D, ldExt(V, T, RW, D)) </regs> <rw> RW </rw>
   rule <tk> #res(_) ~> #drop => .K ... </tk>
   syntax Int ::= ldExt(Int, Ty, Map, Operand) [function, total]
-  rule ldExt(V, T, RW, D:Reg) => trunc(sext(V, wid(T)), {RW[Reg2String(D)] orDefault 32}:>Int)
-    requires isS(T) andBool wid(T) <Int 32
-  rule ldExt(V, _, _, _) => V [owise]
+  rule ldExt(V, T, RW, D) => extReg(V, T, RW, D)
 
   syntax KItem ::= #ldv(List, Loc, Ty) | #stv(List, Loc, Ty, Ctx)
   rule <tk> exec(opc("ld", M, ListItem(T)), ops(D, [ A ], .Operands), C) =>

@@ -81,7 +81,7 @@ decimal, `0x` hex, or PTX bit patterns (`0f3F800000`, `0d3FF0000000000000`).
 | `semantics/ptx-alu.k` | pure semantics of arithmetic, logic, comparisons, conversions and atomics |
 | `semantics/ptx-exec*.k` | per-thread execution, one module per area: `-core` (operands, scheduling, fetch), `-alu`, `-mem`, `-ctrl` (branches, calls, exit), `-sync` (barriers), `-coll` (warp-collective rendezvous); `ptx-exec.k` assembles them |
 | `semantics/ptx-harness.k` | host side: module loading, buffers, grid launch, `.print`/`.expect` |
-| `tests/` | regression programs and golden outputs |
+| `tests/` | regression programs and golden outputs; `tests/zluda/` holds [ZLUDA](https://github.com/vosen/ZLUDA)'s hardware-validated conformance programs (MIT/Apache-2.0), run with `make zluda` |
 | `examples/` | `--search` demonstrations (races, barriers, deadlock) |
 | `scripts/` | test runner, IEEE-754 differential fuzzer, examples runner |
 
@@ -132,7 +132,7 @@ generic and state-space addresses. Accesses to global addresses below 4096
 
 | Group | Instructions |
 |---|---|
-| integer | `add sub mul{.lo,.hi,.wide} mad{.lo,.hi,.wide} div rem min max abs neg` with `.sat`; carry chains `add.cc addc sub.cc subc mad.cc madc` (CC.CF); `and or xor not cnot shl shr popc clz brev` |
+| integer | `add sub mul{.lo,.hi,.wide} mad{.lo,.hi,.wide} div rem min max abs neg` with `.sat`; carry chains `add.cc addc sub.cc subc mad.cc madc` (CC.CF); bit-field `bfe bfi bfind fns bmsk szext prmt` (all modes); `and or xor not cnot shl shr popc clz brev` |
 | floating point (f16/f32/f64) | `add sub mul div fma mad min max abs neg sqrt rsqrt rcp sin cos lg2 ex2 tanh copysign` with `.sat` |
 | comparison / selection | `setp.{eq,ne,lt,le,gt,ge,lo,ls,hi,hs,equ,neu,ltu,leu,gtu,geu,num,nan}[.and/.or/.xor]` with `p\|q` destinations, `selp`, predicated execution `@p` / `@!p`, `not/and/or/xor.pred` |
 | data movement | `mov` (incl. symbol addresses, special registers, vector pack/unpack), `cvt` (all int↔int, int↔float, float↔float, `.rni/.rzi/.rmi/.rpi`, `.sat`), `cvta[.to]` |

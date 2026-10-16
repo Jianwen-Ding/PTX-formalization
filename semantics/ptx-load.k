@@ -59,6 +59,7 @@ module PTX-LOAD
   rule itemName(N:Name)          => Name2String(N)
   rule itemName(R:Reg)           => Reg2String(R)
   rule itemName(R:Reg < _ >)     => Reg2String(R)
+  rule itemName(N:Name < _ >)    => Name2String(N)
   rule itemName(N:Name _:ArrDims) => Name2String(N)
 
   syntax Int ::= itemSize(DItem, Ty) [function, total]
@@ -135,6 +136,10 @@ module PTX-LOAD
        emit(ins(g(Reg2String(R), false), decodeOpc(Name2String(N)), Os), P)
   rule pp1(@ ! R:Reg N:Name Os:Operands ;, P) =>
        emit(ins(g(Reg2String(R), true), decodeOpc(Name2String(N)), Os), P)
+  rule pp1(@ G:Name N:Name Os:Operands ;, P) =>
+       emit(ins(g(Name2String(G), false), decodeOpc(Name2String(N)), Os), P)
+  rule pp1(@ ! G:Name N:Name Os:Operands ;, P) =>
+       emit(ins(g(Name2String(G), true), decodeOpc(Name2String(N)), Os), P)
   rule pp1({ Ss:Stmts }, P) => pp(Ss, P)
   rule pp1(.pragma _ ;, P) => P
   rule pp1(.loc _:Int _:Int _:Int _:LocOpts, P) => P
@@ -156,6 +161,8 @@ module PTX-LOAD
   // registers: remember declared widths (%r<4> declares %r0 .. %r3)
   rule ppDecl("reg", S, AL, T, ListItem(R:Reg < N:Int >) Is, P) =>
        ppDecl("reg", S, AL, T, Is, ppRegs(Reg2String(R), 0, N, wid(T), P))
+  rule ppDecl("reg", S, AL, T, ListItem(R:Name < N:Int >) Is, P) =>
+       ppDecl("reg", S, AL, T, Is, ppRegs(Name2String(R), 0, N, wid(T), P))
   rule ppDecl("reg", S, AL, T, ListItem(I:DItem) Is, pps(C, PC, L, RW, SH)) =>
        ppDecl("reg", S, AL, T, Is, pps(C, PC, L, RW[itemName(I) <- wid(T)], SH)) [owise]
   rule ppRegs(R, I, N, W, pps(C, PC, L, RW, SH)) =>

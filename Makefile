@@ -13,7 +13,7 @@ SOURCES  := $(wildcard semantics/*.k)
 SEEDS    ?= 1 2 3 4 5 6 7 8
 FUZZ_N   ?= 256
 
-.PHONY: all build test fuzz examples run clean
+.PHONY: all build test fuzz examples zluda run clean
 
 all: build
 
@@ -29,6 +29,9 @@ test: build
 fuzz: build
 	@scripts/ieee-fuzz.sh $(FUZZ_N) $(SEEDS)
 	@scripts/round-fuzz.sh 40 $(SEEDS)
+
+zluda: build
+	@scripts/run-zluda.py
 
 examples: build
 	@scripts/run-examples.sh
