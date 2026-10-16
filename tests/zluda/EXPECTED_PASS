@@ -62,6 +62,7 @@ global_array_f32
 ld_st
 ld_st_implicit
 ld_st_offset
+ldmatrix
 lg2
 local_align
 mad_extended
