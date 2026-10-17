@@ -361,4 +361,9 @@ module PTX-COMMON
   rule spaceOf(M) => pick(M, ListItem("global") ListItem("shared") ListItem("local")
                              ListItem("param") ListItem("const"), "generic")
     requires notBool "shared::cluster" in M
+
+  // I-th element of a list of integers (1 when absent)
+  syntax Int ::= nth(List, Int) [function, total]
+  rule nth(L, I) => {L[I]}:>Int requires I >=Int 0 andBool I <Int size(L)
+  rule nth(_, _) => 1 [owise]
 endmodule

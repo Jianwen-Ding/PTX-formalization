@@ -107,3 +107,12 @@ fields and the sm_100 shared-memory descriptor follow the ISA tables (text); swi
 reuse the wgmma canonical layouts.  Not modelled: `.cta_group::2`, sparsity, block scaling,
 `.ws`, collector/ashift forms, decompression, `tcgen05.cp/shift/commit` (commit needs mbarrier),
 `ld.red`/`spcompress`.
+
+## Tensor maps / TMA
+
+The 128-byte tensor-map object is produced by the host driver API on real hardware and is opaque
+to PTX.  The harness directive `.tensormap NAME .type BUFFER .dims {..} .strides {..} .box {..}
+.swizzle N;` builds one in an encoding private to this semantics (see `tmBlob` in
+`semantics/ptx-harness.k`); tile/gather4 loads, tile/scatter4 stores and reductions, prefetch,
+`tensormap.replace` and `tensormap.cp_fenceproxy` interpret it.  Interleaved layouts, im2col
+modes and `.override` forms are not modelled.

@@ -73,6 +73,33 @@ module PTX-HARNESS
        <gmem> M => initMem(M, alignUp(G, 256), T, Vs) </gmem>
 
   syntax KItem ::= #patch(String, Ty, Int, List) | #appendTo(String, Ty, List)
+  // .tensormap TM .f16 BUF .dims { d0, d1, ... } .strides { s1, ... } .box { b0, b1, ... } .swizzle 0 ;
+  // builds a 128-byte tensor-map object (our own encoding, see ptx-exec-tma.k) in global memory
+  syntax KItem ::= #tensormap(String, Ty, String, List, List, List, Int)
+  rule <k> .tensormap N T B .dims { Ds } .strides { Ss } .box { Bs } .swizzle Z ; =>
+           #tensormap(Name2String(N), typeOf(T), Name2String(B), intsL(Ds), intsL(Ss), intsL(Bs), Z) ... </k>
+  rule <k> #tensormap(N, T, B, Ds, Ss, Bs, Z) => #alloc(N, ty("u", 64), 16, tmBlob(T, A, Ds, Ss, Bs, Z)) ... </k>
+       <syms> ... B |-> sym(_, A) ... </syms>
+  // 16 little-endian 64-bit words:  0 magic | 1 element type code | 2 rank | 3 global address | 4..8 dims |
+  // 9..12 byte strides of dims 1..4 | 13 box dims 0..3 (16 bits each) | 14 box dim 4, swizzle<<16, fill<<24, interleave<<32 |
+  // 15 element strides (8 bits each)
+  syntax List ::= tmBlob(Ty, Int, List, List, List, Int) [function, total]
+  rule tmBlob(T, A, Ds, Ss, Bs, Z) =>
+       ListItem(1414021456) ListItem(tmCode(T)) ListItem(size(Ds)) ListItem(A)
+       ListItem(nth(Ds, 0)) ListItem(nth(Ds, 1)) ListItem(nth(Ds, 2)) ListItem(nth(Ds, 3)) ListItem(nth(Ds, 4))
+       ListItem(nth(Ss, 0)) ListItem(nth(Ss, 1)) ListItem(nth(Ss, 2)) ListItem(nth(Ss, 3))
+       ListItem(nth(Bs, 0) |Int (nth(Bs, 1) <<Int 16) |Int (nth(Bs, 2) <<Int 32) |Int (nth(Bs, 3) <<Int 48))
+       ListItem(nth(Bs, 4) |Int (Z <<Int 16))
+       ListItem(72340172838076673)
+  syntax Int ::= tmCode(Ty) [function, total]
+  rule tmCode(ty("u", 8)) => 0   rule tmCode(ty("u", 16)) => 1   rule tmCode(ty("u", 32)) => 2   rule tmCode(ty("s", 32)) => 3
+  rule tmCode(ty("u", 64)) => 4  rule tmCode(ty("s", 64)) => 5   rule tmCode(ty("f", 16)) => 6   rule tmCode(ty("f", 32)) => 7
+  rule tmCode(ty("f", 64)) => 8  rule tmCode(ty("bf", 16)) => 9  rule tmCode(ty("tf", 32)) => 11
+  rule tmCode(_) => 0 [owise]
+  syntax List ::= intsL(Ints) [function, total]
+  rule intsL(X:Int , Xs:Ints) => ListItem(X) intsL(Xs)
+  rule intsL(X:Int) => ListItem(X)
+  rule intsL(.Ints) => .List
   rule <k> .patch N T @ O = { Vs } ; => #patch(Name2String(N), typeOf(T), O, ivList(Vs)) ... </k>
   rule <k> #patch(N, T, O, Vs) => .K ... </k>
        <syms> ... N |-> sym(_, A) ... </syms>

@@ -46,21 +46,32 @@ module PTX-EXEC-WG
   rule swizzle(Mode, A) => A xorInt ((A &Int (mask(swB(Mode)) <<Int 7)) >>Int 3)
 
   // element offset (in elements) of (mn, k) in the canonical layout; T = elements per 16 bytes
+  // (small helper functions keep every rule free of parenthesised sub-expressions)
+  syntax Int ::= md8(Int) [function, total] | dv8(Int) [function, total] | mdT(Int, Int) [function, total] | dvT(Int, Int) [function, total]
+  rule md8(X) => X %Int 8
+  rule dv8(X) => X /Int 8
+  rule mdT(X, T) => X %Int T
+  rule dvT(X, T) => X /Int T
   syntax Int ::= wgEO(Int, Bool, Int, Int, Int, Int, Int) [function, total]     // swizzle, K-major?, T, mn, k, LBO, SBO (in elements)
-  rule wgEO(0, true, T, MN, K, L, S) => (MN %Int 8) *Int T +Int (MN /Int 8) *Int S +Int K %Int T +Int (K /Int T) *Int L
-  rule wgEO(Z, true, T, MN, K, L, S) => (MN %Int 8) *Int swG(Z) *Int T +Int (MN /Int 8) *Int S +Int K %Int T +Int (K /Int T) *Int T
+  rule wgEO(0, true, T, MN, K, L, S) => md8(MN) *Int T +Int dv8(MN) *Int S +Int mdT(K, T) +Int dvT(K, T) *Int L
+  rule wgEO(Z, true, T, MN, K, L, S) => md8(MN) *Int swG(Z) *Int T +Int dv8(MN) *Int S +Int mdT(K, T) +Int dvT(K, T) *Int T
     requires Z >Int 0
-  rule wgEO(0, false, T, MN, K, L, S) => MN %Int T +Int (MN /Int T) *Int S +Int (K %Int 8) *Int T +Int (K /Int 8) *Int L
+  rule wgEO(0, false, T, MN, K, L, S) => mdT(MN, T) +Int dvT(MN, T) *Int S +Int md8(K) *Int T +Int dv8(K) *Int L
   rule wgEO(Z, false, T, MN, K, L, S) =>
-       MN %Int T +Int ((MN /Int T) %Int swG(Z)) *Int T +Int (MN /Int (T *Int swG(Z))) *Int L
-         +Int (K %Int 8) *Int swG(Z) *Int T +Int (K /Int 8) *Int S
+       mdT(MN, T) +Int mdT(dvT(MN, T), swG(Z)) *Int T +Int dvT(MN, T *Int swG(Z)) *Int L +Int md8(K) *Int swG(Z) *Int T +Int dv8(K) *Int S
     requires Z >Int 0
 
-  syntax Int ::= wgElem(Bytes, Int, Bool, Int, Int, Int) [function, total]      // smem, descriptor, K-major?, element bits, mn, k
-  rule wgElem(SM, D, KM, W, MN, K) =>
-       (readBytes(SM, swizzle(dSwz(D), dStart(D) +Int (wgEO(dSwz(D), KM, 128 /Int W, MN, K, dLbo(D) *Int 8 /Int W, dSbo(D) *Int 8 /Int W) *Int W) /Int 8),
-                  maxInt(1, W /Int 8))
-         >>Int ((wgEO(dSwz(D), KM, 128 /Int W, MN, K, dLbo(D) *Int 8 /Int W, dSbo(D) *Int 8 /Int W) *Int W) %Int 8)) &Int mask(W)
+  // element offset of (mn, k) in elements, and in bits
+  syntax Int ::= wgBitOff(Int, Bool, Int, Int, Int) [function, total]            // descriptor, K-major?, element bits, mn, k
+  rule wgBitOff(D, KM, W, MN, K) => wgEO(dSwz(D), KM, 128 /Int W, MN, K, wgScaleOff(dLbo(D), W), wgScaleOff(dSbo(D), W)) *Int W
+  syntax Int ::= wgScaleOff(Int, Int) [function, total]                           // byte offset -> elements
+  rule wgScaleOff(B, W) => (B *Int 8) /Int W
+  syntax Int ::= wgAddr(Int, Int) [function, total]                               // descriptor, bit offset -> swizzled byte address
+  rule wgAddr(D, BO) => swizzle(dSwz(D), dStart(D) +Int (BO /Int 8))
+  syntax Int ::= wgElem(Bytes, Int, Bool, Int, Int, Int) [function, total]        // smem, descriptor, K-major?, element bits, mn, k
+  rule wgElem(SM, D, KM, W, MN, K) => wgRead(SM, wgAddr(D, wgBitOff(D, KM, W, MN, K)), wgBitOff(D, KM, W, MN, K) %Int 8, W)
+  syntax Int ::= wgRead(Bytes, Int, Int, Int) [function, total]                    // smem, byte address, bit within byte, element bits
+  rule wgRead(SM, A, BI, W) => (readBytes(SM, A, maxInt(1, W /Int 8)) >>Int BI) &Int mask(W)
 
   // negation of float inputs (imm-scale = -1)
   syntax Int ::= wgNeg(Ty, Int, Int) [function, total]

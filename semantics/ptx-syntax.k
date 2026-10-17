@@ -161,6 +161,7 @@ module PTX-SYNTAX
                       | ".expect" Name Type "=" "{" InitVals "}" ";"
                       | ".expect" Name Type "@" Int "=" "{" InitVals "}" ";"     // from element offset
                       | ".patch" Name Type "@" Int "=" "{" InitVals "}" ";"      // write values at an element offset
+                      | ".tensormap" Name Type Name ".dims" "{" Ints "}" ".strides" "{" Ints "}" ".box" "{" Ints "}" ".swizzle" Int ";"
                       | ".append" Name Type "=" "{" InitVals "}" ";"            // extend the most recent buffer (keeps text small)
 
   // ---------------------------------------------------------------- modules
