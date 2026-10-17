@@ -27,6 +27,7 @@ constant_f32
 constant_negative
 copysign
 cos
+cp_async
 cvt_f16x2_f32
 cvt_f64_f32
 cvt_pack

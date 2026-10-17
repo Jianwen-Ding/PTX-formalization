@@ -159,9 +159,12 @@ module PTX-LOAD
   rule pp1(A1:DAttrs T:Type A2:DAttrs Is:DItems ;, P) =>
        ppDecl(dspace(aset(A1) |Set aset(A2)), aset(A1) |Set aset(A2),
               alignOr(A1, A2, typeOf(T)), typeOf(T), itemsL(Is), P)
+  rule pp1(A1:DAttrs T:Type A2:DAttrs Is:DItems = I:InitVal ;, pps(C, PC, L, RW, SH)) =>
+       pps(C, PC, L, RW, SH sdecls(aset(A1) |Set aset(A2), alignOr(A1, A2, typeOf(T)), typeOf(T), itemsL(Is), initOf(I)))
+    requires dspace(aset(A1) |Set aset(A2)) in (SetItem("shared") SetItem("global") SetItem("const"))
   rule pp1(A1:DAttrs T:Type A2:DAttrs Is:DItems = _ ;, P) =>
        ppDecl(dspace(aset(A1) |Set aset(A2)), aset(A1) |Set aset(A2),
-              alignOr(A1, A2, typeOf(T)), typeOf(T), itemsL(Is), P)
+              alignOr(A1, A2, typeOf(T)), typeOf(T), itemsL(Is), P) [owise]
 
   // registers: remember declared widths (%r<4> declares %r0 .. %r3)
   rule ppDecl("reg", S, AL, T, ListItem(R:Reg < N:Int >) Is, P) =>

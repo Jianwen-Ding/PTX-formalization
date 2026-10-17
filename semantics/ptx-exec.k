@@ -36,6 +36,7 @@ requires "ptx-exec-tc.k"
 requires "ptx-exec-memq.k"
 requires "ptx-exec-cluster.k"
 requires "ptx-exec-mbar.k"
+requires "ptx-exec-async.k"
 
 module PTX-EXEC
   imports PTX-EXEC-CORE
@@ -60,6 +61,7 @@ module PTX-EXEC
   imports PTX-EXEC-MEMQ
   imports PTX-EXEC-CLUSTER
   imports PTX-EXEC-MBAR
+  imports PTX-EXEC-ASYNC
 
   // anything else is outside the modelled subset
   rule <tk> exec(O, _, _) => #unsupported(O) ... </tk> [owise]
