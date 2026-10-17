@@ -37,11 +37,9 @@ def zmask(Z, M, N):
     if not nz: return [0] * N
     P = 128 // M; seg = N // P; out = []
     for i in range(P):
-        bits = []; v = fs[i]; first = True
-        while len(bits) < seg:
-            ln = (ones if v else zeros) - (sc[i] if first else 0)
-            bits += [v] * max(ln, 0); v ^= 1; first = False
-        out += bits[:seg]
+        for q in range(seg):
+            pos = (q + sc[i]) % (ones + zeros)
+            out.append(int(pos < ones) if fs[i] else int(pos >= zeros))
     return out
 # the four examples of the ISA text (printed MSB first there; compare LSB first)
 def lsb(s): return [int(c) for c in s.replace(' ', '')][::-1]
@@ -65,7 +63,7 @@ Z1 = desc_of([0, 0, 0, 0], [0, 0, 0, 0], 1, 2, 3, 0)
 Z2 = desc_of([2, 1, 0, 0], [1, 0, 0, 0], 1, 1, 2, 2)
 Z3 = desc_of([1, 0, 2, 3], [0, 1, 1, 0], 1, 0, 1, 0)
 CFG = [
- ('ws', 16, 16, 'f16', 'f32', 'f16', 'f16', 'desc', True, 1, True, 1, '.ws', 128, Z1, 0, False),
+ ('ws', 8, 16, 'f16', 'f32', 'f16', 'f16', 'desc', True, 1, True, 1, '.ws', 128, Z1, 0, False),
  ('ws', 16, 16, 'f16', 'f32', 'bf16', 'bf16', 'desc', True, 1, True, 1, '.ws', 64, Z2, 0, False),
  ('ws', 16, 16, 'f16', 'f32', 'f16', 'f16', 'tmem', True, 0, True, 1, '.ws', 32, Z3, 0, False),
  ('ash', 8, 16, 'f16', 'f32', 'f16', 'f16', 'tmem', True, 0, True, 1, '.ashift.collector::a::lastuse.collector::b::use', 128, None, 0, True),

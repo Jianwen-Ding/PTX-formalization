@@ -201,12 +201,9 @@ module PTX-EXEC-TC
   syntax Bool ::= tcZBit(Int, Int, Int) [function, total]                 // descriptor, sub-mask, position
   rule tcZBit(Z, I, P) => ((Z >>Int 39) &Int 1) ==Int 1 andBool
        tcRun(((Z >>Int (32 +Int I)) &Int 1), ((Z >>Int (8 *Int I)) &Int 255), ((Z >>Int 40) &Int 255) +Int 1, ((Z >>Int 48) &Int 255) +Int 1, P)
-  // first run has value V0 (1 = zero the column) and loses `Sc` columns; runs of ones last `On`, runs of zeros `Zr`
+  // periodic pattern of period On+Zr starting with a run of V0 (1 = ones of length On, 0 = zeros of length Zr), shifted by Sc columns
   syntax Bool ::= tcRun(Int, Int, Int, Int, Int) [function, total]
-  rule tcRun(V0, Sc, On, Zr, P) => (V0 ==Int 1) requires P <Int (#if V0 ==Int 1 #then On #else Zr #fi) -Int Sc
-  rule tcRun(V0, Sc, On, Zr, P) =>
-       (((P -Int ((#if V0 ==Int 1 #then On #else Zr #fi) -Int Sc)) %Int (On +Int Zr)) <Int (#if V0 ==Int 1 #then Zr #else On #fi)) ==Bool (V0 ==Int 0)
-    requires P >=Int (#if V0 ==Int 1 #then On #else Zr #fi) -Int Sc
+  rule tcRun(V0, Sc, On, Zr, P) => (V0 ==Int 1 andBool ((P +Int Sc) %Int (On +Int Zr)) <Int On) orBool (V0 ==Int 0 andBool ((P +Int Sc) %Int (On +Int Zr)) >=Int Zr)
   // D accumulator input: scaled by 2^-s
   syntax Map ::= tcTileD(Map, Ty, Int, Int, Int, Int, Int, Int, Int, Map) [function, total]
   rule tcTileD(TM, T, Base, M, N, R, Cn, S, Z, Acc) =>
