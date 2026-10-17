@@ -1,0 +1,24 @@
+// istypep on descriptor-object handles
+.version 8.0
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 ptex, .param .u64 psurf, .param .u64 psamp, .param .u64 po)
+{
+    .reg .b64 %t, %s, %m, %o; .reg .pred %p; .reg .b32 %r;
+    ld.param.u64 %t, [ptex]; ld.param.u64 %s, [psurf]; ld.param.u64 %m, [psamp]; ld.param.u64 %o, [po];
+    istypep.texref %p, %t;      selp.u32 %r, 1, 0, %p; st.global.u32 [%o], %r;
+    istypep.surfref %p, %t;     selp.u32 %r, 1, 0, %p; st.global.u32 [%o+4], %r;
+    istypep.surfref %p, %s;     selp.u32 %r, 1, 0, %p; st.global.u32 [%o+8], %r;
+    istypep.samplerref %p, %m;  selp.u32 %r, 1, 0, %p; st.global.u32 [%o+12], %r;
+    istypep.texref %p, %m;      selp.u32 %r, 1, 0, %p; st.global.u32 [%o+16], %r;
+    istypep.texref %p, 0;       selp.u32 %r, 1, 0, %p; st.global.u32 [%o+20], %r;
+    ret;
+}
+.buffer TEXBUF .u32 = { 1065353216, 1083179008, 1088421888, 1093140480 };
+.buffer SURFBUF .u32 = { 1, 2, 3, 4 };
+.texture TX .f32 TEXBUF .dims { 4, 1, 1 } .attrs { 1, 0, 1, 0, 0, 1 } ;
+.surface SF .b32 SURFBUF .dims { 4, 1, 1 } .attrs { 1 } ;
+.sampler SM .attrs { 0, 1, 0 } ;
+.buffer OUT .u32 [6];
+.launch k <<< 1, 1 >>> (TX, SF, SM, OUT);
+.expect OUT .u32 = { 1, 0, 1, 1, 0, 0 };

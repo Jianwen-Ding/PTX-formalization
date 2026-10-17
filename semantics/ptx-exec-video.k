@@ -9,7 +9,7 @@
 //   SIMD:   vadd2 vsub2 vavrg2 vabsdiff2 vmin2 vmax2 vset2 and the 4-way
 //           versions, default selectors, with .sat and .add
 //
-// Not modelled: vmad, .mask destinations, permuting SIMD selectors.  Only the
+// Not modelled: .mask destinations, permuting SIMD selectors.  Only the
 // vshr/.clamp/.add path is checked against hardware (ZLUDA's vshr_clamp); the
 // rest follows the ISA text.
 // =============================================================================
@@ -144,4 +144,36 @@ module PTX-EXEC-VIDEO
                                           lanes(OP) -Int 1, 32 /Int lanes(OP), "add" in M)
                                    +Int #if "add" in M #then rd(X, ty("u", 32), C) #else 0 #fi, 32)) </regs>
     requires isSimd(OP)
+
+  // ---------------------------------------------------------------- vmad
+  //   vmad.dtype.atype.btype{.po}{.sat}{.scale} d, {-}a{.asel}, {-}b{.bsel}, {-}c     (see the ISA semantics)
+  syntax Bool ::= isNegOp(Operand) [function, total]
+  rule isNegOp(- _:Reg) => true
+  rule isNegOp(- _:Name) => true
+  rule isNegOp(_) => false [owise]
+  syntax Operand ::= unNeg(Operand) [function, total]
+  rule unNeg(- R:Reg) => R
+  rule unNeg(- N:Name) => N
+  rule unNeg(O) => O [owise]
+  rule <tk> exec(opc("vmad", M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
+       <regs> R => wr(R, D, vmadRes(M, AT, BT, vrd(unNeg(A), AT, C), vrd(unNeg(B), BT, C), rd(unNeg(X), ty("u", 32), C),
+                                    isNegOp(A), isNegOp(B), isNegOp(X))) </regs>
+  syntax Int ::= vmadRes(Set, Ty, Ty, Int, Int, Int, Bool, Bool, Bool) [function, total]
+  rule vmadRes(M, AT, BT, TA, TB, CR, NA, NB, NC) =>
+       vmadFin(M, vmadSigned(AT, BT, NA, NB, NC),
+               #if "po" in M #then TA *Int TB
+               #else #if NA =/=Bool NB #then ~Int (TA *Int TB) #else TA *Int TB #fi #fi,
+               #if "po" in M orBool NA =/=Bool NB #then CR #else #if NC #then ~Int CR #else CR #fi #fi,
+               #if "po" in M orBool NA =/=Bool NB orBool NC #then 1 #else 0 #fi)
+  syntax Bool ::= vmadSigned(Ty, Ty, Bool, Bool, Bool) [function, total]
+  rule vmadSigned(AT, BT, NA, NB, NC) => isS(AT) orBool isS(BT) orBool (NA =/=Bool NB) orBool NC
+  syntax Int ::= vmadFin(Set, Bool, Int, Int, Int) [function, total]          // mods, signed final?, product, c (32-bit pattern), lsb
+  rule vmadFin(M, SF, P, CR, L) => vmadSat(M, SF,
+       vmadScale(M, P +Int #if SF #then sext(CR &Int mask(32), 32) #else CR &Int mask(32) #fi +Int L))
+  syntax Int ::= vmadScale(Set, Int) [function, total]
+  rule vmadScale(M, V) => #if "shr7" in M #then V >>Int 7 #else #if "shr15" in M #then V >>Int 15 #else V #fi #fi
+  syntax Int ::= vmadSat(Set, Bool, Int) [function, total]
+  rule vmadSat(M, SF, V) => #if "sat" in M
+       #then #if SF #then minInt(maxInt(V, 0 -Int (1 <<Int 31)), (1 <<Int 31) -Int 1) #else minInt(maxInt(V, 0), mask(32)) #fi
+       #else trunc(V, 32) #fi
 endmodule

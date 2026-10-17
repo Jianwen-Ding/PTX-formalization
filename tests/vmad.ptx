@@ -1,0 +1,30 @@
+// vmad: (a*b)+c with negation, plus-one, scaling and saturation (ISA semantics)
+.version 8.0
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %a, %b, %c, %d;
+    ld.param.u64 %o, [po];
+    mov.u32 %a, 0x00030002; mov.u32 %b, 0xfffe0005; mov.u32 %c, 100;
+    vmad.s32.s32.s32 %d, %a.h0, %b.h0, %c;        // 2*5+100
+    st.global.u32 [%o], %d;
+    vmad.s32.s32.s32 %d, %a.h1, %b.h1, %c;        // 3*(-2)+100
+    st.global.u32 [%o+4], %d;
+    vmad.s32.s32.s32 %d, -%a.h0, %b.h0, %c;       // -(2*5)+100
+    st.global.u32 [%o+8], %d;
+    vmad.s32.s32.s32 %d, %a.h0, %b.h0, -%c;       // 2*5-100
+    st.global.u32 [%o+12], %d;
+    vmad.u32.u32.u32.po %d, %a.h0, %b.h0, %c;     // 2*5+100+1
+    st.global.u32 [%o+16], %d;
+    mov.u32 %a, 0x00007fff; mov.u32 %b, 0x00007fff; mov.u32 %c, 0;
+    vmad.u32.u32.u32.shr15 %d, %a.h0, %b.h0, %c;  // (32767*32767)>>15
+    st.global.u32 [%o+20], %d;
+    mov.u32 %a, 0xffff0000; mov.u32 %b, 0xffff0000; mov.u32 %c, 0xffffffff;
+    vmad.u32.u32.u32.sat %d, %a.h1, %b.h1, %c;    // saturates at 2^32-1
+    st.global.u32 [%o+24], %d;
+    ret;
+}
+.buffer OUT .u32 [7];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 110, 94, 90, 4294967206, 111, 32766, 4294967295 };

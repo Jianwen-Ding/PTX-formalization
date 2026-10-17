@@ -68,6 +68,8 @@ module PTX-SYNTAX
                    | "(" Operands ")"          // call argument / return list
                    | Reg "|" Reg               // setp dual destination
                    | Name "|" Name             // same, for registers declared without %
+                   | "-" Reg                   // negated operand (vmad)
+                   | "-" Name
                    | "!" Reg                   // negated predicate source
                    | "!" Name
   syntax Operands ::= List{Operand, ","}
