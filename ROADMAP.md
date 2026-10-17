@@ -57,7 +57,7 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 
 ## 7. Control flow and resources
 - [x] 33 Indirect branches and calls (brx.idx, .callprototype)
-- [ ] 34 alloca / stacksave / stackrestore
+- [x] 34 alloca / stacksave / stackrestore
 - [ ] 35 Textures, samplers and surfaces
 
 ## 8. Memory model

@@ -74,4 +74,19 @@ module PTX-EXEC-MISC
   rule vecSregs(R, _, _, _, _) => R [owise]
   syntax String ::= sregSuffix(Int) [function, total]
   rule sregSuffix(0) => ".x"   rule sregSuffix(1) => ".y"   rule sregSuffix(_) => ".z" [owise]
+
+  // ---------------------------------------------------------------- dynamic stack: alloca / stacksave / stackrestore
+  // The per-thread stack is the .local frame area (<lmem>, top <ltop>); ret restores the caller's top.
+  // alloca.u64 yields a generic address in the local window, alloca.u32 a .local offset.
+  syntax Int ::= allocaAlign(List, Ctx) [function, total]
+  rule allocaAlign(ListItem(X:Operand) _, C) => maxInt(8, rd(X, ty("u", 32), C))
+  rule allocaAlign(_, _) => 8 [owise]
+  rule <tk> exec(opc("alloca", _, ListItem(T)), ops(D, Sz, Rest:Operands), C) => .K ... </tk>
+       <regs> R => wr(R, D, trunc(alignUp(LT, allocaAlign(opsList(Rest), C)) +Int #if wid(T) ==Int 64 #then LOCBASE #else 0 #fi, wid(T))) </regs>
+       <ltop> LT => alignUp(LT, allocaAlign(opsList(Rest), C)) +Int rd(Sz, ty("u", 32), C) </ltop>
+  rule <tk> exec(opc("stacksave", _, ListItem(T)), ops(D, .Operands), _) => .K ... </tk>
+       <regs> R => wr(R, D, trunc(LT +Int #if wid(T) ==Int 64 #then LOCBASE #else 0 #fi, wid(T))) </regs>
+       <ltop> LT </ltop>
+  rule <tk> exec(opc("stackrestore", _, ListItem(T)), ops(A, .Operands), C) => .K ... </tk>
+       <ltop> _ => rd(A, T, C) -Int #if wid(T) ==Int 64 #then LOCBASE #else 0 #fi </ltop>
 endmodule
