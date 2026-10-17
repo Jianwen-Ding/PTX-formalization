@@ -1,0 +1,68 @@
+// mbarrier: arrive/wait phases (state and parity), expect_tx/complete_tx, arrive_drop, pending_count.
+.version 8.6
+.target sm_90
+.address_size 64
+
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %oo, %st, %st2, %mb, %mb2, %mb3, %sa; .reg .b32 %r<8>, %tid, %nb, %v, %cnt; .reg .pred %p, %q, %w;
+    .shared .align 8 .b64 bar[3];
+    .shared .align 4 .b32 data[64];
+    ld.param.u64 %o, [po];
+    mov.u32 %tid, %tid.x;
+    mov.u64 %mb, bar;
+    add.u64 %mb2, %mb, 8;
+    add.u64 %mb3, %mb, 16;
+    setp.eq.u32 %q, %tid, 0;
+    @%q mbarrier.init.shared.b64 [%mb], 64;
+    @%q mbarrier.init.shared.b64 [%mb2], 1;
+    @%q mbarrier.init.shared.b64 [%mb3], 3;
+    bar.sync 0;
+    // ---- phase 0: every thread publishes data[tid], arrives, waits (blocking try_wait), reads its neighbour
+    mov.u64 %sa, data;
+    mul.wide.u32 %st2, %tid, 4;
+    add.u64 %sa, %sa, %st2;
+    mul.lo.u32 %v, %tid, 3;
+    st.shared.b32 [%sa], %v;
+    mbarrier.arrive.shared.b64 %st, [%mb];
+    mbarrier.try_wait.shared.b64 %p, [%mb], %st;
+    add.u32 %nb, %tid, 1;
+    and.b32 %nb, %nb, 63;
+    mul.wide.u32 %st2, %nb, 4;
+    mov.u64 %sa, data;
+    add.u64 %sa, %sa, %st2;
+    ld.shared.b32 %r0, [%sa];
+    // ---- phase 1 (parity): arrive again, wait for parity 1 to flip
+    mbarrier.arrive.shared.b64 _, [%mb];
+    mbarrier.try_wait.parity.shared.b64 %w, [%mb], 1;
+    selp.u32 %r1, 1, 0, %p;
+    selp.u32 %r2, 1, 0, %w;
+    mul.wide.u32 %oo, %tid, 16;
+    add.u64 %oo, %oo, %o;
+    st.global.b32 [%oo], %r0;
+    st.global.b32 [%oo+4], %r1;
+    st.global.b32 [%oo+8], %r2;
+    // ---- tx-count (thread 0 only): arrive.expect_tx leaves the phase open until complete_tx
+    @%q mbarrier.arrive.expect_tx.shared.b64 %st, [%mb2], 16;
+    @%q mbarrier.test_wait.shared.b64 %p, [%mb2], %st;      // not complete
+    @%q selp.u32 %r3, 1, 0, %p;
+    @%q mbarrier.complete_tx.shared.b64 [%mb2], 16;
+    @%q mbarrier.test_wait.shared.b64 %p, [%mb2], %st;      // complete
+    @%q selp.u32 %r4, 1, 0, %p;
+    // ---- arrive_drop: expected 2 -> 1, then one arrive completes the phase; pending_count of an arrive state
+    @%q mbarrier.arrive_drop.shared.b64 _, [%mb3];
+    @%q mbarrier.arrive.noComplete.shared.b64 %st2, [%mb3], 1;
+    @%q mbarrier.pending_count.b64 %cnt, %st2;
+    @%q mbarrier.arrive.shared.b64 %st, [%mb3];
+    @%q mbarrier.test_wait.shared.b64 %p, [%mb3], %st;
+    @%q selp.u32 %r5, 1, 0, %p;
+    @%q st.global.b32 [%oo+12], %r3;
+    @%q st.global.b32 [%o+1024], %r4;
+    @%q st.global.b32 [%o+1028], %cnt;
+    @%q st.global.b32 [%o+1032], %r5;
+    ret;
+}
+.buffer O .u32 [260];
+.launch k <<< 1, 64 >>> (O);
+.expect O .u32 @ 0 = { 3, 1, 1, 0, 6, 1, 1, 0, 9, 1, 1, 0, 12, 1, 1, 0, 15, 1, 1, 0, 18, 1, 1, 0, 21, 1, 1, 0, 24, 1, 1, 0, 27, 1, 1, 0, 30, 1, 1, 0, 33, 1, 1, 0, 36, 1, 1, 0, 39, 1, 1, 0, 42, 1, 1, 0, 45, 1, 1, 0, 48, 1, 1, 0, 51, 1, 1, 0, 54, 1, 1, 0, 57, 1, 1, 0, 60, 1, 1, 0, 63, 1, 1, 0, 66, 1, 1, 0, 69, 1, 1, 0, 72, 1, 1, 0, 75, 1, 1, 0, 78, 1, 1, 0, 81, 1, 1, 0, 84, 1, 1, 0, 87, 1, 1, 0, 90, 1, 1, 0, 93, 1, 1, 0, 96, 1, 1, 0, 99, 1, 1, 0, 102, 1, 1, 0, 105, 1, 1, 0, 108, 1, 1, 0, 111, 1, 1, 0, 114, 1, 1, 0, 117, 1, 1, 0, 120, 1, 1, 0, 123, 1, 1, 0, 126, 1, 1, 0, 129, 1, 1, 0, 132, 1, 1, 0, 135, 1, 1, 0, 138, 1, 1, 0, 141, 1, 1, 0, 144, 1, 1, 0, 147, 1, 1, 0, 150, 1, 1, 0, 153, 1, 1, 0, 156, 1, 1, 0, 159, 1, 1, 0, 162, 1, 1, 0, 165, 1, 1, 0, 168, 1, 1, 0, 171, 1, 1, 0, 174, 1, 1, 0, 177, 1, 1, 0, 180, 1, 1, 0, 183, 1, 1, 0, 186, 1, 1, 0, 189, 1, 1, 0, 0, 1, 1, 0 };
+.expect O .u32 @ 256 = { 1, 2, 1, 0 };

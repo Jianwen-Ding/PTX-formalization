@@ -38,6 +38,8 @@ module PTX-CONFIGURATION
 
   // function definition: kind ("entry"/"func"), return params, params,
   // code (pc |-> instruction), labels (label |-> pc), register widths
+  syntax ClBar ::= cl(Int, Int)
+  syntax MbState ::= mb(Int, Int, Int, Int, Int)
   syntax FDef  ::= fdef(String, List, List, Map, Map, Map)
   syntax PDecl ::= pdecl(String, Ty, Int, Int)          // name, type, size, align
   // static variable: space, name, type, size, align, extern?, initializer
@@ -68,11 +70,15 @@ module PTX-CONFIGURATION
       <gmem> .Bytes </gmem>
       <gtop> 4096 </gtop>
       <turn> -2 </turn>
+      <clusterDims> .Map </clusterDims>       // kernel |-> .reqnctapercluster
+      <mbars> .Map </mbars>                   // CTA * 2^32 + shared offset |-> mbarrier object mb(phase, pending, expected, tx-count, layout)
+      <clbar> .Map </clbar>                   // cluster id |-> cl(arrived threads, generation) for barrier.cluster
       <stop> 0 </stop>
       <launch>
         <kernel> "" </kernel>
         <gridDim> dim3(1, 1, 1) </gridDim>
         <blockDim> dim3(1, 1, 1) </blockDim>
+        <clusterDim> dim3(1, 1, 1) </clusterDim>
         <kparams> .Bytes </kparams>
         <kenv> .Map </kenv>
         <kptop> 0 </kptop>

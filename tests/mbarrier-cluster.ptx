@@ -1,0 +1,30 @@
+// mbarrier in a cluster: CTA 1 arrives remotely on CTA 0's mbarrier (shared::cluster).
+.version 8.6
+.target sm_90
+.address_size 64
+
+.visible .entry k(.param .u64 po) .reqnctapercluster 2, 1, 1
+{
+    .reg .b64 %o, %mb, %stt; .reg .b32 %r<8>, %rank, %remote, %loc; .reg .pred %p, %q, %is0;
+    .shared .align 8 .b64 bar;
+    .shared .align 4 .b32 val;
+    ld.param.u64 %o, [po];
+    mov.u32 %rank, %cluster_ctarank;
+    setp.eq.u32 %is0, %rank, 0;
+    mov.u64 %mb, bar;
+    @%is0 mbarrier.init.shared.b64 [%mb], 2;
+    barrier.cluster.arrive.release.aligned;
+    barrier.cluster.wait.acquire.aligned;
+    mov.u32 %loc, bar;
+    mapa.shared::cluster.u32 %remote, %loc, 0;
+    // CTA 1: remote arrive;  CTA 0: local arrive then wait
+    @!%is0 mbarrier.arrive.release.cluster.shared::cluster.b64 _, [%remote];
+    @%is0 mbarrier.arrive.shared.b64 %stt, [%mb];
+    @%is0 mbarrier.try_wait.parity.shared.b64 %p, [%mb], 0;
+    selp.u32 %r0, 1, 0, %p;
+    @%is0 st.global.b32 [%o], %r0;
+    ret;
+}
+.buffer O .u32 [2];
+.launch k <<< 2, 1 >>> (O);
+.expect O .u32 = { 1, 0 };

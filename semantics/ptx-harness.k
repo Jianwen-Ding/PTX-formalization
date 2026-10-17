@@ -26,9 +26,16 @@ module PTX-HARNESS
        <funcs> F => F[Name2String(A) <- {F[Name2String(B)]}:>FDef] </funcs>
     requires Name2String(B) in_keys(F)
 
-  rule <k> A:DAttrs H:FuncHead _:PerfDirs { Ss:Stmts } =>
+  rule <k> A:DAttrs H:FuncHead P:PerfDirs { Ss:Stmts } =>
            #addFunc(fname(H), fkind(H), frets(H), fparams(H), pp(Ss, pps(.Map, 0, .Map, .Map, .List))) ... </k>
+       <clusterDims> CDs => CDs[fname(H) <- clusterOf(P)] </clusterDims>
     requires notBool "extern" in aset(A)
+  syntax Dim3 ::= clusterOf(PerfDirs) [function, total]
+  rule clusterOf(.reqnctapercluster X:Int , Y:Int , Z:Int _:PerfDirs) => dim3(X, Y, Z)
+  rule clusterOf(.reqnctapercluster X:Int , Y:Int _:PerfDirs) => dim3(X, Y, 1)
+  rule clusterOf(.reqnctapercluster X:Int _:PerfDirs) => dim3(X, 1, 1)
+  rule clusterOf(_:PerfDir P:PerfDirs) => clusterOf(P) [owise]
+  rule clusterOf(_) => dim3(1, 1, 1) [owise]
   rule <k> _:DAttrs _:FuncHead _:PerfDirs ; => .K ... </k>          // prototype
 
   syntax KItem ::= #addFunc(String, String, List, List, PPS) | #static(List)
@@ -100,6 +107,7 @@ module PTX-HARNESS
        <syms> S => fixDyn(S, keys_list(S), alignUp(ST, DYNSHARED)) </syms>
        <stop> ST </stop>
        <kernel> _ => K </kernel> <gridDim> _ => GD </gridDim> <blockDim> _ => BD </blockDim>
+       <clusterDim> _ => {CDs[K] orDefault dim3(1, 1, 1)}:>Dim3 </clusterDim> <clusterDims> CDs </clusterDims>
        <kparams> _ => kpmem(PS, As, S, 0, .Bytes) </kparams>
        <kenv> _ => kpenv(PS, 0, .Map) </kenv>
        <kptop> _ => kptop(PS, 0) </kptop>
@@ -136,7 +144,7 @@ module PTX-HARNESS
   rule <k> #mkCtas(C, N) => .K ... </k> requires C >=Int N
 
   rule <k> #mkThreads(C, T, N) => #mkThreads(C, T +Int 1, N) ... </k>
-       <kernel> K </kernel> <gridDim> GD </gridDim> <blockDim> BD </blockDim>
+       <kernel> K </kernel> <gridDim> GD </gridDim> <blockDim> BD </blockDim> <clusterDim> CD </clusterDim>
        <kparams> KP </kparams> <kenv> KE </kenv> <kptop> KPT </kptop>
        <funcs> ... K |-> fdef(_, _, _, _, _, FRW) ... </funcs>
        <cta>
@@ -146,8 +154,8 @@ module PTX-HARNESS
            <thread>
              <tid> T </tid>
              <fn> K </fn>
-             <regs> sregs(C, T, GD, BD) </regs>
-             <sregs> sregs(C, T, GD, BD) </sregs>
+             <regs> sregs(C, T, GD, BD, CD) </regs>
+             <sregs> sregs(C, T, GD, BD, CD) </sregs>
              <rw> FRW </rw>
              <env> KE </env>
              <pmem> KP </pmem>
@@ -161,14 +169,28 @@ module PTX-HARNESS
   rule <k> #mkThreads(_, T, N) => .K ... </k> requires T >=Int N
 
   // special registers
-  syntax Map ::= sregs(Int, Int, Dim3, Dim3) [function, total]
+  syntax Map ::= sregs(Int, Int, Dim3, Dim3, Dim3) [function, total]
                | dimRegs(String, Int, Dim3) [function, total]
                | sizeRegs(String, Dim3) [function, total]
-  rule sregs(C, T, GD, BD) =>
+  rule sregs(C, T, GD, BD, CD) =>
        dimRegs("%tid", T, BD) dimRegs("%ctaid", C, GD) sizeRegs("%ntid", BD) sizeRegs("%nctaid", GD)
        lanemasks(T %Int 32)
        "%laneid" |-> T %Int 32  "%warpid" |-> T /Int 32  "%nwarpid" |-> (vol(BD) +Int 31) /Int 32
+       clusterRegs(C, GD, CD)
        "%smid" |-> 0  "%gridid" |-> 0  "%clock" |-> 0  "%clock64" |-> 0  "%warpsize" |-> 32
+  // cluster special registers (a launch without clusters is a 1x1x1 cluster)
+  syntax Map ::= clusterRegs(Int, Dim3, Dim3) [function, total]
+  rule clusterRegs(C, dim3(GX, GY, GZ), dim3(CX, CY, CZ)) =>
+       "%clusterid.x" |-> (C %Int GX) /Int CX  "%clusterid.y" |-> ((C /Int GX) %Int GY) /Int CY  "%clusterid.z" |-> (C /Int (GX *Int GY)) /Int CZ
+       "%nclusterid.x" |-> GX /Int CX  "%nclusterid.y" |-> GY /Int CY  "%nclusterid.z" |-> GZ /Int CZ
+       "%cluster_ctaid.x" |-> (C %Int GX) %Int CX  "%cluster_ctaid.y" |-> ((C /Int GX) %Int GY) %Int CY  "%cluster_ctaid.z" |-> (C /Int (GX *Int GY)) %Int CZ
+       "%cluster_nctaid.x" |-> CX  "%cluster_nctaid.y" |-> CY  "%cluster_nctaid.z" |-> CZ
+       "%cluster_ctarank" |-> clRank(C, dim3(GX, GY, GZ), dim3(CX, CY, CZ))
+       "%cluster_nctarank" |-> CX *Int CY *Int CZ
+       "%is_explicit_cluster" |-> 0
+  syntax Int ::= clRank(Int, Dim3, Dim3) [function, total]
+  rule clRank(C, dim3(GX, GY, _), dim3(CX, CY, CZ)) =>
+       ((C %Int GX) %Int CX) +Int (((C /Int GX) %Int GY) %Int CY) *Int CX +Int ((C /Int (GX *Int GY)) %Int CZ) *Int CX *Int CY
   syntax Int ::= orBits(Int, Int) [function, total]
   rule orBits(A, B) => A |Int B
   syntax Map ::= lanemasks(Int) [function, total]
