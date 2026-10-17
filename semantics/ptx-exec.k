@@ -40,6 +40,8 @@ requires "ptx-exec-async.k"
 requires "ptx-exec-bulk.k"
 requires "ptx-exec-tma.k"
 requires "ptx-exec-misc.k"
+requires "ptx-exec-tex.k"
+requires "ptx-exec-weak.k"
 
 module PTX-EXEC
   imports PTX-EXEC-CORE
@@ -68,6 +70,8 @@ module PTX-EXEC
   imports PTX-EXEC-BULK
   imports PTX-EXEC-TMA
   imports PTX-EXEC-MISC
+  imports PTX-EXEC-TEX
+  imports PTX-EXEC-WEAK
 
   // anything else is outside the modelled subset
   rule <tk> exec(O, _, _) => #unsupported(O) ... </tk> [owise]

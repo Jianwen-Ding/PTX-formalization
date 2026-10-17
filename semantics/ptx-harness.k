@@ -83,6 +83,25 @@ module PTX-HARNESS
            #tensormap(Name2String(N), typeOf(T), Name2String(B), intsL(Ds), intsL(Ss), intsL(Bs), Z) ... </k>
   rule <k> #tensormap(N, T, B, Ds, Ss, Bs, Z) => #alloc(N, ty("u", 64), 16, tmBlob(T, A, Ds, Ss, Bs, Z)) ... </k>
        <syms> ... B |-> sym(_, A) ... </syms>
+  // .texture TX .f32 BUF .dims { w, h, d } .attrs { channels, filter (0 point / 1 linear), addrmode (0 wrap / 1 clamp / 2 border / 3 mirror),
+  //                                                normalized-coords, read-normalized, layers } ;
+  // .sampler SM .attrs { filter, addrmode, normalized } ;       .surface SF .b32 BUF .dims { w, h, d } .attrs { layers } ;
+  // Each builds a small descriptor object in global memory (our encoding, see ptx-exec-tex.k); the object's
+  // address is the 64-bit handle that kernels take as an argument.
+  syntax KItem ::= #objAlloc(String, String, Int, Ty, List, List)
+  rule <k> .texture N T B .dims { Ds } .attrs { As } ; => #objAlloc(Name2String(N), Name2String(B), 0, typeOf(T), intsL(As), intsL(Ds)) ... </k>
+  rule <k> .surface N T B .dims { Ds } .attrs { As } ; => #objAlloc(Name2String(N), Name2String(B), 1, typeOf(T), intsL(As), intsL(Ds)) ... </k>
+  rule <k> .sampler N .attrs { As } ; => #alloc(Name2String(N), ty("u", 64), 16, ListItem(1396920397) intsL(As)) ... </k>
+  rule <k> #objAlloc(N, B, K, T, As, Ds) => #alloc(N, ty("u", 64), 16, objBlob(K, T, A, As, Ds)) ... </k>
+       <syms> ... B |-> sym(_, A) ... </syms>
+  // texture: 0 magic, 1 base, 2 type code, 3 channels, 4 filter, 5 addrmode, 6 normalized, 7 readnorm, 8 layers, 9 w, 10 h, 11 d
+  // surface: 0 magic, 1 base, 2 texel bytes, 3 layers, 4 w, 5 h, 6 d
+  syntax List ::= objBlob(Int, Ty, Int, List, List) [function, total]
+  rule objBlob(0, T, A, As, Ds) =>
+       ListItem(1415075924) ListItem(A) ListItem(tmCode(T)) ListItem(nth(As, 0)) ListItem(nth(As, 1)) ListItem(nth(As, 2))
+       ListItem(nth(As, 3)) ListItem(nth(As, 4)) ListItem(nth(As, 5)) ListItem(nth(Ds, 0)) ListItem(nth(Ds, 1)) ListItem(nth(Ds, 2))
+  rule objBlob(_, T, A, As, Ds) =>
+       ListItem(1398035526) ListItem(A) ListItem(bytes(T)) ListItem(nth(As, 0)) ListItem(nth(Ds, 0)) ListItem(nth(Ds, 1)) ListItem(nth(Ds, 2)) [owise]
   // 16 little-endian 64-bit words:  0 magic | 1 element type code | 2 rank | 3 global address | 4..8 dims |
   // 9..12 byte strides of dims 1..4 | 13 box dims 0..3 (16 bits each) | 14 box dim 4, swizzle<<16, fill<<24, interleave<<32 |
   // 15 element strides (8 bits each)
@@ -97,12 +116,14 @@ module PTX-HARNESS
   syntax Int ::= tmCode(Ty) [function, total]
   rule tmCode(ty("u", 8)) => 0   rule tmCode(ty("u", 16)) => 1   rule tmCode(ty("u", 32)) => 2   rule tmCode(ty("s", 32)) => 3
   rule tmCode(ty("u", 64)) => 4  rule tmCode(ty("s", 64)) => 5   rule tmCode(ty("f", 16)) => 6   rule tmCode(ty("f", 32)) => 7
+  rule tmCode(ty("s", 8)) => 20  rule tmCode(ty("s", 16)) => 21      // texture-only codes (not CUtensorMapDataType values)
   rule tmCode(ty("f", 64)) => 8  rule tmCode(ty("bf", 16)) => 9  rule tmCode(ty("tf", 32)) => 11
   rule tmCode(_) => 0 [owise]
   syntax List ::= intsL(Ints) [function, total]
   rule intsL(X:Int , Xs:Ints) => ListItem(X) intsL(Xs)
   rule intsL(X:Int) => ListItem(X)
   rule intsL(.Ints) => .List
+  rule <k> .memmodel N ; => .K ... </k> <mm> _ => Name2String(N) </mm>
   rule <k> .patch N T @ O = { Vs } ; => #patch(Name2String(N), typeOf(T), O, ivList(Vs)) ... </k>
   rule <k> #patch(N, T, O, Vs) => .K ... </k>
        <syms> ... N |-> sym(_, A) ... </syms>

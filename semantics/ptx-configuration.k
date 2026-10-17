@@ -72,6 +72,7 @@ module PTX-CONFIGURATION
       <gtop> 4096 </gtop>
       <turn> -2 </turn>
       <clusterDims> .Map </clusterDims>       // kernel |-> .reqnctapercluster
+      <mm> "sc" </mm>                         // memory model: "sc" (default) or "relaxed" (store buffers, ptx-exec-weak.k)
       <tick> 1000 </tick>                     // monotonic counter behind %clock, %clock64 and %globaltimer
       <mbars> .Map </mbars>                   // CTA * 2^32 + shared offset |-> mbarrier object mb(phase, pending, expected, tx-count, layout)
       <clbar> .Map </clbar>                   // cluster id |-> cl(arrived threads, generation) for barrier.cluster
@@ -117,6 +118,7 @@ module PTX-CONFIGURATION
               <cseq> .Map </cseq>
               <lmem> .Bytes </lmem>
               <ltop> 0 </ltop>
+              <sb> .List </sb>                      // store buffer of the relaxed memory model
             </thread>
           </threads>
         </cta>
