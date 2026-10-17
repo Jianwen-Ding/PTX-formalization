@@ -41,7 +41,7 @@ module PTX-EXEC-ISA
   rule isaBad(_, _, _, _) => "" [owise]
 
   // static check at launch: every instruction of every function against the declared .version / .target
-  syntax KItem ::= #isaChk
+  syntax KItem ::= "#isaChk"
   syntax String ::= isaScanF(List, Map, Int, Int, String) [function, total]
                   | isaScanC(List, Map, Int, Int, String) [function, total]
   rule isaScanF(.List, _, _, _, _) => ""
@@ -58,9 +58,6 @@ module PTX-EXEC-ISA
   rule codeOf(_, _) => .Map [owise]
   syntax Map ::= code(FDef) [function, total]
   rule code(fdef(_, _, _, C, _, _)) => C
-  syntax Bool ::= isFDef(KItem) [function, total]
-  rule isFDef(_:FDef) => true
-  rule isFDef(_) => false [owise]
   rule <k> #isaChk => .K ... </k> <isachk> false </isachk>
   rule <k> #isaChk => #fault(isaScanF(keys_list(FM), FM, V, Sm, Ar), 0) ... </k>
        <isachk> true </isachk> <funcs> FM </funcs> <isaver> V </isaver> <isasm> Sm </isasm> <isaarch> Ar </isaarch>

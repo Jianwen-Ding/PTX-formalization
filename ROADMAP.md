@@ -61,14 +61,14 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 - [x] 35 Textures, samplers and surfaces
 
 ## 8. Memory model
-- [ ] 36 PTX weak memory consistency model (reuse existing formalization; litmus suite)
+- [x] 36 PTX weak memory consistency model (reuse existing formalization; litmus suite)
 
 ## 9. Found while importing ZLUDA's conformance programs
 - [ ] 42 Vector registers and `.reg`-parameter functions
 - [ ] 43 Scope-aware register shadowing
 
 ## 10. Quality
-- [ ] 37 Version / target legality checking
+- [x] 37 Version / target legality checking
 - [ ] 38 Realistic kernel corpus (after 15, 19, 22, 28, 30)
 - [ ] 39 Interpreter performance
 - [ ] 40 Coverage documentation against the PTX ISA (after 38)

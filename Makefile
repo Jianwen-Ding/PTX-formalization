@@ -16,7 +16,7 @@ SOURCES  := $(wildcard semantics/*.k)
 SEEDS    ?= 1 2 3 4 5 6 7 8
 FUZZ_N   ?= 256
 
-.PHONY: all build test fuzz examples zluda run clean
+.PHONY: all build litmus negative test fuzz examples zluda run clean
 
 all: build
 
@@ -25,6 +25,12 @@ build: $(BUILD)/timestamp
 $(BUILD)/timestamp: $(SOURCES)
 	$(KOMPILE) semantics/ptx.k --main-module PTX --syntax-module PTX-SYNTAX \
 	    --enable-search --output-definition $(BUILD)
+
+litmus: build
+	bash scripts/run-litmus.sh
+
+negative: build
+	bash scripts/run-negative.sh
 
 test: build
 	@scripts/run-tests.sh
