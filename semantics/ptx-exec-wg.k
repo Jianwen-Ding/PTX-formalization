@@ -16,12 +16,13 @@
 // Accumulator D: warp w of the warpgroup owns rows 16w..16w+15 with the m16n8
 // accumulator layout repeated every 8 columns (element e: row g + 8*((e%4)/2),
 // column 8*(e/4) + 2*t + e%2).  A in registers uses the mma.m16n8kK A layout per warp.
-// Not modelled: wgmma.mma_async.sp.
+// Sparse A (wgmma.mma_async.sp): each warp's fragment and metadata follow the mma.sp m16n8kK layout of ptx-exec-sp.k
+// (an assumption, see docs/prior-work.md); the descriptor form reads the packed M x K/2 tile and expands it with the metadata.
 // =============================================================================
-requires "ptx-exec-mma.k"
+requires "ptx-exec-sp.k"
 
 module PTX-EXEC-WG
-  imports PTX-EXEC-MMA
+  imports PTX-EXEC-SP
 
   rule isCollective("wgmma") => true
   rule <tk> exec(opc("wgmma", M, _), ops(_), _) => .K ... </tk> requires "fence" in M orBool "commit_group" in M
@@ -145,10 +146,58 @@ module PTX-EXEC-WG
   rule wgScatter(S, T, DV, ListItem(U:Int) Us) => (U |-> wgRegs(S, T, DV, U, 0, .List)) wgScatter(S, T, DV, Us)
   rule wgScatter(_, _, _, _) => .Map [owise]
 
+  // ---------------------------------------------------------------- sparse A
+  syntax Map ::= wgAMap(List, Map) [function, total]
+  rule wgAMap(Data, Arr) => wgFillA(Data, Arr, keys_list(Arr), .Map) requires notBool ("sp" in {Data[4]}:>Set) andBool wgI(Data, 12) ==Int 1
+  rule wgAMap(Data, Arr) => wgAd(Data, 0, 0, .Map) requires notBool ("sp" in {Data[4]}:>Set) andBool wgI(Data, 12) =/=Int 1
+  rule wgAMap(Data, Arr) => wgSpRegs(Data, Arr, 0, .Map) requires "sp" in {Data[4]}:>Set andBool wgI(Data, 12) ==Int 1
+  rule wgAMap(Data, Arr) => wgSpDesc(Data, Arr, 0, 0, .Map) requires "sp" in {Data[4]}:>Set andBool wgI(Data, 12) =/=Int 1
+  syntax String ::= wgSpShape(List) [function, total]
+  rule wgSpShape(Data) => "m16n8k" +String Int2String(shK(shapeD(Data)))
+  // the 32 threads of warp W: lane -> registers (D, A, metadata)
+  syntax Map ::= wgSlice(Map, Int, Int, Map) [function, total]
+  rule wgSlice(Arr, W, L, Acc) => wgSlice(Arr, W, L +Int 1, Acc[L <- listAt(Arr, 32 *Int W +Int L)]) requires L <Int 32
+  rule wgSlice(_, _, _, Acc) => Acc [owise]
+  syntax Map ::= wgSpShift(Map, Int) [function, total]
+  rule wgSpShift(M, Off) => wgShiftRows(M, Off, keys_list(M), .Map)
+  syntax Map ::= wgShiftRows(Map, Int, List, Map) [function, total]
+  rule wgShiftRows(M, Off, ListItem(K:Int) Ks, Acc) => wgShiftRows(M, Off, Ks, Acc[K +Int Off <- {M[K]}:>Int])
+  rule wgShiftRows(_, _, _, Acc) => Acc [owise]
+  // A from registers: the m16n8kK sparse fragment of each warp, rows offset by 16 * warp
+  syntax Map ::= wgSpRegs(List, Map, Int, Map) [function, total]
+  rule wgSpRegs(Data, Arr, W, Acc) =>
+       wgSpRegs(Data, Arr, W +Int 1, updateMap(Acc, wgSpShift(wgSpRegW(Data, Arr, wgSlice(Arr, W, 0, .Map), W, 0, .Map), 16384 *Int W)))
+    requires W <Int 4
+  rule wgSpRegs(_, _, _, Acc) => Acc [owise]
+  syntax Map ::= wgSpRegW(List, Map, Map, Int, Int, Map) [function, total]       // Data, Arr, warp slice, W, lane, acc
+  rule wgSpRegW(Data, Arr, ArrW, W, L, Acc) =>
+       wgSpRegW(Data, Arr, ArrW, W, L +Int 1,
+                spFillLane(wgSpShape(Data), aTy(Data), range(listAt(ArrW, L), wgND(shapeD(Data), dTy(Data)), 0), ArrW, L, 0, wgI(Data, 14), Acc))
+    requires L <Int 32
+  rule wgSpRegW(_, _, _, _, _, Acc) => Acc [owise]
+  // A from shared memory: the packed M x (K/2) tile through the descriptor, expanded by the metadata
+  syntax Int ::= wgNibW(Map, Int, Int, Int, Int, Int, Int) [function, total]      // arrivals, warp, g, rowhalf, chunk, chunks per row, selector
+  rule wgNibW(Arr, W, G, Rh, C, Nc, Sel) => (spMeta(Arr, 32 *Int W +Int 4 *Int G +Int Sel) >>Int (16 *Int Rh +Int 4 *Int C)) &Int 15 requires Nc ==Int 4
+  rule wgNibW(Arr, W, G, Rh, C, Nc, Sel) => (spMeta(Arr, 32 *Int W +Int 4 *Int G +Int 2 *Int Sel +Int Rh) >>Int (4 *Int C)) &Int 15 requires Nc ==Int 8
+  rule wgNibW(Arr, W, G, Rh, C, Nc, Sel) => (spMeta(Arr, 32 *Int W +Int 4 *Int G +Int 2 *Int (C /Int 8) +Int Rh) >>Int (4 *Int (C %Int 8))) &Int 15 requires Nc ==Int 16
+  rule wgNibW(_, _, _, _, _, _, _) => 0 [owise]
+  syntax Map ::= wgSpDesc(List, Map, Int, Int, Map) [function, total]              // Data, Arr, m, k', acc
+  rule wgSpDesc(Data, Arr, M, KP, Acc) =>
+       wgSpDesc(Data, Arr, M, KP +Int 1,
+         Acc[rc(M, spCw(aTy(Data)) *Int (KP /Int spNz(aTy(Data)))
+                   +Int spPos(aTy(Data),
+                              wgNibW(Arr, M /Int 16, (M %Int 16) %Int 8, (M %Int 16) /Int 8, KP /Int spNz(aTy(Data)),
+                                     shK(shapeD(Data)) /Int spCw(aTy(Data)), wgI(Data, 14)),
+                              KP %Int spNz(aTy(Data))))
+             <- wgNeg(aTy(Data), wgI(Data, 7), wgElem(wgSmem(Data), wgI(Data, 5), wgI(Data, 9) ==Int 0, ew(aTy(Data)), M, KP))])
+    requires KP <Int shK(shapeD(Data)) /Int 2 andBool M <Int 64
+  rule wgSpDesc(Data, Arr, M, KP, Acc) => wgSpDesc(Data, Arr, M +Int 1, 0, Acc) requires KP >=Int shK(shapeD(Data)) /Int 2 andBool M +Int 1 <Int 64
+  rule wgSpDesc(_, _, _, _, Acc) => Acc [owise]
+
   rule collCompute("wgmma", Data, Arr) =>
        wgScatter(shapeD(Data), dTy(Data),
                  resRows(shapeD(Data), dTy(Data), aTy(Data), bTy(Data), dTy(Data),
-                         #if wgI(Data, 12) ==Int 1 #then wgFillA(Data, Arr, keys_list(Arr), .Map) #else wgAd(Data, 0, 0, .Map) #fi,
+                         wgAMap(Data, Arr),
                          wgB(Data, 0, 0, .Map),
                          #if wgI(Data, 11) =/=Int 0 #then wgFillD(shapeD(Data), dTy(Data), Arr, keys_list(Arr), .Map) #else .Map #fi,
                          0, 0, {Data[4]}:>Set, .Map),
@@ -164,7 +213,18 @@ module PTX-EXEC-WG
                   ListItem(wgArg(opsList(Rest), 0, 1, C)) ListItem(#if isVec(Av) #then 1 #else 0 #fi) ListItem(SM),
                   vecRegs(Dv, DT, C) vecRegs(Av, AT, C), vecOps(Dv)) ... </tk>
        <smem> SM </smem>
-    requires "mma_async" in M
+    requires "mma_async" in M andBool notBool "sp" in M
+  // sparse: d, a|a-desc, b-desc, sp-meta, sp-sel, scale-d, ...
+  rule <tk> exec(opc("wgmma", M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(Dv, Av, Bv, Meta, Sel, Rest:Operands), C) =>
+            #coll("wgmma", 340282366920938463463374607431768211455,
+                  ListItem(wgShape(M)) ListItem(DT) ListItem(AT) ListItem(BT) ListItem(M)
+                  ListItem(#if isVec(Av) #then 0 #else rd(Av, ty("b", 64), C) #fi) ListItem(rd(Bv, ty("b", 64), C))
+                  ListItem(wgArg(opsList(Rest), 1, 1, C)) ListItem(wgArg(opsList(Rest), 2, 1, C))
+                  ListItem(wgArg(opsList(Rest), 3, 0, C)) ListItem(wgArg(opsList(Rest), #if size(opsList(Rest)) >=Int 4 #then size(opsList(Rest)) -Int 1 #else 0 -Int 1 #fi, 0, C))
+                  ListItem(wgArg(opsList(Rest), 0, 1, C)) ListItem(#if isVec(Av) #then 1 #else 0 #fi) ListItem(SM) ListItem(rd(Sel, ty("u", 32), C)),
+                  vecRegs(Dv, DT, C) vecRegs(Av, AT, C) ListItem(rd(Meta, ty("b", 32), C)), vecOps(Dv)) ... </tk>
+       <smem> SM </smem>
+    requires "mma_async" in M andBool "sp" in M
   // optional trailing immediates; the transposes are the last operand (desc form of 16-bit types: 5 args, register form: 4)
   syntax Int ::= wgArg(List, Int, Int, Ctx) [function, total]
   rule wgArg(L, I, _, C) => ival(rd({L[I]}:>Operand, ty("s", 32), C), ty("s", 32)) requires I >=Int 0 andBool I <Int size(L)

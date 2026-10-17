@@ -15,7 +15,7 @@ def sat(v, w, signed):
 CMP = {'eq': lambda a, b: a == b, 'ne': lambda a, b: a != b, 'lt': lambda a, b: a < b, 'le': lambda a, b: a <= b,
        'gt': lambda a, b: a > b, 'ge': lambda a, b: a >= b}
 OPS = {'vadd': lambda a, b: a + b, 'vsub': lambda a, b: a - b, 'vabsdiff': lambda a, b: abs(a - b),
-       'vmin': min, 'vmax': max, 'vavrg': lambda a, b: (a + b + 1) >> 1}
+       'vmin': min, 'vmax': max, 'vavrg': lambda a, b: ((a + b + 1) >> 1) if a + b >= 0 else ((a + b) >> 1)}
 cases = []
 def case(text, ins, f): cases.append((text, ins, [f(*[c[i] for c in ins]) & M32 for i in range(N)]))
 # SIMD
