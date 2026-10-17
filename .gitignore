@@ -2,3 +2,4 @@ build/
 *.kompiled/
 .krun-*
 __pycache__/
+tmp.*
