@@ -1,0 +1,28 @@
+// registers declared in nested blocks shadow outer registers of the same name for the rest of the block
+.version 7.0
+.target sm_75
+.address_size 64
+
+.visible .entry k(.param .u64 po)
+{
+    .reg .u64 o; .reg .b32 t, u;
+    ld.param.u64 o, [po];
+    mov.u32 t, 5;
+    {
+        .reg .b32 t;
+        mov.u32 t, 100;
+        add.u32 u, t, 1;
+        {
+            .reg .b32 t;
+            mov.u32 t, 7;
+            add.u32 u, u, t;
+        }
+        add.u32 u, u, t;
+    }
+    st.global.u32 [o], u;
+    st.global.u32 [o+4], t;
+    ret;
+}
+.buffer OUT .u32 [2];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 208, 5 };

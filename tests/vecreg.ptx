@@ -1,0 +1,39 @@
+// vector registers (.v2/.v4, also arrays), .reg parameters and return values, vector mov/ld/st
+.version 7.0
+.target sm_75
+.address_size 64
+
+.func (.reg .v2 .u32 out, .reg .u32 s) f(.reg .v2 .u32 in, .reg .u32 k)
+{
+    add.u32 out.x, in.y, k;
+    add.u32 out.y, in.x, k;
+    add.u32 s, in.x, in.y;
+    ret;
+}
+
+.visible .entry k(.param .u64 pi, .param .u64 po)
+{
+    .reg .u64 i, o; .reg .b32 a, b, c;
+    .reg .v2 .u32 v, w;
+    .reg .v4 .u32 q;
+    .reg .v2 .b16 h<2>;
+    ld.param.u64 i, [pi]; ld.param.u64 o, [po];
+    ld.global.v2.u32 v, [i];
+    call (w, c), f, (v, 10);
+    st.global.v2.u32 [o], w;
+    st.global.u32 [o+8], c;
+    ld.global.v4.u32 q, [i];
+    mov.u32 a, q.w;
+    st.global.u32 [o+12], a;
+    mov.b32 h0, 0x00050003;
+    mov.u16 b, h0.y;
+    st.global.u32 [o+16], b;
+    mov.b64 {a, b}, 0x0000000700000009;
+    st.global.u32 [o+20], a; st.global.u32 [o+24], b;
+    ret;
+}
+
+.buffer IN .u32 = { 1, 2, 3, 4 };
+.buffer OUT .u32 [7];
+.launch k <<< 1, 1 >>> (IN, OUT);
+.expect OUT .u32 = { 12, 11, 3, 4, 5, 9, 7 };

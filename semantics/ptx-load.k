@@ -177,9 +177,13 @@ module PTX-LOAD
   rule rnA(_, A) => A [owise]
   rule rnO(L, R:Reg) => String2Reg(rnS(L, Reg2String(R)))
   rule rnO(L, N:Name) => String2Name(rnS(L, Name2String(N)))
-  rule rnO(L, [ A ]) => [ rnA(L, A) ]
-  rule rnO(L, [ A , O ]) => [ rnA(L, A) , rnO(L, O) ]
-  rule rnO(L, [ A , B , O ]) => [ rnA(L, A) , rnA(L, B) , rnO(L, O) ]
+  syntax Addr ::= rnB(Map, Addr) [function, total]
+  rule rnB(L, A) => rnA(L, A)
+  syntax Operand ::= idO(Operand) [function, total]
+  rule idO(O) => O
+  rule rnO(L, [ A ]) => idO([ rnA(L, A) ])
+  rule rnO(L, [ A , O ]) => idO([ rnA(L, A) , rnO(L, O) ])
+  rule rnO(L, [ A , B , O ]) => idO([ rnA(L, A) , rnB(L, B) , rnO(L, O) ])
   rule rnO(L, { Os }) => { rnOs(L, Os) }
   rule rnO(L, ( Os )) => ( rnOs(L, Os) )
   rule rnO(L, R1:Reg | R2:Reg) => String2Reg(rnS(L, Reg2String(R1))) | String2Reg(rnS(L, Reg2String(R2)))
@@ -299,7 +303,7 @@ module PTX-LOAD
   rule vdeclareN(RW, B, W, K, I, N) => vdeclareN(vdeclare(RW, B +String Int2String(I), W, K, 0), B, W, K, I +Int 1, N) requires I <Int N
   rule vdeclareN(RW, _, _, _, I, N) => RW requires I >=Int N
   rule ppDecl("reg", S, AL, T, ListItem(I:DItem) Is, pps(C, PC, L, RW, SH)) =>
-       ppDecl("reg", S, AL, T, Is, pps(C, PC, L, vdeclare(RW, itemName(I), wid(T), vwidth(S), 0), SH)) requires vwidth(S) >Int 0
+       ppDecl("reg", S, AL, T, Is, pps(C, PC, L, vdeclare(RW, itemName(I), wid(T), vwidth(S), 0), SH)) requires vwidth(S) >Int 0 andBool isPlain(I)
   rule ppDecl("reg", S, AL, T, ListItem(I:DItem) Is, pps(C, PC, L, RW, SH)) =>
        ppDecl("reg", S, AL, T, Is, pps(C, PC, L, RW[itemName(I) <- wid(T)], SH)) [owise]
   rule ppRegs(R, I, N, W, pps(C, PC, L, RW, SH)) =>
