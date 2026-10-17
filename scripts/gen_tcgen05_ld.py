@@ -101,7 +101,7 @@ D = desc100(0, lbo, sbo, 0)
 def dec(row, nb):
     big = sum(w << (32 * i) for i, w in enumerate(row))
     els = [(big >> (nb * i)) & ((1 << nb) - 1) for i in range(16)]
-    v = sum(e << (8 * i) for i, e in enumerate(els))
+    v = sum((e << (2 if nb == 4 else 0)) << (8 * i) for i, e in enumerate(els))
     return [(v >> (32 * i)) & 0xffffffff for i in range(4)]
 NC = 12
 words = [[0] * NC for _ in range(128)]

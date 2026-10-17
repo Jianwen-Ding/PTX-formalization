@@ -223,13 +223,32 @@ module PTX-EXEC-TC
   rule tcK(M, I) => #if ((I >>Int 29) &Int 1) ==Int 1 #then 64 #else 32 #fi requires "kind::f8f6f4" in M
   rule tcK(_, _) => 16 [owise]
 
+  // Shared-memory element of an A/B tile.  FP6 / FP4 elements (kinds f8f6f4, mxf8f6f4) are bit-packed in shared memory (ISA 9.7.18.10.4.4):
+  // with Dense-K 32 every 16 elements occupy a 16-byte chunk (padding after the 12 / 8 data bytes), with Dense-K 64 the row is contiguous.
+  // The element is returned in its 8-bit container (FP6: low 6 bits, FP4: central 4 bits).  Only K-major tiles are modelled as packed.
+  syntax Int ::= tcSE(Bytes, Int, Bool, Ty, Int, Int, Int) [function, total]         // smem, sm_100 descriptor, K-major?, type, mn, k, dense K
+  rule tcSE(SM, D, KM, T, R, Kk, K) => wgElem(SM, tcDesc(D), KM, ew(T), R, Kk) [owise]
+  rule tcSE(SM, D, true, T, R, Kk, K) => tcSEv(SM, D, T, R, tcSEbit(T, Kk, K)) requires tcSub(T)
+  syntax Bool ::= tcSub(Ty) [function, total]
+  rule tcSub(ty("e2m1", _)) => true   rule tcSub(ty("e2m3", _)) => true   rule tcSub(ty("e3m2", _)) => true   rule tcSub(_) => false [owise]
+  syntax Int ::= tcNb(Ty) [function, total]
+  rule tcNb(ty("e2m1", _)) => 4   rule tcNb(_) => 6 [owise]
+  syntax Int ::= tcSEbit(Ty, Int, Int) [function, total]                           // bit position of element k in its row
+  rule tcSEbit(T, Kk, K) => 128 *Int (Kk /Int 16) +Int (Kk %Int 16) *Int tcNb(T) requires K ==Int 32
+  rule tcSEbit(T, Kk, K) => Kk *Int tcNb(T) [owise]
+  syntax Int ::= tcSEv(Bytes, Int, Ty, Int, Int) [function, total]
+  rule tcSEv(SM, D, T, R, Bp) =>
+       (((wgElem(SM, tcDesc(D), true, 8, R, Bp /Int 8)
+          |Int #if Bp %Int 8 +Int tcNb(T) >Int 8 #then wgElem(SM, tcDesc(D), true, 8, R, Bp /Int 8 +Int 1) <<Int 8 #else 0 #fi) >>Int (Bp %Int 8)) &Int mask(tcNb(T)))
+       <<Int #if tcNb(T) ==Int 4 #then 2 #else 0 #fi
+
   // operand tiles
   syntax Map ::= tcTileA(Bool, Int, Map, Bytes, Ty, Int, Bool, Int, Int, Int, Int, Int, Map) [function, total]
   // A (M x K): descriptor-or-tmem?, value, tmem, smem, type, negate sign, K-major?, M, K, m, k, tmem columns... accumulate
   rule tcTileA(Desc, V, TM, SM, T, Sg, KM, M, K, R, Kk, _, Acc) =>
        tcTileA(Desc, V, TM, SM, T, Sg, KM, M, K, #if Kk +Int 1 ==Int K #then R +Int 1 #else R #fi, #if Kk +Int 1 ==Int K #then 0 #else Kk +Int 1 #fi, 0,
                Acc[rc(R, Kk) <- wgNeg(T, Sg,
-                     #if Desc #then wgElem(SM, tcDesc(V), KM, ew(T), R, Kk)
+                     #if Desc #then tcSE(SM, V, KM, T, R, Kk, K)
                      #else (tcWord(TM, tcKey(R, tcCol(V) +Int (Kk *Int ew(T)) /Int 32)) >>Int ((Kk *Int ew(T)) %Int 32)) &Int mask(ew(T)) #fi)])
     requires R <Int M
   rule tcTileA(_, _, _, _, _, _, _, _, _, _, _, _, Acc) => Acc [owise]
@@ -237,7 +256,7 @@ module PTX-EXEC-TC
   // ..., accumulator, column shift, zero-column mask descriptor (-1: none), rows of the M dimension
   rule tcTileB(V, SM, T, Sg, KM, N, K, Nn, Kk, Acc, Sh, Z, Md) =>
        tcTileB(V, SM, T, Sg, KM, N, K, #if Kk +Int 1 ==Int K #then Nn +Int 1 #else Nn #fi, #if Kk +Int 1 ==Int K #then 0 #else Kk +Int 1 #fi,
-               Acc[rc(Kk, Nn) <- #if tcZero(Z, Md, N, Nn) #then 0 #else wgNeg(T, Sg, wgElem(SM, tcDesc(V), KM, ew(T), Nn +Int Sh, Kk)) #fi], Sh, Z, Md)
+               Acc[rc(Kk, Nn) <- #if tcZero(Z, Md, N, Nn) #then 0 #else wgNeg(T, Sg, tcSE(SM, V, KM, T, Nn +Int Sh, Kk, K)) #fi], Sh, Z, Md)
     requires Nn <Int N
   rule tcTileB(_, _, _, _, _, _, _, _, _, Acc, _, _, _) => Acc [owise]
   // zero-column mask descriptor (.ws): is output column C zeroed?  Sub-masks: 128/M of them, each covering N/(128/M) columns.
@@ -465,8 +484,11 @@ module PTX-EXEC-TC
   // become 16 elements of 8 bits (4 words); the element value goes to the low bits of its byte (assumption: the ISA gives the bit mapping as figures)
   syntax List ::= tcDecomp(Int, List) [function, total]
   rule tcDecomp(NB, ListItem(A:Int) ListItem(B:Int) ListItem(C:Int) ListItem(D:Int) Rs) =>
-       wordsOf(packEl(elemsOf(bitsOf(ListItem(A) ListItem(B) ListItem(C), 0), NB, 0, 16), 8, 0), 4) tcDecomp(NB, Rs)
+       wordsOf(packEl(tcShl(elemsOf(bitsOf(ListItem(A) ListItem(B) ListItem(C), 0), NB, 0, 16), #if NB ==Int 4 #then 2 #else 0 #fi), 8, 0), 4) tcDecomp(NB, Rs)
   rule tcDecomp(_, _) => .List [owise]
+  syntax List ::= tcShl(List, Int) [function, total]
+  rule tcShl(ListItem(E:Int) Es, N) => ListItem(E <<Int N) tcShl(Es, N)
+  rule tcShl(_, _) => .List [owise]
   syntax List ::= tcCpDec(Set, List) [function, total]
   rule tcCpDec(M, L) => tcDecomp(6, L) requires "b6x16_p32" in M
   rule tcCpDec(M, L) => tcDecomp(4, L) requires "b4x16_p64" in M

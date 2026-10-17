@@ -51,7 +51,7 @@ module PTX-EXEC-MMA
   rule elemF(ty("e5m2", _), B) => roundFloat(decodeF(miniToF16("e5m2", B), 16), 300, WEXP)
   rule elemF(ty("e2m3", _), B) => roundFloat(decodeF(miniToF16("e2m3", B &Int 63), 16), 300, WEXP)
   rule elemF(ty("e3m2", _), B) => roundFloat(decodeF(miniToF16("e3m2", B &Int 63), 16), 300, WEXP)
-  rule elemF(ty("e2m1", _), B) => roundFloat(decodeF(miniToF16("e2m1", B &Int 15), 16), 300, WEXP)
+  rule elemF(ty("e2m1", _), B) => roundFloat(decodeF(miniToF16("e2m1", (B >>Int 2) &Int 15), 16), 300, WEXP)     // central 4 bits of the 8-bit container
   rule elemF(ty("e2m1p", _), B) => roundFloat(decodeF(miniToF16("e2m1", B &Int 15), 16), 300, WEXP)
   rule elemF(_, _) => Int2Float(0, 300, WEXP) [owise]
   syntax Int ::= elemI(Ty, Int) [function, total]
@@ -231,6 +231,75 @@ module PTX-EXEC-MMA
             #coll("mma", 4294967295, ListItem(shapeOf(M)) ListItem(DT) ListItem(AT) ListItem(BT) ListItem(CT) ListItem(M),
                   vecRegs(Av, AT, C) vecRegs(Bv, BT, C) vecRegs(Cv, CT, C), vecOps(Dv)) ... </tk>
     requires "sync" in M andBool notBool "sp" in M
+
+  // ---------------------------------------------------------------- mma.sync with block scaling (sm_120a)
+  //   mma.sync.aligned.m16n8k{32,64}.row.col.kind::{mxf8f6f4,mxf4,mxf4nvf4}.block_scale{.scale_vec::NX}.f32.atype.btype.f32.stype
+  //       d, a, b, c, scale-a-data, {byte-id-a, thread-id-a}, scale-b-data, {byte-id-b, thread-id-b}
+  // D = (A * scale_A) * (B * scale_B) + C; every row (column) of A (B) is cut into NX chunks that share one scale factor.
+  // Assumed placement of the scale factors (the ISA gives it as figures): the factors of row r of scale_A come from the thread
+  // of quad r mod 8 whose lane % 4 is 2 * thread-id-a + (r div 8); the factors of column n of scale_B come from the thread
+  // of quad n whose lane % 4 is thread-id-b; chunk j is byte (byte-id + j) of the scale register.  The selectors are read from lane 0.
+  syntax Ty ::= mxTy(Set, Ty) [function, total]                           // kind::mxf4 / mxf4nvf4: two 4-bit elements per byte
+  rule mxTy(M, T) => ty("e2m1p", 4) requires "kind::mxf4" in M orBool "kind::mxf4nvf4" in M
+  rule mxTy(_, T) => T [owise]
+  syntax Int ::= bsNB(Set) [function, total]
+  rule bsNB(M) => 4 requires "scale_vec::4X" in M
+  rule bsNB(M) => 2 requires "scale_vec::2X" in M orBool ("kind::mxf4" in M andBool notBool "scale_vec::1X" in M)
+  rule bsNB(_) => 1 [owise]
+  syntax Float ::= bsScale(Bool, Int) [function, total]                     // is UE4M3?, byte
+  rule bsScale(false, X) => scaleP2(Int2Float(1, 64, WEXP), X -Int 127)
+  rule bsScale(true, X) =>
+       #if (X >>Int 3) ==Int 0 #then scaleP2(Int2Float(X &Int 7, 64, WEXP), 0 -Int 9)
+       #else scaleP2(Int2Float((X &Int 7) +Int 8, 64, WEXP), (X >>Int 3) -Int 10) #fi
+  syntax Int ::= bsReg(Map, Int, Int) [function, total]                      // arrivals, lane, index
+  rule bsReg(Arr, L, I) => {listAt(Arr, L)[I]}:>Int
+  syntax Map ::= bsScA(Map, Int, Int, Int, Int, Map) [function, total]       // arrivals, register offset, #chunks, row, chunk, acc
+  rule bsScA(Arr, Off, NB, R, J, Acc) =>
+       bsScA(Arr, Off, NB, #if J +Int 1 ==Int NB #then R +Int 1 #else R #fi, #if J +Int 1 ==Int NB #then 0 #else J +Int 1 #fi,
+             Acc[rc(R, J) <- (bsReg(Arr, (R %Int 8) *Int 4 +Int 2 *Int bsReg(Arr, 0, Off +Int 2) +Int R /Int 8, Off) >>Int (8 *Int (bsReg(Arr, 0, Off +Int 1) +Int J))) &Int 255])
+    requires R <Int 16
+  rule bsScA(_, _, _, _, _, Acc) => Acc [owise]
+  syntax Map ::= bsScB(Map, Int, Int, Int, Int, Map) [function, total]
+  rule bsScB(Arr, Off, NB, Cn, J, Acc) =>
+       bsScB(Arr, Off, NB, #if J +Int 1 ==Int NB #then Cn +Int 1 #else Cn #fi, #if J +Int 1 ==Int NB #then 0 #else J +Int 1 #fi,
+             Acc[rc(J, Cn) <- (bsReg(Arr, Cn *Int 4 +Int bsReg(Arr, 0, Off +Int 5), Off +Int 3) >>Int (8 *Int (bsReg(Arr, 0, Off +Int 4) +Int J))) &Int 255])
+    requires Cn <Int 8
+  rule bsScB(_, _, _, _, _, Acc) => Acc [owise]
+  syntax Float ::= dotBS(Ty, Ty, Map, Map, Map, Map, Bool, Int, Int, Int, Int, Int, Float) [function, total]
+  rule dotBS(AT, BT, A, B, SA, SB, E43, Blk, R, Cn, I, K, Acc) =>
+       dotBS(AT, BT, A, B, SA, SB, E43, Blk, R, Cn, I +Int 1, K,
+             Acc +Float elemF(AT, {A[rc(R, I)] orDefault 0}:>Int) *Float elemF(BT, {B[rc(I, Cn)] orDefault 0}:>Int)
+                 *Float bsScale(E43, {SA[rc(R, I /Int Blk)] orDefault 0}:>Int) *Float bsScale(E43, {SB[rc(I /Int Blk, Cn)] orDefault 0}:>Int))
+    requires I <Int K
+  rule dotBS(_, _, _, _, _, _, _, _, _, _, _, _, Acc) => Acc [owise]
+  syntax Map ::= resRowsBS(String, Ty, Ty, Ty, Map, Map, Map, Map, Map, Bool, Int, Int, Int, Map) [function, total]
+  rule resRowsBS(S, AT, BT, CT, A, B, C, SA, SB, E43, Blk, R, Cn, Acc) =>
+       resRowsBS(S, AT, BT, CT, A, B, C, SA, SB, E43, Blk, #if Cn +Int 1 ==Int shN(S) #then R +Int 1 #else R #fi,
+                 #if Cn +Int 1 ==Int shN(S) #then 0 #else Cn +Int 1 #fi,
+                 Acc[rc(R, Cn) <- fpFin(.Set, fw(ty("f", 32)),
+                                        dotBS(AT, BT, A, B, SA, SB, E43, Blk, R, Cn, 0, shK(S), elemF(CT, {C[rc(R, Cn)] orDefault 0}:>Int)), 0)])
+    requires R <Int shM(S)
+  rule resRowsBS(_, _, _, _, _, _, _, _, _, _, _, _, _, Acc) => Acc [owise]
+  syntax Ty ::= stTy(List) [function, total]
+  rule stTy(L) => {L[6]}:>Ty
+  rule collCompute(Kind, Data, Arr) =>
+       scatterAll(shapeD(Data), dTy(Data),
+                  resRowsBS(shapeD(Data), aTy(Data), bTy(Data), cTy(Data),
+                            fillAll(0, shapeD(Data), aTy(Data), Arr, keys_list(Arr), nElA(shapeD(Data)), 0, .Map),
+                            fillAll(1, shapeD(Data), bTy(Data), Arr, keys_list(Arr), nElB(shapeD(Data)), regsOf(nElA(shapeD(Data)), aTy(Data)), .Map),
+                            fillC(shapeD(Data), cTy(Data), Arr, keys_list(Arr), regsOf(nElA(shapeD(Data)), aTy(Data)) +Int regsOf(nElB(shapeD(Data)), bTy(Data)), .Map),
+                            bsScA(Arr, regsOf(nElA(shapeD(Data)), aTy(Data)) +Int regsOf(nElB(shapeD(Data)), bTy(Data)) +Int regsOf(nElC(shapeD(Data)), cTy(Data)),
+                                  bsNB(modsD(Data)), 0, 0, .Map),
+                            bsScB(Arr, regsOf(nElA(shapeD(Data)), aTy(Data)) +Int regsOf(nElB(shapeD(Data)), bTy(Data)) +Int regsOf(nElC(shapeD(Data)), cTy(Data)),
+                                  bsNB(modsD(Data)), 0, 0, .Map),
+                            stTy(Data) ==K ty("ue4m3", 8), shK(shapeD(Data)) /Int bsNB(modsD(Data)), 0, 0, .Map),
+                  keys_list(Arr))
+    requires Kind ==String "mmabs"
+  rule <tk> exec(opc("mma", M, ListItem(DT) ListItem(AT) ListItem(BT) ListItem(CT) ListItem(ST)), ops(Dv, Av, Bv, Cv, SA, SelA, SB, SelB, .Operands), C) =>
+            #coll("mmabs", 4294967295, ListItem(shapeOf(M)) ListItem(DT) ListItem(mxTy(M, AT)) ListItem(mxTy(M, BT)) ListItem(CT) ListItem(M) ListItem(ST),
+                  vecRegs(Av, mxTy(M, AT), C) vecRegs(Bv, mxTy(M, BT), C) vecRegs(Cv, CT, C)
+                  ListItem(rd(SA, ty("b", 32), C)) vecRegs(SelA, ty("b", 32), C) ListItem(rd(SB, ty("b", 32), C)) vecRegs(SelB, ty("b", 32), C), vecOps(Dv)) ... </tk>
+    requires "sync" in M andBool "block_scale" in M
 
   // ================================================================ wmma
   // Fragment layouts of wmma are unspecified in PTX, so any consistent assignment is

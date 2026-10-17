@@ -34,10 +34,10 @@ for kk, (nm, kind, extra, at, bt, N, K, blk, sty, sfa, sfb, en, z) in enumerate(
             acc = fval('f32', Din[(r, c)]) if en else Fraction(0)
             acc += sum(fval(at, A[r][k]) * fval(bt, B[c][k]) * sf(SA[r][k // blk]) * sf(SB[c][k // blk]) for k in range(K))
             Dout[(r, c)] = to_bits('f32', acc)
-    a_img, la, sa_ = build_tile(A, M, K, w, True, z, 0)
+    a_img, la, sa_ = build_tile(A, M, K, w, True, z, 0, at if kind == 'kind::mxf8f6f4' else None)
     descA = desc100(0, la, sa_, z)
     off = (max(a_img) + 1 + 1023) // 1024 * 1024
-    b_img, lb, sb_ = build_tile(B, N, K, w, True, z, off)
+    b_img, lb, sb_ = build_tile(B, N, K, w, True, z, off, bt if kind == 'kind::mxf8f6f4' else None)
     img = dict(a_img); img.update(b_img); descB = desc100(off, lb, sb_, z)
     size = (max(img) + 1 + 2047) // 2048 * 2048
     data = bytes(img.get(i, 0) for i in range(size))

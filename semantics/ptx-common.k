@@ -72,7 +72,7 @@ module PTX-COMMON
                  SetItem("e4m3") SetItem("e5m2") SetItem("e4m3x2") SetItem("e5m2x2")
                  SetItem("e4m3x4") SetItem("e5m2x4") SetItem("e2m3x2") SetItem("e3m2x2")
                  SetItem("e2m3x4") SetItem("e3m2x4") SetItem("e2m1x2") SetItem("e2m1x4")
-                 SetItem("ue8m0x2") SetItem("u4") SetItem("s4") SetItem("u2") SetItem("s2") SetItem("b1")
+                 SetItem("ue8m0x2") SetItem("e3m2") SetItem("e2m3") SetItem("e2m1") SetItem("ue8m0") SetItem("ue4m3") SetItem("u4") SetItem("s4") SetItem("u2") SetItem("s2") SetItem("b1")
 
   syntax Ty ::= strTy(String) [function]
   rule strTy("pred") => ty("p", 1)
@@ -87,6 +87,8 @@ module PTX-COMMON
   rule strTy("e2m3x4") => ty("e2m3x4", 32) rule strTy("e3m2x4") => ty("e3m2x4", 32)
   rule strTy("e2m1x2") => ty("e2m1x2", 8)  rule strTy("e2m1x4") => ty("e2m1x4", 16)
   rule strTy("ue8m0x2") => ty("ue8m0x2", 16)
+  rule strTy("e3m2") => ty("e3m2", 8)  rule strTy("e2m3") => ty("e2m3", 8)  rule strTy("e2m1") => ty("e2m1", 8)
+  rule strTy("ue8m0") => ty("ue8m0", 8)  rule strTy("ue4m3") => ty("ue4m3", 8)
   rule strTy(S) => ty(substrString(S, 0, 1), String2Int(substrString(S, 1, lengthString(S))))
     [owise]
 

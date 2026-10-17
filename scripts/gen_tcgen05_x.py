@@ -29,6 +29,24 @@ def rand_float_bits(ty):        # 6-bit / 4-bit values in 8-bit containers
     if ty in ('e2m3', 'e3m2', 'e2m1'): return random.choice(list(MINI[ty]))
     return _rfb(ty)
 
+_build_tile = build_tile
+def build_tile(X, rows, K, w, kmajor, z, base, ty=None):
+    """FP6 / FP4 elements of kinds f8f6f4 / mxf8f6f4 are bit-packed in shared memory (K-major): 16 elements per 16-byte chunk when
+    the dense K is 32 (padding after the 8 / 12 data bytes), contiguous rows when it is 64."""
+    if ty in ('e2m3', 'e3m2', 'e2m1'):
+        nb = 4 if ty == 'e2m1' else 6
+        assert kmajor
+        K8 = 32 if K == 32 else K * nb // 8
+        Xb = []
+        for row in X:
+            bits = [0] * (K8 * 8)
+            for k, v in enumerate(row):
+                pos = 128 * (k // 16) + (k % 16) * nb if K == 32 else k * nb
+                for b in range(nb): bits[pos + b] = (v >> b) & 1
+            Xb.append([sum(bits[8 * i + b] << b for b in range(8)) for i in range(K8)])
+        return _build_tile(Xb, rows, K8, 8, True, z, base)
+    return _build_tile(X, rows, K, w, kmajor, z, base)
+
 def zmask(Z, M, N):
     """Zero-column mask (list over N output columns of 0/1) from the descriptor, by explicit run generation."""
     sc = [(Z >> (8 * i)) & 255 for i in range(4)]; fs = [(Z >> (32 + i)) & 1 for i in range(4)]
@@ -92,10 +110,10 @@ for kk, (nm, N, K, kind, dt, at, bt, aform, akm, az, bkm, bz, extra, M, Zd, shif
             Dout[(r, c)] = to_bits(dt, s)
     img = {}; off = 0; descA = 0
     if aform == 'desc':
-        a_img, la, sa_ = build_tile(A, M, K, wa, akm, az, 0)
+        a_img, la, sa_ = build_tile(A, M, K, wa, akm, az, 0, at)
         img.update(a_img); descA = desc100(0, la, sa_, az)
         off = (max(a_img) + 1 + 1023) // 1024 * 1024
-    b_img, lb, sb_ = build_tile(B, N + shf, K, wb, bkm, bz, off)
+    b_img, lb, sb_ = build_tile(B, N + shf, K, wb, bkm, bz, off, bt)
     img.update(b_img); descB = desc100(off, lb, sb_, bz)
     size = (max(img) + 1 + 2047) // 2048 * 2048
     data = bytes(img.get(i, 0) for i in range(size))
