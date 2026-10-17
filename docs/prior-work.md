@@ -122,7 +122,11 @@ against an independent Python model in `scripts/gen_tcgen05_*.py`):
 * `tcgen05.cp` reads source rows as K-major 32-bit elements; `shift` moves rows down by one lane; `commit` signals
   its mbarrier.
 
-Not modelled: `.cta_group::2`, `tcgen05.cp` decompression, `ld.red`/`spcompress`, commit multicast.
+* `.cta_group::2`: the CTA pair is cluster ranks (2k, 2k+1).  Each CTA supplies M/2 rows of A (from its own shared or tensor
+  memory) and receives M/2 rows of D at the same taddr; B is split by columns, N/2 from each CTA's shared memory with the
+  same descriptor (assumption, ISA gives figures).  Dense kinds only (not `.sp`, not block-scaled).
+
+Not modelled: `tcgen05.cp` decompression, `ld.red`/`spcompress`, commit multicast.
 
 ## Tensor maps / TMA
 

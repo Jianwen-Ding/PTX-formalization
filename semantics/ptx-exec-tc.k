@@ -80,7 +80,7 @@ module PTX-EXEC-TC
        <tid> T </tid> <cseq> CS </cseq>
        <tmres> R => R[tcInst(T, CS, "tcgen05.dealloc") <- 0] </tmres>
        <tmalloc> Al => Al[B <- undef] </tmalloc>
-    requires notBool tcInst(T, CS, "tcgen05.dealloc") in_keys(R) andBool Al[B] ==K N
+    requires notBool tcInst(T, CS, "tcgen05.dealloc") in_keys(R) andBool B in_keys(Al) andBool Al[B] ==K N
   rule <tk> #tcDealloc(B, N) => #fault("tcgen05.dealloc: not an allocation of that size", B) ... </tk> [owise]
 
   // ---------------------------------------------------------------- ld / st

@@ -15,7 +15,8 @@ CFG = [('g2a', 128, 8, 16, 'f32', 'f16', 'f16', 'desc'),
 TC = {'f16': 0, 'bf16': 1}
 for kk, (nm, M, N, K, dt, at, bt, aform) in enumerate(CFG):
     Mh, Nh = M // 2, N // 2
-    A = [[rand_float_bits(at) for _ in range(K)] for _ in range(M)]
+    live = set(range(M)) if M <= 128 else {u + c * Mh for c in range(2) for u in (0, 1, 2, 63, 64, 126, 127)}   # large tiles: only a few rows are nonzero (keeps the file small)
+    A = [[rand_float_bits(at) if r in live else 0 for _ in range(K)] for r in range(M)]
     B = [[rand_float_bits(bt) for _ in range(K)] for _ in range(N)]
     Din = {(r, c): 0 for r in range(M) for c in range(N)}
     Dout = {(r, c): to_bits(dt, fval(dt, Din[(r, c)]) + sum(fval(at, A[r][k]) * fval(bt, B[c][k]) for k in range(K))) for r in range(M) for c in range(N)}
@@ -38,7 +39,7 @@ for kk, (nm, M, N, K, dt, at, bt, aform) in enumerate(CFG):
     L.append(f""".visible .entry k{kk}(.param .u64 pimg, .param .u64 pd, .param .u64 pa, .param .u64 po) .reqnctapercluster 2, 1, 1
 {{
     .reg .b32 %r<8>, %x<4>, %D<{nd}>, %A<{na}>, %cta; .reg .b64 %rd<8>; .reg .b64 %dA, %dB; .reg .b32 %idesc, %tl, %tw;
-    .reg .pred %p, %q;
+    .reg .pred %p, %q, %r7p;
     .shared .align 1024 .b8 buf[{size}];
     .shared .align 16 .b32 slot[2];
     mov.u32 %tl, %tid.x;
@@ -70,7 +71,7 @@ for kk, (nm, M, N, K, dt, at, bt, aform) in enumerate(CFG):
     if aform == 'desc': L.append(f"    mov.b64 %dA, {descA};")
     else: L.append("    mov.u32 %r2, 256;")
     a_op = "%dA" if aform == 'desc' else "[%r2]"
-    L.append("    setp.eq.u32 %p, %cta, 0;\n    and.pred %q, %q, %p;")
+    L.append("    setp.eq.u32 %r7p, %cta, 0;\n    and.pred %q, %q, %r7p;")
     L.append(f"    @%q tcgen05.mma.cta_group::2.kind::{'f16'} [%r3], {a_op}, %dB, %idesc, 1;")
     L.append("    tcgen05.fence::after_thread_sync;\n    bar.sync 0;\n    barrier.cluster.arrive.release.aligned;\n    barrier.cluster.wait.acquire.aligned;")
     L.append(f"    tcgen05.ld.sync.aligned.32x32b.x{nd}.b32 {vec('D', nd)}, [%tw];\n    tcgen05.wait::ld.sync.aligned;")
@@ -95,7 +96,8 @@ for kk, (nm, M, N, K, dt, at, bt, aform) in enumerate(CFG):
     code += f".buffer DIN .u32 [{256 * nd}];" + "\n" + buf('AIN', 'u32', flat(ain) if aform == 'tmem' else [0]) + "\n"
     code += f".buffer O .u32 [{256 * nd}];\n.launch k{kk} <<< 2, 128 >>> (IMG, DIN, AIN, O);\n"
     for c in range(2):
-        rows = flat([[Dout[(c * Mh + u, j)] for j in range(N)] for u in range(Mh)])
-        code += expect('O', 'u32', rows).replace('@ ', '@ ', 1) if False else "\n".join(f".expect O .u32 @ {c * 128 * nd + i} = {{ {h(rows[i:i + CH])} }};" for i in range(0, len(rows), CH)) + "\n"
+        for u in range(Mh):
+            if c * Mh + u not in live: continue
+            code += f".expect O .u32 @ {c * 128 * nd + u * nd} = {{ {h([Dout[(c * Mh + u, j)] for j in range(N)])} }};\n"
     open(f'tests/tcg2-{kk}.ptx', 'w').write(code)
 print(len(CFG), "tests")
