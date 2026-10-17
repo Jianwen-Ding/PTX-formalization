@@ -198,10 +198,10 @@ module PTX-LOAD
   rule leaveBlock(pps(C, I, L2, RW, SH), L) => pps(C, I, addRen(dropRen(L2, keys_list(L2)), L, keys_list(L)), RW, SH)
   syntax Map ::= dropRen(Map, List) [function, total] | addRen(Map, Map, List) [function, total]
   rule dropRen(L, .List) => L
-  rule dropRen(L, ListItem(K:String) Ks) => dropRen(#if substrString(K, 0, 5) ==String "@ren:" orBool K ==String "@depth" #then L[K <- undef] #else L #fi, Ks)
+  rule dropRen(L, ListItem(K:String) Ks) => dropRen(#if pfx(K, "@ren:") orBool K ==String "@depth" #then L[K <- undef] #else L #fi, Ks)
   rule dropRen(L, _) => L [owise]
   rule addRen(L, _, .List) => L
-  rule addRen(L, Old, ListItem(K:String) Ks) => addRen(#if substrString(K, 0, 5) ==String "@ren:" orBool K ==String "@depth" #then L[K <- {Old[K]}:>Int] #else L #fi, Old, Ks)
+  rule addRen(L, Old, ListItem(K:String) Ks) => addRen(#if pfx(K, "@ren:") orBool K ==String "@depth" #then L[K <- {Old[K]}:>Int] #else L #fi, Old, Ks)
   rule addRen(L, _, _) => L [owise]
   syntax Bool ::= isPlain(DItem) [function, total]
   rule isPlain(_:Name) => true

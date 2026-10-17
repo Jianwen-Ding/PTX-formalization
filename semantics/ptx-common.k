@@ -18,6 +18,9 @@ module PTX-COMMON
   imports K-EQUAL
 
   // ------------------------------------------------------------ token -> string
+  syntax Bool ::= pfx(String, String) [function, total]
+  rule pfx(K, P) => substrString(K, 0, lengthString(P)) ==String P requires lengthString(K) >=Int lengthString(P)
+  rule pfx(K, P) => false requires lengthString(K) <Int lengthString(P)
   syntax String ::= opStr(Operand) [function, total]
   rule opStr(N:Name) => Name2String(N)
   rule opStr(R:Reg) => Reg2String(R)

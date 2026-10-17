@@ -94,11 +94,11 @@ module PTX-EXEC-CTRL
        <env> CE => E </env> <ltop> _ => LT </ltop>
   syntax Map ::= regIns(Map, List, Map) [function, total] | regOuts(Map, List, Map, Map) [function, total]
   rule regIns(R, .List, _) => R
-  rule regIns(R, ListItem(K:String) Ks, E) => regIns(#if substrString(K, 0, 4) ==String "@in:" andBool lengthString(K) >Int 4
+  rule regIns(R, ListItem(K:String) Ks, E) => regIns(#if pfx(K, "@in:")
                                                        #then R[substrString(K, 4, lengthString(K)) <- symAddr({E[K]}:>Sym)] #else R #fi, Ks, E)
   rule regIns(R, _, _) => R [owise]
   rule regOuts(R, .List, _, _) => R
-  rule regOuts(R, ListItem(K:String) Ks, E, CR) => regOuts(#if substrString(K, 0, 5) ==String "@out:" andBool lengthString(K) >Int 5
+  rule regOuts(R, ListItem(K:String) Ks, E, CR) => regOuts(#if pfx(K, "@out:")
                                                        #then R[symName({E[K]}:>Sym) <- {CR[substrString(K, 5, lengthString(K))] orDefault 0}:>Int] #else R #fi, Ks, E, CR)
   rule regOuts(R, _, _, _) => R [owise]
   syntax String ::= symName(Sym) [function, total]
