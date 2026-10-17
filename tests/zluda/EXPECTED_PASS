@@ -21,6 +21,7 @@ bmsk_clamp_b32
 bra
 brev
 call
+call_rnd
 clz
 const
 const_ident

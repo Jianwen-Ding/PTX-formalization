@@ -28,6 +28,11 @@ one() {
 }
 export -f one
 out=$(printf '%s\n' "${tests[@]}" | xargs -P "${JOBS:-2}" -I{} bash -c 'one {}')
+# tests killed for lack of memory (exit 137) when run in parallel are retried one at a time
+retry=$(printf '%s\n' "$out" | grep '^FAIL.*(exit 137)' | awk '{print $2}')
+if [ -n "$retry" ]; then
+  out=$(printf '%s\n' "$out" | grep -v '^FAIL.*(exit 137)'; for t in $retry; do one "$t"; done)
+fi
 printf '%s\n' "$out"
 pass=$(printf '%s\n' "$out" | grep -c '^PASS'); fail=$(printf '%s\n' "$out" | grep -c '^FAIL')
 echo "---- $pass passed, $fail failed"
