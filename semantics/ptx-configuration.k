@@ -71,6 +71,7 @@ module PTX-CONFIGURATION
       <gtop> 4096 </gtop>
       <turn> -2 </turn>
       <clusterDims> .Map </clusterDims>       // kernel |-> .reqnctapercluster
+      <tick> 1000 </tick>                     // monotonic counter behind %clock, %clock64 and %globaltimer
       <mbars> .Map </mbars>                   // CTA * 2^32 + shared offset |-> mbarrier object mb(phase, pending, expected, tx-count, layout)
       <clbar> .Map </clbar>                   // cluster id |-> cl(arrived threads, generation) for barrier.cluster
       <stop> 0 </stop>

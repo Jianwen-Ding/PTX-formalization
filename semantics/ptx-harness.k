@@ -204,7 +204,11 @@ module PTX-HARNESS
        lanemasks(T %Int 32)
        "%laneid" |-> T %Int 32  "%warpid" |-> T /Int 32  "%nwarpid" |-> (vol(BD) +Int 31) /Int 32
        clusterRegs(C, GD, CD)
-       "%smid" |-> 0  "%gridid" |-> 0  "%clock" |-> 0  "%clock64" |-> 0  "%warpsize" |-> 32
+       "%smid" |-> 0  "%nsmid" |-> 1  "%gridid" |-> 0  "%clock" |-> 0  "%clock64" |-> 0  "%warpsize" |-> 32
+       "%total_smem_size" |-> 233472  "%aggr_smem_size" |-> 233472  "%dynamic_smem_size" |-> 0  "%current_graph_exec" |-> 0
+       "%reserved_smem_offset_begin" |-> 0  "%reserved_smem_offset_end" |-> 1024  "%reserved_smem_offset_cap" |-> 1024
+       "%reserved_smem_offset_0" |-> 0  "%reserved_smem_offset_1" |-> 0
+       pmRegs(0) envRegs(0)
   // cluster special registers (a launch without clusters is a 1x1x1 cluster)
   syntax Map ::= clusterRegs(Int, Dim3, Dim3) [function, total]
   rule clusterRegs(C, dim3(GX, GY, GZ), dim3(CX, CY, CZ)) =>
@@ -218,6 +222,12 @@ module PTX-HARNESS
   syntax Int ::= clRank(Int, Dim3, Dim3) [function, total]
   rule clRank(C, dim3(GX, GY, _), dim3(CX, CY, CZ)) =>
        ((C %Int GX) %Int CX) +Int (((C /Int GX) %Int GY) %Int CY) *Int CX +Int ((C /Int (GX *Int GY)) %Int CZ) *Int CX *Int CY
+  // performance-monitor and environment registers read as zero
+  syntax Map ::= pmRegs(Int) [function, total] | envRegs(Int) [function, total]
+  rule pmRegs(I) => ("%pm" +String Int2String(I)) |-> 0 ("%pm" +String Int2String(I) +String "_64") |-> 0 pmRegs(I +Int 1) requires I <Int 8
+  rule pmRegs(_) => .Map [owise]
+  rule envRegs(I) => ("%envreg" +String Int2String(I)) |-> 0 envRegs(I +Int 1) requires I <Int 32
+  rule envRegs(_) => .Map [owise]
   syntax Int ::= orBits(Int, Int) [function, total]
   rule orBits(A, B) => A |Int B
   syntax Map ::= lanemasks(Int) [function, total]

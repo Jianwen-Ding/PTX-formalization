@@ -52,8 +52,8 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 - [x] 28 cp.async (after 27)
 - [x] 29 Bulk async copies (after 26, 27)
 - [x] 30 Tensor maps and TMA (after 29)
-- [ ] 31 st.async, red.async, fence.proxy, griddepcontrol, setmaxnreg, ... (after 27)
-- [ ] 32 Remaining special registers
+- [x] 31 st.async, red.async, fence.proxy, griddepcontrol, setmaxnreg, ... (after 27)
+- [x] 32 Remaining special registers
 
 ## 7. Control flow and resources
 - [ ] 33 Indirect branches and calls (brx.idx, .callprototype)

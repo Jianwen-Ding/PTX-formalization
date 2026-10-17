@@ -1,0 +1,70 @@
+// Special registers: vector reads, monotonic clocks, cluster registers of a 1x1x1 cluster, constants.
+.version 8.6
+.target sm_90
+.address_size 64
+
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %oo, %c1, %c2, %c3, %g1, %g2; .reg .b32 %v<4>, %w<4>, %u<20>, %t1, %t2; .reg .pred %p, %q, %is;
+    ld.param.u64 %o, [po];
+    mov.u32 %u0, %tid.x;
+    mov.u32 %u1, %ctaid.x;
+    setp.eq.u32 %p, %u0, 0;
+    setp.eq.u32 %q, %u1, 1;
+    and.pred %is, %p, %q;
+    mov.v4.u32 {%v0, %v1, %v2, %v3}, %tid;
+    mov.v4.u32 {%w0, %w1, %w2, %w3}, %nctaid;
+    mov.u64 %c1, %clock64;
+    mov.u64 %c2, %clock64;
+    mov.u64 %c3, %clock64;
+    mov.u64 %g1, %globaltimer;
+    mov.u64 %g2, %globaltimer;
+    setp.lt.u64 %p, %c1, %c2;
+    setp.lt.u64 %q, %c2, %c3;
+    and.pred %p, %p, %q;
+    selp.u32 %u2, 1, 0, %p;
+    setp.lt.u64 %p, %g1, %g2;
+    selp.u32 %u3, 1, 0, %p;
+    mov.u32 %u4, %ntid.x;
+    mov.u32 %u5, %nctaid.x;
+    mov.u32 %u6, %nwarpid;
+    mov.u32 %u7, %warpsize;
+    mov.u32 %u8, %laneid;
+    mov.u32 %u9, %clusterid.x;
+    mov.u32 %u10, %nclusterid.x;
+    mov.u32 %u11, %cluster_ctarank;
+    mov.u32 %u12, %cluster_nctarank;
+    mov.u32 %u13, %cluster_ctaid.x;
+    mov.u32 %u14, %cluster_nctaid.x;
+    mov.u32 %u15, %is_explicit_cluster;
+    mov.u32 %u16, %envreg0;
+    mov.u32 %u17, %pm0;
+    mov.u32 %u18, %nsmid;
+    setp.ge.u32 %p, %u18, 1;
+    selp.u32 %u18, 1, 0, %p;
+    mov.u32 %u19, %lanemask_lt;
+    @%is st.global.b32 [%o], %v0;
+    @%is st.global.b32 [%o+4], %w0;
+    @%is st.global.b32 [%o+8], %u2;
+    @%is st.global.b32 [%o+12], %u3;
+    @%is st.global.b32 [%o+16], %u4;
+    @%is st.global.b32 [%o+20], %u5;
+    @%is st.global.b32 [%o+24], %u6;
+    @%is st.global.b32 [%o+28], %u7;
+    @%is st.global.b32 [%o+32], %u8;
+    @%is st.global.b32 [%o+36], %u9;
+    @%is st.global.b32 [%o+40], %u10;
+    @%is st.global.b32 [%o+44], %u11;
+    @%is st.global.b32 [%o+48], %u12;
+    @%is st.global.b32 [%o+52], %u13;
+    @%is st.global.b32 [%o+56], %u14;
+    @%is st.global.b32 [%o+60], %u15;
+    @%is st.global.b32 [%o+64], %u16;
+    @%is st.global.b32 [%o+68], %u17;
+    @%is st.global.b32 [%o+72], %u18;
+    @%is st.global.b32 [%o+76], %u19;
+    ret;
+}
+.buffer O .u32 [20];
+.launch k <<< 2, 64 >>> (O);
+.expect O .u32 = { 0, 2, 1, 1, 64, 2, 2, 32, 0, 1, 2, 0, 1, 0, 1, 0, 0, 0, 1, 0 };
