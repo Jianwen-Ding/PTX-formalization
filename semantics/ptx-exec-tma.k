@@ -105,6 +105,17 @@ module PTX-EXEC-TMA
 
   // ---------------------------------------------------------------- operand forms: [tensorMap{, gAddrToOverride}{, attributeOverrideInfo}, tensorCoords]
   // (.override::global_address / .override::global_dim[_stride], PTX ISA 9.4): the tensor-map object is patched before use.
+  // .cta_group::2 with multicast: the mbarrier signal for destination CTA d goes to the CTA of d's pair whose rank parity is that of the CTA holding `mbar`
+  syntax List ::= tmBarLocs(Loc, Int, Bool, Bool, Int) [function, total]            // mbar location, ctaMask, multicast?, cta_group::2?, own rank
+  rule tmBarLocs(L, Mask, Mc, false, _) => bulkLocs(L, Mask, Mc)
+  rule tmBarLocs(L, Mask, false, true, _) => ListItem(L)
+  rule tmBarLocs(loc(S, A), Mask, true, true, Own) => tmBarRanks(A &Int 16777215, Mask, 0, #if (A >>Int 24) >Int 0 #then ((A >>Int 24) -Int 1) %Int 2 #else Own %Int 2 #fi)
+  rule tmBarLocs(L, _, _, _, _) => ListItem(L) [owise]
+  syntax List ::= tmBarRanks(Int, Int, Int, Int) [function, total]
+  rule tmBarRanks(Off, Mask, R, Par) =>
+       #if (Mask >>Int R) &Int 1 ==Int 1 #then ListItem(loc("cluster", ((R -Int R %Int 2 +Int Par +Int 1) <<Int 24) |Int Off)) #else .List #fi tmBarRanks(Off, Mask, R +Int 1, Par)
+    requires R <Int 32 andBool (Mask >>Int R) >Int 0
+  rule tmBarRanks(_, _, _, _) => .List [owise]
   syntax KItem ::= #tmLd(Set, Addr, Int, Operand, Addr, Operands, Ctx) | #tmSt(Set, Int, Operand, Addr, Ctx)
   syntax Int ::= tmObj(Bytes, Loc) [function, total]
   rule tmObj(GM, L) => readBytes(GM, locOff(L), 128)
@@ -186,7 +197,7 @@ module PTX-EXEC-TMA
                   tmLoadAll(GM, B, tmCoords(Cs, C),
                             tmBases(ea(D, #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(ListItem([ Mb ]) opsList(Rest), C), isMc(M)),
                             "gather4" in M orBool "tile::gather4" in M))
-            ~> #tmTxAll(bulkLocs(ea(Mb, #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(ListItem([ Mb ]) opsList(Rest), C), isMc(M)),
+            ~> #tmTxAll(tmBarLocs(ea(Mb, #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(ListItem([ Mb ]) opsList(Rest), C), isMc(M), "cta_group::2" in M, rreg("%cluster_ctarank", C)),
                         tmCount(B, "tile::gather4" in M) *Int tmEb(B)) ... </tk>
        <gmem> GM </gmem>
     requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "mbarrier::complete_tx::bytes" in M andBool notBool isI2c(M) andBool notBool tmSub(B)
@@ -243,7 +254,7 @@ module PTX-EXEC-TMA
             #tmWr(#if "shared::cluster" in M #then "cluster" #else "shared" #fi,
                   tmLoadAllS(GM, B, tmCoords(Cs, C),
                              tmBases(ea(D, #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(ListItem([ Mb ]) tmNoVec(opsList(Rest)), C), isMc(M))))
-            ~> #tmTxAll(bulkLocs(ea(Mb, #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(ListItem([ Mb ]) tmNoVec(opsList(Rest)), C), isMc(M)),
+            ~> #tmTxAll(tmBarLocs(ea(Mb, #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(ListItem([ Mb ]) tmNoVec(opsList(Rest)), C), isMc(M), "cta_group::2" in M, rreg("%cluster_ctarank", C)),
                         tmGroups(B) *Int tmSB(B)) ... </tk>
        <gmem> GM </gmem>
     requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "mbarrier::complete_tx::bytes" in M andBool notBool isI2c(M) andBool tmSub(B)
@@ -343,7 +354,7 @@ module PTX-EXEC-TMA
             #tmWr(#if "shared::cluster" in M #then "cluster" #else "shared" #fi,
                   tmLoadAllI(GM, B, tmCoords(Cs, C), tmInfo(Rest, C), imMode(M),
                              tmBases(ea(D, #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(ListItem([ Mb ]) tmNoVec(opsList(Rest)), C), isMc(M))))
-            ~> #tmTxAll(bulkLocs(ea(Mb, #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(ListItem([ Mb ]) tmNoVec(opsList(Rest)), C), isMc(M)),
+            ~> #tmTxAll(tmBarLocs(ea(Mb, #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(ListItem([ Mb ]) tmNoVec(opsList(Rest)), C), isMc(M), "cta_group::2" in M, rreg("%cluster_ctarank", C)),
                         tmPix(B, tmInfo(Rest, C), imMode(M)) *Int tmBox(B, 0)
                         *Int tmEb(B)) ... </tk>
        <gmem> GM </gmem>
@@ -352,18 +363,20 @@ module PTX-EXEC-TMA
   syntax Int ::= tmBad(Int, List, Int, Int) [function, total]            // first pixel whose W position is outside the tensor
   rule tmBad(B, Cs, Q, Cnt) => Q requires Q >=Int Cnt orBool nth(Cs, 1) +Int Q *Int tmEst(B, 1) <Int 0 orBool nth(Cs, 1) +Int Q *Int tmEst(B, 1) >=Int tmDim(B, 1)
   rule tmBad(B, Cs, Q, Cnt) => tmBad(B, Cs, Q +Int 1, Cnt) [owise]
-  syntax List ::= tmStoreListI(Bytes, Int, List, Int, Int, Int) [function, total]
-  rule tmStoreListI(SM, B, Cs, Base, E, Bad) =>
-       #if E /Int tmBox(B, 0) >=Int Bad orBool tmAddrI(B, Cs, .List, 3, E) <Int 0 #then .List #else ListItem(tmg(tmAddrI(B, Cs, .List, 3, E), tmEb(B), tmSrcV(SM, B, Base, E))) #fi
-       tmStoreListI(SM, B, Cs, Base, E +Int 1, Bad)
+  syntax List ::= tmStoreListI(Bytes, Int, List, Int, Int, Int, Int) [function, total]     // ..., first bad pixel, mode (0 .im2col_no_offs, 3 ::w)
+  rule tmStoreListI(SM, B, Cs, Base, E, Bad, Md) =>
+       #if E /Int tmBox(B, 0) >=Int Bad orBool tmAddrI(B, Cs, ListItem(0) ListItem(0) ListItem(0), Md, E) <Int 0 #then .List
+       #else ListItem(tmg(tmAddrI(B, Cs, ListItem(0) ListItem(0) ListItem(0), Md, E), tmEb(B), tmSrcV(SM, B, Base, E))) #fi
+       tmStoreListI(SM, B, Cs, Base, E +Int 1, Bad, Md)
     requires E <Int tmBox(B, 1) *Int tmBox(B, 0)
-  rule tmStoreListI(_, _, _, _, _, _) => .List [owise]
+  rule tmStoreListI(_, _, _, _, _, _, _) => .List [owise]
   rule <tk> #tmSt(M, B, Cs, S, C) =>
             #tmGWr(tmStoreListI(SM, B, tmCoords(Cs, C), locOff(ea(S, "shared", C)), 0,
-                                tmBad(B, tmCoords(Cs, C), 0, tmBox(B, 1))),
+                                #if "im2col_no_offs::w" in M #then tmBad(B, tmCoords(Cs, C), 0, tmBox(B, 1)) #else tmBox(B, 1) #fi,
+                                #if "im2col_no_offs::w" in M #then 3 #else 0 #fi),
                    #if "reduce" in M #then atomOp(M) #else "" #fi, tmTy(B)) ... </tk>
-       <gmem> GM </gmem> <smem> SM </smem>
-    requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "bulk_group" in M andBool "im2col_no_offs::w" in M
+       <smem> SM </smem>
+    requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "bulk_group" in M andBool ("im2col_no_offs::w" in M orBool "im2col_no_offs" in M)
 
   // ---------------------------------------------------------------- stores / reductions: shared -> global
   // source element e of the shared image (dense, chunk-swizzled)
@@ -380,7 +393,7 @@ module PTX-EXEC-TMA
                                "scatter4" in M orBool "tile::scatter4" in M),
                    #if "reduce" in M #then atomOp(M) #else "" #fi, tmTy(B)) ... </tk>
        <gmem> GM </gmem> <smem> SM </smem>
-    requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "bulk_group" in M andBool notBool ("im2col_no_offs::w" in M)
+    requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "bulk_group" in M andBool notBool ("im2col_no_offs::w" in M orBool "im2col_no_offs" in M)
   rule <tk> #tmGWr(ListItem(tmg(A, N, V)) Ls, "", T) => #mem(loc("global", A), wrOp(N, V)) ~> #drop ~> #tmGWr(Ls, "", T) ... </tk>
   rule <tk> #tmGWr(ListItem(tmg(A, N, V)) Ls, OP, T) => #mem(loc("global", A), bulkRed(OP, T, N, V)) ~> #drop ~> #tmGWr(Ls, OP, T) ... </tk>
     requires OP =/=String ""

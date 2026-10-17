@@ -92,7 +92,7 @@ Items are numbered in task order (44 onward).  Sources: `docs/coverage.md`, `doc
 - [x] 56 TMA im2col, im2col::w, w::128 modes
 - [x] 57 TMA interleave layouts, OOB fill, L2 promotion, all swizzles audit
 - [x] 58 TMA hardware 128-byte tensormap encoding, tensormap.replace all fields, .override
-- [ ] 59 cp.async.bulk.tensor multicast / cta_group::2 / prefetch.tensor / reduce audit
+- [x] 59 cp.async.bulk.tensor multicast / cta_group::2 / prefetch.tensor / reduce audit
 - [ ] 60 mbarrier .multicast::cluster::32b, cluster-scope arrive/expect_tx, try_wait timeouts
 - [ ] 61 textures: cubemaps (+arrays), tex.level/.grad, mipmaps
 - [ ] 62 textures: depth compare, tld4 on cubemap/depth, array edge cases, sampler addressing/border colours

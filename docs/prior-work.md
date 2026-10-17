@@ -212,3 +212,10 @@ The tensor-map object is our own 128-byte encoding (the real one is opaque).  El
 `.override::global_address`, `.override::global_dim` and `.override::global_dim_stride` patch a copy of the tensor map before use (stride = (lower + (upper << 32)) << 4).
 Packed sub-byte types (elemtype 13-15) load groups of 16 elements (8 or 12 global bytes) into 8 or 16-byte shared-memory groups (padding written as zeros), i.e. the
 format `tcgen05.mma` kinds f8f6f4 / mxf8f6f4 read; stores of `.b6p2x16` are not modelled.  Tests: `scripts/gen_tma_rep.py`.
+
+## cp.async.bulk.tensor: multicast, cta_group::2, reduce
+
+`.multicast::cluster` / `::16b` / `::32b` copy to the same CTA-relative offset in every CTA of the mask and signal the same-offset mbarrier there.  With `.cta_group::2` the
+signal for destination CTA d goes to the CTA of d's pair whose rank parity equals that of the CTA holding `mbar` (so one barrier of the pair collects the bytes of both halves).
+`cp.reduce.async.bulk.tensor` reduces element-wise (atomically per element) for the full table of the ISA: add (u32 s32 u64 f32 f16 bf16), min / max (u32 s32 u64 s64 f16 bf16),
+inc / dec (u32), and / or / xor (b32 b64), in tile, `.im2col_no_offs` and `.im2col_no_offs::w` modes.  `prefetch.tensor` is a no-op.  Tests: `scripts/gen_tma_red.py`.
