@@ -147,8 +147,8 @@ module PTX-HARNESS
 
   syntax KItem ::= #launch(String, Dim3, Dim3, List)
                  | #mkCtas(Int, Int) | #mkThreads(Int, Int, Int) | "#waitGrid"
-  rule <k> .launch K <<< G , B >>> ( As ) ; => #launch(Name2String(K), dimOf(G), dimOf(B), opsList(As)) ... </k>
-  rule <k> .launch K <<< G , B , _ >>> ( As ) ; => #launch(Name2String(K), dimOf(G), dimOf(B), opsList(As)) ... </k>
+  rule <k> .launch K <<< G , B >>> ( As ) ; => #isaChk ~> #launch(Name2String(K), dimOf(G), dimOf(B), opsList(As)) ... </k>
+  rule <k> .launch K <<< G , B , _ >>> ( As ) ; => #isaChk ~> #launch(Name2String(K), dimOf(G), dimOf(B), opsList(As)) ... </k>
 
   // threads are created while the host holds the turn; the grid starts when
   // it is released

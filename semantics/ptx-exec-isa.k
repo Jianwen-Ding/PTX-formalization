@@ -40,4 +40,32 @@ module PTX-EXEC-ISA
     requires notBool (Ver >Int 0 andBool V >Int Ver) andBool notBool (Sm >Int 0 andBool S >Int Sm) andBool A andBool Sm >Int 0 andBool Arch ==String ""
   rule isaBad(_, _, _, _) => "" [owise]
 
+  // static check at launch: every instruction of every function against the declared .version / .target
+  syntax KItem ::= #isaChk
+  syntax String ::= isaScanF(List, Map, Int, Int, String) [function, total]
+                  | isaScanC(List, Map, Int, Int, String) [function, total]
+  rule isaScanF(.List, _, _, _, _) => ""
+  rule isaScanF(ListItem(F) Fs, FM, V, Sm, Ar) => #if isaScanC(keys_list(codeOf(FM, F)), codeOf(FM, F), V, Sm, Ar) ==String ""
+                                                  #then isaScanF(Fs, FM, V, Sm, Ar) #else isaScanC(keys_list(codeOf(FM, F)), codeOf(FM, F), V, Sm, Ar) #fi
+  rule isaScanC(.List, _, _, _, _) => ""
+  rule isaScanC(ListItem(K) Ks, CM, V, Sm, Ar) => #if isaIns({CM[K]}:>KItem, V, Sm, Ar) ==String ""
+                                                  #then isaScanC(Ks, CM, V, Sm, Ar) #else isaIns({CM[K]}:>KItem, V, Sm, Ar) #fi
+  syntax String ::= isaIns(KItem, Int, Int, String) [function, total]
+  rule isaIns(ins(_, opc(OP, _, _), _), V, Sm, Ar) => isaBad(isaRows(OP), V, Sm, Ar)
+  rule isaIns(_, _, _, _) => "" [owise]
+  syntax Map ::= codeOf(Map, String) [function, total]
+  rule codeOf(FM, F) => code({FM[F]}:>FDef) requires F in_keys(FM) andBool isFDef(FM[F])
+  rule codeOf(_, _) => .Map [owise]
+  syntax Map ::= code(FDef) [function, total]
+  rule code(fdef(_, _, _, C, _, _)) => C
+  syntax Bool ::= isFDef(KItem) [function, total]
+  rule isFDef(_:FDef) => true
+  rule isFDef(_) => false [owise]
+  rule <k> #isaChk => .K ... </k> <isachk> false </isachk>
+  rule <k> #isaChk => #fault(isaScanF(keys_list(FM), FM, V, Sm, Ar), 0) ... </k>
+       <isachk> true </isachk> <funcs> FM </funcs> <isaver> V </isaver> <isasm> Sm </isasm> <isaarch> Ar </isaarch>
+    requires isaScanF(keys_list(FM), FM, V, Sm, Ar) =/=String ""
+  rule <k> #isaChk => .K ... </k>
+       <isachk> true </isachk> <funcs> FM </funcs> <isaver> V </isaver> <isasm> Sm </isasm> <isaarch> Ar </isaarch>
+    requires isaScanF(keys_list(FM), FM, V, Sm, Ar) ==String ""
 endmodule

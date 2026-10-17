@@ -77,6 +77,10 @@ module PTX-EXEC-WEAK
   // The reorder window is three entries.  A thread draining before a fence/atomic/exit retires oldest-first.
   // a thread retires only once its buffer is empty
   rule <tk> #exit => #sbWait ~> #exit ... </tk> <sb> ListItem(_) _ </sb>
+  // while stores are buffered the turn is given up before every instruction, so that flushes (and the
+  // reordering of the buffered stores) can interleave with it, also right before the thread retires
+  rule <tk> .K </tk> <turn> U => -1 </turn> <ctaid> C </ctaid> <tid> T </tid> <status> running </status>
+       <sb> ListItem(_) _ </sb> requires U ==Int uid(C, T)
   syntax KItem ::= #flushE(SbE)
   rule <tk> #flushE(sbe(S, A, N, V, _)) => #mem1(loc(S, A), wrOp(N, V)) ~> #drop ... </tk>
   rule <tk> #sbWait => #flushE(E) ~> #sbWait ... </tk> <sb> ListItem(E) Post => Post </sb>
