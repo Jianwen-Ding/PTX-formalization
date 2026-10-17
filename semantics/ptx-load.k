@@ -155,6 +155,59 @@ module PTX-LOAD
   rule vcompsT(B, I, K, T) => compTok(B +String "." +String vcomp(I)) , vcompsT(B, I +Int 1, K, T) requires I <Int K
   rule vcompsT(_, I, K, T) => T requires I >=Int K
 
+
+  // ------------------------------------------------------------ scoped register declarations
+  // A `.reg` declared inside a nested block with the name of an already visible register shadows it: it is
+  // renamed to name@id for the rest of the block (L["@ren:name"] = id; L["@depth"] = nesting depth).
+  syntax Operand ::= rnO(Map, Operand) [function, total]
+  syntax Addr ::= rnA(Map, Addr) [function, total]
+  syntax Operands ::= rnOs(Map, Operands) [function, total]
+  syntax String ::= rnS(Map, String) [function, total]
+  syntax PGuard ::= rnG(Map, PGuard) [function, total]
+  rule rnS(L, S) => S +String "@" +String Int2String({L["@ren:" +String S]}:>Int) requires ("@ren:" +String S) in_keys(L)
+  rule rnS(L, S) => S requires notBool (("@ren:" +String S) in_keys(L))
+  rule rnG(_, noG) => noG
+  rule rnG(L, g(P, N)) => g(rnS(L, P), N)
+  rule rnA(L, R:Reg) => String2Reg(rnS(L, Reg2String(R)))
+  rule rnA(L, N:Name) => String2Name(rnS(L, Name2String(N)))
+  rule rnA(L, R:Reg I:Int) => String2Reg(rnS(L, Reg2String(R))) I
+  rule rnA(L, N:Name I:Int) => String2Name(rnS(L, Name2String(N))) I
+  rule rnA(L, R:Reg + I:Int) => String2Reg(rnS(L, Reg2String(R))) + I
+  rule rnA(L, N:Name + I:Int) => String2Name(rnS(L, Name2String(N))) + I
+  rule rnA(_, A) => A [owise]
+  rule rnO(L, R:Reg) => String2Reg(rnS(L, Reg2String(R)))
+  rule rnO(L, N:Name) => String2Name(rnS(L, Name2String(N)))
+  rule rnO(L, [ A ]) => [ rnA(L, A) ]
+  rule rnO(L, [ A , O ]) => [ rnA(L, A) , rnO(L, O) ]
+  rule rnO(L, [ A , B , O ]) => [ rnA(L, A) , rnA(L, B) , rnO(L, O) ]
+  rule rnO(L, { Os }) => { rnOs(L, Os) }
+  rule rnO(L, ( Os )) => ( rnOs(L, Os) )
+  rule rnO(L, R1:Reg | R2:Reg) => String2Reg(rnS(L, Reg2String(R1))) | String2Reg(rnS(L, Reg2String(R2)))
+  rule rnO(L, N1:Name | N2:Name) => String2Name(rnS(L, Name2String(N1))) | String2Name(rnS(L, Name2String(N2)))
+  rule rnO(L, ! R:Reg) => ! String2Reg(rnS(L, Reg2String(R)))
+  rule rnO(L, ! N:Name) => ! String2Name(rnS(L, Name2String(N)))
+  rule rnO(_, O) => O [owise]
+  rule rnOs(_, .Operands) => .Operands
+  rule rnOs(L, O:Operand , Os:Operands) => rnO(L, O) , rnOs(L, Os)
+  // leaving a block: forget its renames and restore the enclosing ones
+  syntax PPS ::= leaveBlock(PPS, Map) [function, total]
+  rule leaveBlock(pps(C, I, L2, RW, SH), L) => pps(C, I, addRen(dropRen(L2, keys_list(L2)), L, keys_list(L)), RW, SH)
+  syntax Map ::= dropRen(Map, List) [function, total] | addRen(Map, Map, List) [function, total]
+  rule dropRen(L, .List) => L
+  rule dropRen(L, ListItem(K:String) Ks) => dropRen(#if substrString(K, 0, 5) ==String "@ren:" orBool K ==String "@depth" #then L[K <- undef] #else L #fi, Ks)
+  rule dropRen(L, _) => L [owise]
+  rule addRen(L, _, .List) => L
+  rule addRen(L, Old, ListItem(K:String) Ks) => addRen(#if substrString(K, 0, 5) ==String "@ren:" orBool K ==String "@depth" #then L[K <- {Old[K]}:>Int] #else L #fi, Old, Ks)
+  rule addRen(L, _, _) => L [owise]
+  syntax Bool ::= isPlain(DItem) [function, total]
+  rule isPlain(_:Name) => true
+  rule isPlain(_:Reg) => true
+  rule isPlain(_) => false [owise]
+  syntax DItem ::= renamedItem(DItem, Int) [function, total]
+  rule renamedItem(R:Reg, Id) => String2Reg(Reg2String(R) +String "@" +String Int2String(Id))
+  rule renamedItem(N:Name, Id) => String2Name(Name2String(N) +String "@" +String Int2String(Id))
+  rule renamedItem(I, _) => I [owise]
+
   // ------------------------------------------------------------ function heads
   syntax String ::= fname(FuncHead) [function, total]
                   | fkind(FuncHead) [function, total]
@@ -189,7 +242,7 @@ module PTX-LOAD
   rule pp(S:Stmt Ss:Stmts, P) => pp(Ss, pp1(S, P))
   rule pp(.Stmts, P) => P
 
-  rule emit(ins(G, O, Os), pps(C, I, L, RW, SH)) => pps(C[I <- ins(G, O, vexp(RW, Os))], I +Int 1, L, RW, SH)
+  rule emit(ins(G, O, Os), pps(C, I, L, RW, SH)) => pps(C[I <- ins(rnG(L, G), O, vexp(RW, rnOs(L, Os)))], I +Int 1, L, RW, SH)
   rule emit(X, pps(C, I, L, RW, SH)) => pps(C[I <- X], I +Int 1, L, RW, SH) [owise]
 
   rule pp1(N:Name :, pps(C, I, L, RW, SH)) => pps(C, I, L[Name2String(N) <- I], RW, SH)
@@ -207,7 +260,7 @@ module PTX-LOAD
        emit(ins(g(Name2String(G), false), decodeOpc(Name2String(N)), Os), P)
   rule pp1(@ ! G:Name N:Name Os:Operands ;, P) =>
        emit(ins(g(Name2String(G), true), decodeOpc(Name2String(N)), Os), P)
-  rule pp1({ Ss:Stmts }, P) => pp(Ss, P)
+  rule pp1({ Ss:Stmts }, pps(C, I, L, RW, SH)) => leaveBlock(pp(Ss, pps(C, I, L["@depth" <- {L["@depth"] orDefault 0}:>Int +Int 1], RW, SH)), L)
   rule pp1(.pragma _ ;, P) => P
   rule pp1(.loc _:Int _:Int _:Int _:LocOpts, P) => P
   rule pp1(_:Name : .callprototype ( _:ParamDecls ) _:Name ( _:ParamDecls ) _:PerfDirs ;, P) => P
@@ -229,6 +282,10 @@ module PTX-LOAD
               alignOr(A1, A2, typeOf(T)), typeOf(T), itemsL(Is), P) [owise]
 
   // registers: remember declared widths (%r<4> declares %r0 .. %r3)
+  rule ppDecl("reg", S, AL, T, ListItem(I:DItem) Is, pps(C, PC, L, RW, SH)) =>
+       ppDecl("reg", S, AL, T, ListItem(renamedItem(I, {L["@renid"] orDefault 1}:>Int)) Is,
+              pps(C, PC, L[("@ren:" +String itemName(I)) <- {L["@renid"] orDefault 1}:>Int]["@renid" <- {L["@renid"] orDefault 1}:>Int +Int 1], RW, SH))
+    requires isPlain(I) andBool {L["@depth"] orDefault 0}:>Int >Int 0 andBool itemName(I) in_keys(RW)
   rule ppDecl("reg", S, AL, T, ListItem(R:Reg < N:Int >) Is, P) =>
        ppDecl("reg", S, AL, T, Is, ppRegs(Reg2String(R), 0, N, wid(T), P)) requires vwidth(S) ==Int 0
   rule ppDecl("reg", S, AL, T, ListItem(R:Name < N:Int >) Is, P) =>

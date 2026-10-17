@@ -12,6 +12,7 @@ atom_add_float
 atom_cas
 atom_inc
 b64tof64
+bar_red_and_pred
 bfe
 bfi
 bfind_shiftamt
@@ -19,7 +20,6 @@ bmsk_clamp_b32
 bra
 brev
 call
-call_rnd
 clz
 const
 const_ident
@@ -78,6 +78,8 @@ min_f16
 mma_m16n8k16_f32_bf16_bf16_f32
 mma_m16n8k16_f32_bf16_bf16_f32_2x
 mma_m16n8k16_f32_f16_f16_f32
+mma_m16n8k32_s32_s8_s8_s32
+mma_m16n8k32_s32_s8_s8_s32_interleave
 mov
 mov_address
 mul24_hi_s32
@@ -89,6 +91,7 @@ mul_hi
 mul_lo
 mul_non_ftz
 mul_wide
+multiple_return
 nanosleep
 neg
 non_scalar_ptr_offset
@@ -124,6 +127,8 @@ setp_num
 setp_pred2
 shared_ptr_32
 shared_ptr_take_address
+shared_unify_extern
+shared_unify_local
 shared_variable
 shf_l
 shf_l_clamp
@@ -159,7 +164,11 @@ subc_cc_s32
 tanh
 tid
 uint_to_fp_bf16
+vector
+vector4
 vector8
+vector8_extract
+vector_extract
 vector_operand
 vote_all
 vote_any
