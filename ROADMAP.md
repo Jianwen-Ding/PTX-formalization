@@ -77,15 +77,15 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 Items are numbered in task order (44 onward).  Sources: `docs/coverage.md`, `docs/prior-work.md`, the ISA text.
 
 ## Instructions
-- [ ] 44 vmad and istypep (built next; tests `vmad`, `istypep`)
-- [ ] 45 video: `.mask` destinations, permuting SIMD selectors
-- [ ] 46 wgmma.sp f16/bf16 k32 (A from smem and registers, metadata, sparsity selector)
-- [ ] 47 wgmma.sp tf32 k16, e4m3/e5m2 k64, s8/u8 k64
-- [ ] 48 wgmma audit: b1 (and/xor.popc), scale-d, imm-scale-a/b, imm-trans-a/b, all N, f16 accumulators, fp8->f16
-- [ ] 49 tcgen05.mma sparse (.sp)
-- [ ] 50 tcgen05.mma block-scaled kinds (mxf8f6f4, mxf4, mxf4nvf4)
+- [x] 44 vmad and istypep (built next; tests `vmad`, `istypep`)
+- [x] 45 video: `.mask` destinations, permuting SIMD selectors
+- [x] 46 wgmma.sp f16/bf16 k32 (A from smem and registers, metadata, sparsity selector)
+- [x] 47 wgmma.sp tf32 k16, e4m3/e5m2 k64, s8/u8 k64
+- [x] 48 wgmma audit: b1 (and/xor.popc), scale-d, imm-scale-a/b, imm-trans-a/b, all N, f16 accumulators, fp8->f16
+- [x] 49 tcgen05.mma sparse (.sp)
+- [x] 50 tcgen05.mma block-scaled kinds (mxf8f6f4, mxf4, mxf4nvf4)
 - [ ] 51 tcgen05.mma .cta_group::2 (CTA pairs, peer TMEM, operand sharing)
-- [ ] 52 tcgen05.mma .ws, collector::a modes, ashift; kind::i8/f8f6f4/tf32 audit
+- [x] 52 tcgen05.mma .ws, collector::a modes, ashift; kind::i8/f8f6f4/tf32 audit
 - [ ] 53 tcgen05.cp (all shapes, decompression), shift, ld/st 16x32bx2 and .red, commit multicast
 - [ ] 54 mma.sync kind::f8f6f4 / block-scaled mx forms, sm_100 shapes
 - [ ] 55 ldmatrix/stmatrix sm_100 m16n8 b8/b6/b4 forms

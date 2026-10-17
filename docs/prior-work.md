@@ -104,9 +104,25 @@ tests only check that each shape round-trips.  `tcgen05.mma` (dense, `.cta_group
 `.kind::{f16,tf32,i8,f8f6f4}`, A from shared or tensor memory) is executed atomically at issue
 and writes D with row r in lane r, column j in column j (assumption).  Instruction-descriptor
 fields and the sm_100 shared-memory descriptor follow the ISA tables (text); swizzled layouts
-reuse the wgmma canonical layouts.  Not modelled: `.cta_group::2`, sparsity, block scaling,
-`.ws`, collector/ashift forms, decompression, `tcgen05.cp/shift/commit` (commit needs mbarrier),
-`ld.red`/`spcompress`.
+reuse the wgmma canonical layouts.
+
+Further tcgen05 modelling (layouts the ISA gives only as figures are *assumptions*, each checked only
+against an independent Python model in `scripts/gen_tcgen05_*.py`):
+
+* `.sp`: row r's metadata is in TMEM lane r, 4 bits per chunk, in the word at `meta_col + sparsity selector`
+  (16-bit/tf32 kinds) or two consecutive words (8-bit kinds).
+* `.ws`: the zero-column mask descriptor is a periodic pattern (period skip+use, offset `sc`, initial value `fs`),
+  one sub-mask per 128/M row group, each covering N/(128/M) columns; the four examples in the ISA text are reproduced
+  by the generator's model.  The `shift` field moves B columns.  Collector qualifiers are accepted and have no effect
+  (no collector buffer is modelled); `.ashift` shifts A rows by one.
+* fp6 / fp4 operands of `kind::f8f6f4` live in 8-bit containers; `mxf4`/`mxf4nvf4` use packed 4-bit elements.
+* Block scaling (`kind::mxf8f6f4`, `mxf4`, `mxf4nvf4`): scale A for row r is byte `SFA_ID+blk` of the word at lane r,
+  column `[scale-A]`; scale B for column n is byte `SFB_ID+blk` of the word at lane n mod 32, column `[scale-B] + n/32`.
+  Scale types UE8M0 and UE4M3 (idesc bit 23); block 32 (`scale_vec::1X`/`2X`) or 16 (`4X`).
+* `tcgen05.cp` reads source rows as K-major 32-bit elements; `shift` moves rows down by one lane; `commit` signals
+  its mbarrier.
+
+Not modelled: `.cta_group::2`, `tcgen05.cp` decompression, `ld.red`/`spcompress`, commit multicast.
 
 ## Tensor maps / TMA
 
