@@ -64,8 +64,8 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 - [x] 36 PTX weak memory consistency model (reuse existing formalization; litmus suite)
 
 ## 9. Found while importing ZLUDA's conformance programs
-- [ ] 42 Vector registers and `.reg`-parameter functions
-- [ ] 43 Scope-aware register shadowing
+- [x] 42 Vector registers and `.reg`-parameter functions
+- [x] 43 Scope-aware register shadowing
 
 ## 10. Quality
 - [x] 37 Version / target legality checking

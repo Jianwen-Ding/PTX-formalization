@@ -31,5 +31,7 @@ per-instruction version/target minima are in `semantics/ptx-isa-table.k` (`.isac
 * Relaxed memory mode: load-buffering reorderings, scope hierarchy, proxies; asynchronous operations execute atomically at issue.
 * Hardware-defined layouts that are not specified in the ISA document are assumptions, listed in `docs/prior-work.md`.
 
-## Known limitations of the language front end
-See ROADMAP tasks 42 (vector registers, `.reg` parameters) and 43 (scoped register shadowing).
+## Language front end
+Vector registers (`.reg .v2/.v4`, also arrays), `.reg` formal parameters and return values (by value, vectors flattened) and
+register shadowing in nested blocks (renaming `name@id`) are supported.  Known gaps: expression operands such as
+`st [x], temp + 1` (a ZLUDA extension, not PTX), old non-`.sync` `vote`, and `.v8` component names (`s0`..`s7`, assumed).

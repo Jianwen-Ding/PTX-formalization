@@ -16,6 +16,7 @@ bar_red_and_pred
 bfe
 bfi
 bfind_shiftamt
+block
 bmsk_clamp_b32
 bra
 brev
@@ -64,6 +65,7 @@ ld_st
 ld_st_implicit
 ld_st_offset
 ldmatrix
+ldmatrix_trans
 lg2
 local_align
 mad_extended
