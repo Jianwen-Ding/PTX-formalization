@@ -1,0 +1,67 @@
+// Memory qualifiers, cache operators, hints and policies are accepted and behave like plain accesses.
+// Expected words are the plain-access results (regression test).
+.version 8.6
+.target sm_100
+.address_size 64
+.visible .entry k(.param .u64 pi, .param .u64 po)
+{
+    .reg .b64 %rd<4>; .reg .b32 %r<16>; .reg .b16 %h<2>; .reg .b64 %l<2>; .reg .u32 %u<4>; .reg .f32 %f<4>;
+    .reg .pred %p;
+    ld.param.u64 %rd0, [pi]; ld.param.u64 %rd1, [po];
+    ld.global.b32 %r0, [%rd0];
+    ld.global.ca.b32 %r1, [%rd0];
+    ld.global.cg.b32 %r2, [%rd0];
+    ld.global.cs.b32 %r3, [%rd0];
+    ld.global.lu.b32 %r4, [%rd0];
+    ld.global.cv.b32 %r5, [%rd0];
+    ld.global.nc.b32 %r6, [%rd0];
+    ld.volatile.global.b32 %r7, [%rd0];
+    ld.relaxed.gpu.global.b32 %r8, [%rd0];
+    ld.acquire.sys.global.b32 %r9, [%rd0];
+    ld.relaxed.cta.b32 %r10, [%rd0];
+    ld.mmio.relaxed.sys.global.b32 %r11, [%rd0];
+    ld.global.L1::evict_last.b32 %r12, [%rd0];
+    ld.global.L1::no_allocate.b32 %r13, [%rd0];
+    ld.global.L2::128B.b32 %r14, [%rd0];
+    ld.global.v2.b32 {%r0, %r1}, [%rd0];
+    ld.global.v4.b32 {%r0, %r1, %r2, %r3}, [%rd0];
+    ld.global.nc.L1::no_allocate.L2::256B.v4.b32 {%r0, %r1, %r2, %r3}, [%rd0];
+    ld.global.b128 %l0, [%rd0];
+    st.global.b32 [%rd1], %r0;
+    st.global.wb.b32 [%rd1+4], %r1;
+    st.global.cg.b32 [%rd1+8], %r2;
+    st.global.cs.b32 [%rd1+12], %r3;
+    st.global.wt.b32 [%rd1+16], %r4;
+    st.release.gpu.global.b32 [%rd1+20], %r5;
+    st.relaxed.sys.global.b32 [%rd1+24], %r6;
+    st.volatile.global.b32 [%rd1+28], %r7;
+    st.mmio.relaxed.sys.global.b32 [%rd1+32], %r8;
+    st.global.L1::evict_first.b32 [%rd1+36], %r9;
+    st.global.v2.b32 [%rd1+40], {%r0, %r1};
+    st.global.v4.b32 [%rd1+48], {%r0, %r1, %r2, %r3};
+    st.global.b128 [%rd1+64], %l0;
+    prefetch.global.L1 [%rd0];
+    prefetch.global.L2 [%rd0];
+    prefetch.global.L2::evict_last [%rd0];
+    prefetchu.L1 [%rd0];
+    discard.global.L2 [%rd0], 128;
+    applypriority.global.L2::evict_normal [%rd0], 128;
+    createpolicy.fractional.L2::evict_last.b64 %l1, 1.0;
+    ld.global.L2::cache_hint.b32 %r0, [%rd0], %l1;
+    st.global.L2::cache_hint.b32 [%rd1+72], %r0, %l1;
+    fence.sc.gpu;
+    fence.acq_rel.cta;
+    fence.acq_rel.sys;
+    membar.gl;
+    membar.cta;
+    atom.relaxed.gpu.global.add.u32 %u0, [%rd1+76], 1;
+    atom.acq_rel.sys.global.add.u32 %u1, [%rd1+76], 1;
+    red.release.gpu.global.add.u32 [%rd1+76], 1;
+    red.global.add.f32 [%rd1+80], %f0;
+    atom.global.add.noftz.f16 %h0, [%rd1+84], %h1;
+    ret;
+}
+.buffer I .u32 = { 1, 2, 3, 4, 5, 6, 7, 8 };
+.buffer O .u32 [64];
+.launch k <<< 1, 1 >>> (I, O);
+.expect O .u32 @ 0 = { 1, 2, 3, 4, 1, 1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 4, 1, 2, 1, 7 };

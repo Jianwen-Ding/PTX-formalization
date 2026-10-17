@@ -45,7 +45,7 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 - [x] 23 tcgen05, sm_100a (after 22, 27)
 
 ## 6. Memory, async and clusters
-- [ ] 24 Memory-operation qualifiers, cache controls, createpolicy, isspacep
+- [x] 24 Memory-operation qualifiers, cache controls, createpolicy, isspacep
 - [ ] 25 Extended atomics (f16/bf16/vector/b128, .sem/.scope)
 - [ ] 26 Thread-block clusters and distributed shared memory
 - [ ] 27 mbarrier

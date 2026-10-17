@@ -32,6 +32,8 @@ requires "ptx-exec-mma.k"
 requires "ptx-exec-ldm.k"
 requires "ptx-exec-sp.k"
 requires "ptx-exec-wg.k"
+requires "ptx-exec-tc.k"
+requires "ptx-exec-memq.k"
 
 module PTX-EXEC
   imports PTX-EXEC-CORE
@@ -52,6 +54,8 @@ module PTX-EXEC
   imports PTX-EXEC-LDM
   imports PTX-EXEC-SP
   imports PTX-EXEC-WG
+  imports PTX-EXEC-TC
+  imports PTX-EXEC-MEMQ
 
   // anything else is outside the modelled subset
   rule <tk> exec(O, _, _) => #unsupported(O) ... </tk> [owise]
