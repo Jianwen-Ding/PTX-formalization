@@ -54,11 +54,13 @@ module PTX-EXEC-TMA
   rule tmTyOf(8) => ty("f", 64)  rule tmTyOf(9) => ty("bf", 16)  rule tmTyOf(_) => ty("f", 32) [owise]
   // swizzle code of the tensor map -> mode of ptx-exec-wg.k's swizzle (1 = 128B, 2 = 64B, 3 = 32B)
   syntax Int ::= tmMode(Int) [function, total]
-  rule tmMode(3) => 1  rule tmMode(2) => 2  rule tmMode(1) => 3  rule tmMode(_) => 0 [owise]
+  rule tmMode(3) => 1  rule tmMode(2) => 2  rule tmMode(1) => 3  rule tmMode(4) => 4  rule tmMode(5) => 5  rule tmMode(6) => 6  rule tmMode(_) => 0 [owise]
   syntax Int ::= tmFill(Int) [function, total]
   rule tmFill(B) => 0 requires tmFillMode(B) ==Int 0
   rule tmFill(B) => 2143289344 requires tmFillMode(B) =/=Int 0 andBool tmEb(B) ==Int 4              // 0x7fc00000
-  rule tmFill(B) => 32256 requires tmFillMode(B) =/=Int 0 andBool tmEb(B) ==Int 2                   // 0x7e00
+  rule tmFill(B) => 32256 requires tmFillMode(B) =/=Int 0 andBool (tmW(B, 1) &Int 255) ==Int 6          // f16 0x7e00
+  rule tmFill(B) => 32704 requires tmFillMode(B) =/=Int 0 andBool (tmW(B, 1) &Int 255) ==Int 9          // bf16 0x7fc0
+  rule tmFill(B) => 9221120237041090560 requires tmFillMode(B) =/=Int 0 andBool tmEb(B) ==Int 8        // f64 0x7ff8000000000000
   rule tmFill(_) => 0 [owise]
 
   // ---------------------------------------------------------------- element addresses
@@ -91,6 +93,10 @@ module PTX-EXEC-TMA
   // ---------------------------------------------------------------- loads: global -> shared image chunks
   syntax KItem ::= #tmWr(String, List) | #tmGWr(List, String, Ty)
   syntax TmW ::= tmw(Int, Int)                         // shared/cluster address, 16-byte value
+  // mode 5 (128B swizzle, 32B atomicity, 8-byte flip): chunks move like mode 4 and, on odd 128-byte lines, their two 8-byte halves are exchanged
+  syntax TmW ::= tmWrap(Int, Int, Int) [function, total]
+  rule tmWrap(5, A, V) => tmw(swizzle(4, A), #if (A >>Int 7) &Int 1 ==Int 1 #then ((V &Int 18446744073709551615) <<Int 64) |Int (V >>Int 64) #else V #fi)
+  rule tmWrap(M, A, V) => tmw(swizzle(M, A), V) [owise]
   syntax TmG ::= tmg(Int, Int, Int)                    // global address, bytes, value
   syntax Int ::= tmElem(Map, Int, List, Int, Bool) [function, total]            // gmem as a Bytes cell, ...
   syntax Int ::= tmElemV(Bytes, Int, List, Int, Bool) [function, total]
@@ -101,7 +107,7 @@ module PTX-EXEC-TMA
   rule tmChunkV(_, _, _, _, _, _) => 0 [owise]
   syntax List ::= tmLoadList(Bytes, Int, List, Int, Int, Bool) [function, total]    // gmem, blob, coords, dst base, chunk k, gather4?
   rule tmLoadList(GM, B, Cs, Base, K, G) =>
-       ListItem(tmw(swizzle(tmMode(tmSwz(B)), Base +Int 16 *Int K), tmChunkV(GM, B, Cs, K *Int (16 /Int tmEb(B)), 0, G)))
+       ListItem(tmWrap(tmMode(tmSwz(B)), Base +Int 16 *Int K, tmChunkV(GM, B, Cs, K *Int (16 /Int tmEb(B)), 0, G)))
        tmLoadList(GM, B, Cs, Base, K +Int 1, G)
     requires K *Int 16 <Int tmCount(B, G) *Int tmEb(B)
   rule tmLoadList(_, _, _, _, _, _) => .List [owise]
@@ -215,7 +221,7 @@ module PTX-EXEC-TMA
   rule tmChunkI(_, _, _, _, _, _, _) => 0 [owise]
   syntax List ::= tmLoadListI(Bytes, Int, List, List, Int, Int, Int) [function, total]
   rule tmLoadListI(GM, B, Cs, I, Md, Base, K) =>
-       ListItem(tmw(swizzle(tmMode(tmSwz(B)), Base +Int 16 *Int K), tmChunkI(GM, B, Cs, I, Md, K *Int (16 /Int tmEb(B)), 0)))
+       ListItem(tmWrap(tmMode(tmSwz(B)), Base +Int 16 *Int K, tmChunkI(GM, B, Cs, I, Md, K *Int (16 /Int tmEb(B)), 0)))
        tmLoadListI(GM, B, Cs, I, Md, Base, K +Int 1)
     requires K *Int 16 <Int tmPix(B, I, Md) *Int tmBox(B, 0) *Int tmEb(B)
   rule tmLoadListI(_, _, _, _, _, _, _) => .List [owise]
@@ -259,8 +265,7 @@ module PTX-EXEC-TMA
   // ---------------------------------------------------------------- stores / reductions: shared -> global
   // source element e of the shared image (dense, chunk-swizzled)
   syntax Int ::= tmSrcV(Bytes, Int, Int, Int) [function, total]                       // smem, blob, base, e
-  rule tmSrcV(SM, B, Base, E) =>
-       readBytes(SM, swizzle(tmMode(tmSwz(B)), Base +Int ((E *Int tmEb(B)) /Int 16) *Int 16) +Int (E *Int tmEb(B)) %Int 16, tmEb(B))
+  rule tmSrcV(SM, B, Base, E) => readBytes(SM, swizzle(tmMode(tmSwz(B)), Base +Int E *Int tmEb(B)), tmEb(B))
   syntax List ::= tmStoreList(Bytes, Int, List, Int, Int, Bool) [function, total]
   rule tmStoreList(SM, B, Cs, Base, E, G) =>
        #if tmAddr(B, Cs, E, G) <Int 0 #then .List #else ListItem(tmg(tmAddr(B, Cs, E, G), tmEb(B), tmSrcV(SM, B, Base, E))) #fi

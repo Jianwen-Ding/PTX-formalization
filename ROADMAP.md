@@ -90,7 +90,7 @@ Items are numbered in task order (44 onward).  Sources: `docs/coverage.md`, `doc
 - [x] 54 mma.sync kind::f8f6f4 / block-scaled mx forms, sm_100 shapes
 - [x] 55 ldmatrix/stmatrix sm_100 m16n8 b8/b6/b4 forms
 - [x] 56 TMA im2col, im2col::w, w::128 modes
-- [ ] 57 TMA interleave layouts, OOB fill, L2 promotion, all swizzles audit
+- [x] 57 TMA interleave layouts, OOB fill, L2 promotion, all swizzles audit
 - [ ] 58 TMA hardware 128-byte tensormap encoding, tensormap.replace all fields, .override
 - [ ] 59 cp.async.bulk.tensor multicast / cta_group::2 / prefetch.tensor / reduce audit
 - [ ] 60 mbarrier .multicast::cluster::32b, cluster-scope arrive/expect_tx, try_wait timeouts

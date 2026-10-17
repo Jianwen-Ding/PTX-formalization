@@ -192,9 +192,9 @@ module PTX-EXEC-TC
   // ---------------------------------------------------------------- tcgen05.mma
   // smem descriptor (sm_100) -> the equivalent sm_90 descriptor read by wgElem
   syntax Int ::= tcDesc(Int) [function, total]
-  rule tcDesc(D) => (D &Int 16383) |Int (((D >>Int 16) &Int 16383) <<Int 16) |Int (((D >>Int 32) &Int 16383) <<Int 32) |Int (tcSwz((D >>Int 61) &Int 7) <<Int 62)
+  rule tcDesc(D) => (D &Int 16383) |Int (((D >>Int 16) &Int 16383) <<Int 16) |Int (((D >>Int 32) &Int 16383) <<Int 32) |Int ((tcSwz((D >>Int 61) &Int 7) &Int 3) <<Int 62) |Int ((tcSwz((D >>Int 61) &Int 7) /Int 4) <<Int 56)
   syntax Int ::= tcSwz(Int) [function, total]
-  rule tcSwz(2) => 1   rule tcSwz(4) => 2   rule tcSwz(6) => 3   rule tcSwz(_) => 0 [owise]
+  rule tcSwz(2) => 1   rule tcSwz(4) => 2   rule tcSwz(6) => 3   rule tcSwz(1) => 4   rule tcSwz(_) => 0 [owise]
 
   // element types from the instruction descriptor
   syntax Ty ::= tcDT(Set, Int) [function, total] | tcAT(Set, Int) [function, total]

@@ -37,14 +37,20 @@ module PTX-EXEC-WG
   rule dStart(D) => (D &Int 16383) <<Int 4
   rule dLbo(D) => ((D >>Int 16) &Int 16383) <<Int 4
   rule dSbo(D) => ((D >>Int 32) &Int 16383) <<Int 4
-  rule dSwz(D) => (D >>Int 62) &Int 3
+  rule dSwz(D) => ((D >>Int 62) &Int 3) +Int 4 *Int ((D >>Int 56) &Int 1)           // sm_90 modes 0..3; bit 56 (internal): the sm_100 / TMA sub-modes 4..6
   // atom rows per swizzle: 128B -> 8, 64B -> 4, 32B -> 2 (units of 16 bytes)
   syntax Int ::= swG(Int) [function, total]
-  rule swG(1) => 8   rule swG(2) => 4   rule swG(3) => 2   rule swG(_) => 1 [owise]
+  rule swG(1) => 8   rule swG(2) => 4   rule swG(3) => 2   rule swG(4) => 8   rule swG(5) => 8   rule swG(6) => 8   rule swG(_) => 1 [owise]
   syntax Int ::= swB(Int) [function, total]                 // swizzle bits B of Swizzle<B,4,3>
   rule swB(1) => 3   rule swB(2) => 2   rule swB(3) => 1   rule swB(_) => 0 [owise]
   syntax Int ::= swizzle(Int, Int) [function, total]        // swizzle mode, byte address
-  rule swizzle(Mode, A) => A xorInt ((A &Int (mask(swB(Mode)) <<Int 7)) >>Int 3)
+  rule swizzle(Mode, A) => A xorInt ((A &Int (mask(swB(Mode)) <<Int 7)) >>Int 3) requires Mode <=Int 3
+  // 128B swizzle with 32B atomicity (4), plus an 8-byte flip on odd 128-byte lines (5), and with 64B atomicity (6): 16-byte chunk index c of a 128-byte line
+  // becomes c xor 2 * (line mod 4) (pairs of chunks move together), c xor 4 * (line mod 2) (groups of four)
+  rule swizzle(4, A) => A xorInt (((A >>Int 7) &Int 3) <<Int 5)
+  rule swizzle(5, A) => A xorInt (((A >>Int 7) &Int 3) <<Int 5) xorInt (((A >>Int 7) &Int 1) <<Int 3)
+  rule swizzle(6, A) => A xorInt (((A >>Int 7) &Int 1) <<Int 6)
+  rule swizzle(Mode, A) => A [owise]
 
   // element offset (in elements) of (mn, k) in the canonical layout; T = elements per 16 bytes
   // (small helper functions keep every rule free of parenthesised sub-expressions)

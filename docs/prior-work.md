@@ -193,3 +193,12 @@ pixels run W-fastest, wrapping W into H into D into N; a pixel reads at base pos
 only W (`c_W + q * st_W + wOffset`), load `pixels-per-column + wHalo` pixels (`::128`: 128 pixels with `wHalo` halo pixels after every 32);
 `im2col_no_offs::w` writes pixels only up to the first one outside the tensor.  Tensor-map encoding (harness `.tensormap ... .im2col {lower} {upper} .estrides {..}`):
 corners offset-binary in words 1 / 2, flag in word 14.  Tests: `scripts/gen_tma_im2col.py`.
+
+## TMA swizzle sub-modes and out-of-bounds fill
+
+Tensor-map swizzle codes follow the driver enum: 0 none, 1 32B, 2 64B, 3 128B, 4 128B with 32B atomicity (chunk pairs move together, line mod 4),
+5 the same plus an 8-byte flip of the two halves of every 16-byte chunk on odd 128-byte lines, 6 128B with 64B atomicity (groups of four chunks, line mod 2).
+The sm_100 shared-memory matrix descriptor value 1 ("128B with 32B atomicity") is the same pattern as mode 4.  Not modelled: the 96B swizzle
+(the ISA gives its pattern only as a figure).  OOB-NaN fill writes a quiet NaN of the element type (f16 0x7e00, bf16 0x7fc0, f32/tf32 0x7fc00000, f64).
+L2 promotion and cache hints have no architectural effect.  Interleaved layouts (NC/8HWC8, NC/16HWC16) are plain tiled copies of the dims as seen in
+global memory.  Tests: `scripts/gen_tma_swz.py`.
