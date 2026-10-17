@@ -1,0 +1,38 @@
+.version 8.0
+.target sm_90
+.address_size 64
+
+.visible .entry k(.param .u64 pin, .param .u64 pout)
+{
+    .shared .align 4 .b32 buf[64];
+    .reg .pred %p; .reg .b32 %r<10>; .reg .b64 %rd<8>;
+    ld.param.u64 %rd1, [pin]; ld.param.u64 %rd2, [pout];
+    mov.u32 %r1, %tid.x; mul.wide.u32 %rd3, %r1, 4; add.s64 %rd4, %rd1, %rd3;
+    ld.global.u32 %r2, [%rd4];
+    mov.u64 %rd5, buf; add.s64 %rd5, %rd5, %rd3; st.shared.u32 [%rd5], %r2;
+    bar.sync 0;
+    mov.u32 %r3, 1;
+LOOP:
+    mov.u32 %r4, 0;
+    setp.lt.u32 %p, %r1, %r3;
+    @%p bra NOADD;
+    sub.u32 %r5, %r1, %r3; mul.wide.u32 %rd6, %r5, 4; mov.u64 %rd7, buf; add.s64 %rd7, %rd7, %rd6;
+    ld.shared.u32 %r4, [%rd7];
+NOADD:
+    ld.shared.u32 %r6, [%rd5];
+    bar.sync 0;
+    add.u32 %r6, %r6, %r4;
+    st.shared.u32 [%rd5], %r6;
+    bar.sync 0;
+    shl.b32 %r3, %r3, 1;
+    setp.lt.u32 %p, %r3, 64;
+    @%p bra LOOP;
+    ld.shared.u32 %r8, [%rd5];
+    add.s64 %rd6, %rd2, %rd3; st.global.u32 [%rd6], %r8;
+    ret;
+}
+
+.buffer IN .u32 = { 14, 11, 19, 2, 16, 6, 12, 5, 7, 13, 2, 20, 1, 15, 17, 17, 10, 5, 13, 3, 2, 8, 19, 2, 6, 3, 13, 15, 14, 5, 7, 4, 13, 14, 19, 7, 17, 3, 9, 9, 8, 18, 8, 11, 8, 8, 6, 14, 7, 5, 7, 7, 4, 9, 18, 6, 10, 2, 12, 8, 7, 16, 16, 7 };
+.buffer OUT .u32 [64];
+.launch k <<< 1, 64 >>> (IN, OUT);
+.expect OUT .u32 = { 14, 25, 44, 46, 62, 68, 80, 85, 92, 105, 107, 127, 128, 143, 160, 177, 187, 192, 205, 208, 210, 218, 237, 239, 245, 248, 261, 276, 290, 295, 302, 306, 319, 333, 352, 359, 376, 379, 388, 397, 405, 423, 431, 442, 450, 458, 464, 478, 485, 490, 497, 504, 508, 517, 535, 541, 551, 553, 565, 573, 580, 596, 612, 619 };

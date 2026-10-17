@@ -1,0 +1,34 @@
+.version 8.0
+.target sm_90
+.address_size 64
+
+.visible .entry k(.param .u64 pin, .param .u64 pout)
+{
+    .shared .align 4 .b32 bins[16];
+    .reg .pred %p; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    ld.param.u64 %rd1, [pin]; ld.param.u64 %rd2, [pout];
+    mov.u32 %r1, %tid.x;
+    setp.ge.u32 %p, %r1, 16;
+    @%p bra GO;
+    mul.wide.u32 %rd3, %r1, 4; mov.u64 %rd4, bins; add.s64 %rd4, %rd4, %rd3;
+    st.shared.u32 [%rd4], 0;
+GO:
+    bar.sync 0;
+    mul.wide.u32 %rd3, %r1, 4; add.s64 %rd5, %rd1, %rd3;
+    ld.global.u32 %r2, [%rd5];
+    mul.wide.u32 %rd6, %r2, 4; mov.u64 %rd7, bins; add.s64 %rd7, %rd7, %rd6;
+    atom.shared.add.u32 %r3, [%rd7], 1;
+    bar.sync 0;
+    @%p bra END;
+    mul.wide.u32 %rd3, %r1, 4; mov.u64 %rd4, bins; add.s64 %rd4, %rd4, %rd3;
+    ld.shared.u32 %r4, [%rd4];
+    add.s64 %rd5, %rd2, %rd3;
+    atom.global.add.u32 %r5, [%rd5], %r4;
+END:
+    ret;
+}
+
+.buffer IN .u32 = { 1, 2, 12, 9, 7, 9, 1, 14, 5, 5, 8, 14, 0, 8, 11, 10, 10, 7, 1, 9, 6, 11, 5, 0, 10, 12, 2, 15, 8, 6, 7, 0, 2, 8, 2, 4, 12, 1, 12, 0, 9, 9, 7, 2, 4, 12, 10, 15, 4, 9, 4, 1, 13, 4, 0, 7, 2, 0, 1, 4, 11, 3, 12, 14, 1, 0, 7, 15, 8, 0, 14, 2, 2, 2, 15, 8, 2, 8, 7, 6, 7, 14, 15, 12, 2, 15, 9, 1, 6, 2, 4, 10, 8, 9, 4, 0, 15, 1, 15, 8, 3, 6, 15, 9, 9, 14, 14, 14, 3, 6, 9, 2, 15, 0, 9, 14, 2, 14, 8, 12, 6, 6, 2, 2, 4, 8, 11, 4 };
+.buffer OUT .u32 [16];
+.launch k <<< 1, 128 >>> (IN, OUT);
+.expect OUT .u32 = { 10, 9, 16, 3, 10, 3, 8, 8, 11, 12, 5, 4, 8, 1, 10, 10 };

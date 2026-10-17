@@ -69,6 +69,6 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 
 ## 10. Quality
 - [x] 37 Version / target legality checking
-- [ ] 38 Realistic kernel corpus (after 15, 19, 22, 28, 30)
+- [x] 38 Realistic kernel corpus (after 15, 19, 22, 28, 30)
 - [ ] 39 Interpreter performance
 - [ ] 40 Coverage documentation against the PTX ISA (after 38)
