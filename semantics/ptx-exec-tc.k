@@ -454,7 +454,7 @@ module PTX-EXEC-TC
                      tcScalesA(TM, SAC, (ID >>Int 29) &Int 3, tcMD(M, ID), tcKS(M, ID, Meta) /Int tcBlk(M, ID, tcKS(M, ID, Meta)), 0, 0, .Map),
                      tcScalesB(TM, SBC, (ID >>Int 4) &Int 3, ((ID >>Int 17) &Int 63) *Int 8, tcKS(M, ID, Meta) /Int tcBlk(M, ID, tcKS(M, ID, Meta)), 0, 0, .Map),
                      tcScaleTy(M, ID), tcMD(M, ID), ((ID >>Int 17) &Int 63) *Int 8, tcKS(M, ID, Meta), tcBlk(M, ID, tcKS(M, ID, Meta)), 0, 0, .Map),
-              rowKeys(tcMD(M, ID), ((ID >>Int 17) &Int 63) *Int 8, 0, 0, .List), tcCol(DA), 0, 0, 0, ty("f", 32))
+              rowKeys(tcMD(M, ID), ((ID >>Int 17) &Int 63) *Int 8, 0, 0, .List), tcCol(DA), 0, 0, 0, 0, ty("f", 32))
   // tcgen05.mma[.sp].cta_group::1.kind.block_scale{.scale_vectorsize} [d], a-desc | [a], b-desc, {[sp-meta],} idesc, [scale-A], [scale-B], enable
   rule <tk> exec(opc("tcgen05", M, _), ops([ D ], [ A ], Bd, ID, [ SA ], [ SB ], En, .Operands), C) => .K ... </tk>
        <smem> SM </smem>
