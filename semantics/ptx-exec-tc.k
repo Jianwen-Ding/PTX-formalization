@@ -16,7 +16,7 @@
 // j of N in column j (one element per 32-bit word, low bits); A in tensor memory is K-major,
 // packed little-endian inside a column.  Shared-memory operands use the sm_100 descriptor
 // (swizzle codes 2/4/6 for 128B/64B/32B) with the canonical layouts of ptx-exec-wg.k.
-// Sparse A (tcgen05.mma.sp) uses an assumed metadata layout (see below).  Not modelled: .cta_group::2, block scaling, .ws, collector/ashift forms,
+// Sparse A (tcgen05.mma.sp) uses an assumed metadata layout (see below).  Not modelled: block scaling with .cta_group::2, .ws, collector/ashift forms,
 // decompression, tcgen05.cp/shift/commit (commit follows with mbarrier), ld.red/spcompress.
 // =============================================================================
 requires "ptx-exec-wg.k"
@@ -225,12 +225,18 @@ module PTX-EXEC-TC
   syntax Map ::= tcMma(Set, Map, Bytes, Bool, Int, Int, Int, Int, Bool, Int, Int, Int, Int) [function, total]
   // mods, tmem, smem, a-is-desc, a value, b desc, idesc, d-taddr, enable, scale, mask -> new tmem
   rule tcMma(M, TM, SM, AD, AV, BV, ID, DA, En, S, Mask, Meta, Z) =>
+       tcMmaB(M, TM, SM, AD, AV,
+              tcTileB(BV, SM, tcBT(M, ID), #if ((ID >>Int 14) &Int 1) ==Int 1 #then 0 -Int 1 #else 1 #fi, ((ID >>Int 16) &Int 1) ==Int 0,
+                      ((ID >>Int 17) &Int 63) *Int 8, tcKS(M, ID, Meta), 0, 0, .Map, tcShiftZ(Z), Z, tcMD(M, ID)),
+              ID, DA, En, S, Mask, Meta)
+  syntax Map ::= tcMmaB(Set, Map, Bytes, Bool, Int, Map, Int, Int, Bool, Int, Int, Int) [function, total]
+  // same with the B matrix already read (B as a map of rc(k, n))
+  rule tcMmaB(M, TM, SM, AD, AV, BM, ID, DA, En, S, Mask, Meta) =>
        tcPutD(TM,
               resRows("m" +String Int2String(tcMD(M, ID)) +String "n" +String Int2String(((ID >>Int 17) &Int 63) *Int 8) +String "k" +String Int2String(tcKS(M, ID, Meta)),
                       tcDT(M, ID), tcAT(M, ID), tcBT(M, ID), tcDT(M, ID),
                       tcAMat(M, TM, SM, AD, AV, ID, Meta),
-                      tcTileB(BV, SM, tcBT(M, ID), #if ((ID >>Int 14) &Int 1) ==Int 1 #then 0 -Int 1 #else 1 #fi, ((ID >>Int 16) &Int 1) ==Int 0,
-                              ((ID >>Int 17) &Int 63) *Int 8, tcKS(M, ID, Meta), 0, 0, .Map, tcShiftZ(Z), Z, tcMD(M, ID)),
+                      BM,
                       #if En #then tcTileD(TM, tcDT(M, ID), tcCol(DA), tcMD(M, ID), ((ID >>Int 17) &Int 63) *Int 8, 0, 0, S, 0, .Map) #else .Map #fi,
                       0, 0, #if ((ID >>Int 3) &Int 1) ==Int 1 #then SetItem("satfinite") #else .Set #fi, .Map),
               rowKeys(tcMD(M, ID), ((ID >>Int 17) &Int 63) *Int 8, 0, 0, .List),
@@ -304,6 +310,38 @@ module PTX-EXEC-TC
   rule <tk> #tcMma(M, AD, AV, BV, ID, DA, Meta, Rest, C) => .K ... </tk>
        <smem> SM </smem>
        <tmem> TM => tcMma(M, TM, SM, AD, AV, BV, ID, DA, tcEn(Rest, C), #if "ws" in M #then 0 #else tcSc(Rest, C) #fi, tcMk(Rest, C), Meta, tcZm(M, Rest, C)) </tmem>
+    requires notBool "cta_group::2" in M
+
+  // ---------------------------------------------------------------- tcgen05.mma.cta_group::2
+  // A CTA pair (cluster ranks 2k, 2k+1) computes one M x N tile: the even CTA holds rows 0..M/2-1 of A and D, the odd CTA rows
+  // M/2..M-1 (A from the CTA's own shared or tensor memory, D at the same taddr in both tensor memories); B is split by columns,
+  // columns 0..N/2-1 are read from the even CTA's shared memory and columns N/2..N-1 from the odd CTA's, both with the same descriptor.
+  syntax Int ::= tcHalfM(Int) [function, total]
+  rule tcHalfM(ID) => (ID &Int (0 -Int 1 -Int (31 <<Int 24))) |Int ((((ID >>Int 24) &Int 31) /Int 2) <<Int 24)
+  syntax Map ::= tcColShift(Map, List, Int, Map) [function, total]
+  rule tcColShift(B, ListItem(K:Int) Ks, N2, Acc) => tcColShift(B, Ks, N2, Acc[K +Int N2 <- {B[K] orDefault 0}:>Int])
+  rule tcColShift(_, _, _, Acc) => Acc [owise]
+  syntax Map ::= tcMmaG2(Set, Map, Bytes, Bytes, Bytes, Bool, Int, Int, Int, Int, Bool, Int, Int) [function, total]
+  // mods, own tmem, own smem, even smem, odd smem, a-is-desc, a value, b desc, idesc, d-taddr, enable, scale, meta
+  rule tcMmaG2(M, TM, SM, SE, SO, AD, AV, BV, ID, DA, En, S, Meta) =>
+       tcMmaB(M, TM, SM, AD, AV,
+              tcBG2(tcTileB(BV, SE, tcBT(M, ID), #if ((ID >>Int 14) &Int 1) ==Int 1 #then 0 -Int 1 #else 1 #fi, ((ID >>Int 16) &Int 1) ==Int 0,
+                            ((ID >>Int 17) &Int 63) *Int 4, tcKS(M, tcHalfM(ID), Meta), 0, 0, .Map, 0, 0 -Int 1, tcMD(M, tcHalfM(ID))),
+                    tcTileB(BV, SO, tcBT(M, ID), #if ((ID >>Int 14) &Int 1) ==Int 1 #then 0 -Int 1 #else 1 #fi, ((ID >>Int 16) &Int 1) ==Int 0,
+                            ((ID >>Int 17) &Int 63) *Int 4, tcKS(M, tcHalfM(ID), Meta), 0, 0, .Map, 0, 0 -Int 1, tcMD(M, tcHalfM(ID))),
+                    ((ID >>Int 17) &Int 63) *Int 4),
+              tcHalfM(ID), DA, En, S, 0, Meta)
+  syntax Map ::= tcBG2(Map, Map, Int) [function, total]
+  rule tcBG2(B1, B2, N2) => tcColShift(B2, keys_list(B2), N2, B1)
+  rule <cta> <ctaid> CT </ctaid> <smem> SM1 </smem> <tmem> TM1 => #if rreg("%cluster_ctarank", C) %Int 2 ==Int 0
+                 #then tcMmaG2(M, TM1, SM1, SM1, SM2, AD, AV, BV, ID, DA, tcEn(Rest, C), tcSc(Rest, C), Meta)
+                 #else tcMmaG2(M, TM1, SM1, SM2, SM1, AD, AV, BV, ID, DA, tcEn(Rest, C), tcSc(Rest, C), Meta) #fi </tmem>
+         <threads> ... <thread> <tk> #tcMma(M, AD, AV, BV, ID, DA, Meta, Rest, C) => .K ... </tk> ... </thread> ... </threads> ... </cta>
+       <cta> <ctaid> PT </ctaid> <smem> SM2 </smem> <tmem> TM2 => #if rreg("%cluster_ctarank", C) %Int 2 ==Int 0
+                 #then tcMmaG2(M, TM2, SM2, SM1, SM2, AD, AV, BV, ID, DA, tcEn(Rest, C), tcSc(Rest, C), Meta)
+                 #else tcMmaG2(M, TM2, SM2, SM2, SM1, AD, AV, BV, ID, DA, tcEn(Rest, C), tcSc(Rest, C), Meta) #fi </tmem> ... </cta>
+       <gridDim> GD </gridDim> <clusterDim> CD </clusterDim>
+    requires "cta_group::2" in M andBool PT ==Int clTarget(CT, rreg("%cluster_ctarank", C) xorInt 1, GD, CD) andBool PT =/=Int CT
   // optional vector mask first, then the enable predicate, then the optional scale
   syntax List ::= tcOps(List) [function, total]
   rule tcOps(ListItem(V:Operand) Vs) => #if isVec(V) #then Vs #else ListItem(V) Vs #fi
