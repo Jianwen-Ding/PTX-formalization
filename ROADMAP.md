@@ -42,7 +42,7 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 - [x] 20 ldmatrix / stmatrix / movmatrix (after 19)
 - [x] 21 mma.sp (after 19)
 - [x] 22 wgmma, sm_90a (after 19, 27)
-- [ ] 23 tcgen05, sm_100a (after 22, 27)
+- [x] 23 tcgen05, sm_100a (after 22, 27)
 
 ## 6. Memory, async and clusters
 - [ ] 24 Memory-operation qualifiers, cache controls, createpolicy, isspacep

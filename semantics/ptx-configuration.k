@@ -89,6 +89,9 @@ module PTX-CONFIGURATION
           <barRes> .Map </barRes>               // barrier id |-> reduction result of the last completed generation
           <colls> .Map </colls>
           <wlive> .Map </wlive>                 // warp |-> mask of lanes that have not exited
+          <tmem> .Map </tmem>                   // tensor memory: lane * 65536 + column |-> 32-bit word (sm_100a)
+          <tmres> .Map </tmres>                 // warp-collective tcgen05.alloc/dealloc instance |-> result (done once per warp)
+          <tmalloc> .Map </tmalloc>             // tensor memory allocations: first column |-> number of columns
           <threads>
             <thread multiplicity="*" type="Map">
               <tid> 0 </tid>

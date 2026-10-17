@@ -93,3 +93,17 @@ applied to byte addresses); the D fragment is the m16n8 accumulator layout repea
 columns per warp (the ISA gives it only as a figure).  The tests build shared memory from
 swizzle atoms (independently of the address formula) but share the D/A fragment assumption.
 `wgmma.mma_async.sp` is not modelled.
+
+## tcgen05 (sm_100a) modelling choices
+
+Tensor memory is a per-CTA map (lane, column) -> 32-bit word.  `tcgen05.alloc/dealloc` are warp
+collectives that allocate first-fit (aligned to their size) and fault when memory is exhausted
+(hardware blocks).  `tcgen05.ld/st` are exact for `.32x32b`; the 16-lane shapes use the thread
+mapping documented in `semantics/ptx-exec-tc.k`, which the ISA gives only as figures, and the
+tests only check that each shape round-trips.  `tcgen05.mma` (dense, `.cta_group::1`,
+`.kind::{f16,tf32,i8,f8f6f4}`, A from shared or tensor memory) is executed atomically at issue
+and writes D with row r in lane r, column j in column j (assumption).  Instruction-descriptor
+fields and the sm_100 shared-memory descriptor follow the ISA tables (text); swizzled layouts
+reuse the wgmma canonical layouts.  Not modelled: `.cta_group::2`, sparsity, block scaling,
+`.ws`, collector/ashift forms, decompression, `tcgen05.cp/shift/commit` (commit needs mbarrier),
+`ld.red`/`spcompress`.
