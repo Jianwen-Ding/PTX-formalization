@@ -25,30 +25,32 @@ module PTX-EXEC-WEAK
   imports PTX-EXEC-MEM
 
   syntax SbE ::= sbe(String, Int, Int, Int, Bool)            // space, address, bytes, value, release barrier?
-  syntax KItem ::= #sbPush(Loc, Int, Int, Bool) | "#sbWait" | #sbLd(Loc, Int, Operand, Ty)
+  
+  // ---------------------------------------------------------------- stores and loads (at the #mem level)
+  // global / shared stores enter the buffer; loads forward from it; atomics wait for it to drain.
+  rule <tk> #rm(loc(S, A), wrOp(N, V)) => #res(0) ... </tk>
+       <sb> SB => SB ListItem(sbe(S, A, N, V, false)) </sb>
+  rule <tk> #rm(loc(S, A), wrRelOp(N, V)) => #res(0) ... </tk>
+       <sb> SB => SB ListItem(sbe(S, A, N, V, true)) </sb>
+  rule <tk> #rm(L, rdOp(N)) => #mem1(L, rdOp(N)) ... </tk>
+       <sb> SB </sb> requires notBool sbOverlap(SB, L, N)
+  rule <tk> #rm(L, rdOp(N)) => #res(sbFwd(SB, L, N)) ... </tk>
+       <sb> SB </sb> requires sbOverlap(SB, L, N) andBool sbExact(SB, L, N)
+  // a partially overlapping buffered store: wait until the flush rules have drained the buffer
+  rule <tk> #rm(L, rdOp(N)) => #sbWait ~> #rm(L, rdOp(N)) ... </tk>
+       <sb> SB </sb> requires sbOverlap(SB, L, N) andBool notBool sbExact(SB, L, N)
+  rule <tk> #rm(L, atOp(OP, T, B, X)) => #mem1(L, atOp(OP, T, B, X)) ... </tk> <sb> .List </sb>
+  rule <tk> #rm(L, atOp(OP, T, B, X)) => #sbWait ~> #rm(L, atOp(OP, T, B, X)) ... </tk> <sb> ListItem(_) _ </sb>
+  rule <tk> #rm(L, insOp(O, W, V)) => #mem1(L, insOp(O, W, V)) ... </tk> <sb> .List </sb>
+  rule <tk> #rm(L, insOp(O, W, V)) => #sbWait ~> #rm(L, insOp(O, W, V)) ... </tk> <sb> ListItem(_) _ </sb>
 
-  // ---------------------------------------------------------------- stores
-  rule <tk> exec(opc("st", M, ListItem(T)), ops([ A ], V, .Operands), C) =>
-            #sbPush(ea(A, spaceOf(M), C), bytes(T), rd(V, T, C), "release" in M) ... </tk>
-       <mm> "relaxed" </mm>
-    requires notBool isVec(V) andBool notBool vecMod(M) [priority(40)]
-  rule <tk> #sbPush(loc(S, A), N, V, B) => .K ... </tk>
-       <sb> SB => SB ListItem(sbe(S, A, N, V, B)) </sb>
-    requires S ==String "global" orBool S ==String "shared"
-  rule <tk> #sbPush(L, N, V, _) => #mem(L, wrOp(N, V)) ~> #drop ... </tk> [owise]
-  syntax Bool ::= vecMod(Set) [function, total]
-  rule vecMod(M) => "v2" in M orBool "v4" in M orBool "v8" in M
-
-  // ---------------------------------------------------------------- loads (with store-to-load forwarding)
-  rule <tk> exec(opc("ld", M, ListItem(T)), ops(D, [ A ], .Operands), C) => #sbLd(ea(A, spaceOf(M), C), bytes(T), D, T) ... </tk>
-       <mm> "relaxed" </mm>
-    requires notBool isVec(D) andBool notBool vecMod(M) [priority(40)]
-  rule <tk> #sbLd(L, N, D, T) => #mem(L, rdOp(N)) ~> #ldwb(D, T) ... </tk>
-       <sb> SB </sb>
-    requires notBool sbOverlap(SB, L, N)
-  rule <tk> #sbLd(L, N, D, T) => #res(sbFwd(SB, L, N)) ~> #ldwb(D, T) ... </tk>
-       <sb> SB </sb>
-    requires sbOverlap(SB, L, N) andBool sbExact(SB, L, N)
+  // a partially overlapping buffered store: the load is stuck until the flush rules have drained it
+  rule <tk> #mem(L, rdOp(N)) => #sbWait ~> #mem(L, rdOp(N)) ... </tk>
+       <sb> SB </sb> <mm> "relaxed" </mm>
+    requires sbOverlap(SB, L, N) andBool notBool sbExact(SB, L, N) [priority(40)]
+  rule <tk> #mem(L, atOp(OP, T, B, X)) => #sbWait ~> #mem(L, atOp(OP, T, B, X)) ... </tk>
+       <sb> ListItem(_) _ </sb> <mm> "relaxed" </mm> [priority(40)]
+  rule <tk> #sbWait => .K ... </tk> <sb> .List </sb>
   // a partially overlapping buffered store: the load waits until the flush rules have drained it
   syntax Bool ::= sbOverlap(List, Loc, Int) [function, total]
   rule sbOverlap(ListItem(sbe(S, A, N, _, _)) Rest, loc(S2, A2), N2) =>
@@ -69,28 +71,24 @@ module PTX-EXEC-WEAK
   syntax Int ::= sbVal(SbE) [function, total]
   rule sbVal(sbe(_, _, _, V, _)) => V
 
-  // ---------------------------------------------------------------- draining
-  syntax Bool ::= strongOp(String, Set) [function, total]
-  rule strongOp(OP, M) => OP in (SetItem("atom") SetItem("red") SetItem("bar") SetItem("barrier") SetItem("fence") SetItem("membar")
-                                 SetItem("mbarrier") SetItem("cp") SetItem("wgmma") SetItem("tcgen05") SetItem("exit"))
-                          orBool ((OP ==String "st" orBool OP ==String "ld") andBool vecMod(M))
-  rule <tk> exec(opc(OP, M, T), Ops, C) => #sbWait ~> exec(opc(OP, M, T), Ops, C) ... </tk>
-       <sb> ListItem(_) _ </sb> <mm> "relaxed" </mm>
-    requires strongOp(OP, M) [priority(30)]
-  rule <tk> #exit => #sbWait ~> #exit ... </tk>
-       <sb> ListItem(_) _ </sb> <mm> "relaxed" </mm> [priority(30)]
-  rule <tk> #sbWait => .K ... </tk> <sb> .List </sb>
-
   // ---------------------------------------------------------------- flushing (spontaneous steps)
-  syntax Bool ::= flushable(List, String, Int, Int, Bool) [function, total]
-  rule flushable(Pre, _, _, _, true) => Pre ==K .List
-  rule flushable(Pre, S, A, N, false) => noBarrier(Pre) andBool notBool sbOverlap(Pre, loc(S, A), N)
-  syntax Bool ::= noBarrier(List) [function, total]
-  rule noBarrier(ListItem(sbe(_, _, _, _, B)) Rest) => notBool B andBool noBarrier(Rest)
-  rule noBarrier(_) => true [owise]
-  rule <ctas> ... <cta> ... <threads> ... <thread> ... <sb> Pre ListItem(sbe("global", A, N, V, B)) Post => Pre Post </sb> ... </thread> ... </threads> ... </cta> ... </ctas>
-       <gmem> M => writeBytes(M, A, N, V) </gmem>
-    requires flushable(Pre, "global", A, N, B)
-  rule <cta> ... <smem> M => writeBytes(M, A, N, V) </smem> <threads> ... <thread> ... <sb> Pre ListItem(sbe("shared", A, N, V, B)) Post => Pre Post </sb> ... </thread> ... </threads> ... </cta>
-    requires flushable(Pre, "shared", A, N, B)
+  // A thread whose computation is idle while the turn is free may retire a buffered store: the oldest one, or a
+  // younger one that is allowed to overtake all older ones (different locations, no release entries involved).
+  // The reorder window is three entries.  A thread draining before a fence/atomic/exit retires oldest-first.
+  syntax KItem ::= #flushE(SbE)
+  rule <tk> #flushE(sbe(S, A, N, V, _)) => #mem1(loc(S, A), wrOp(N, V)) ~> #drop ... </tk>
+  rule <tk> #sbWait => #flushE(E) ~> #sbWait ... </tk> <sb> ListItem(E) Post => Post </sb>
+  rule <tk> .K => #flushE(E1) </tk> <turn> -1 </turn> <sb> ListItem(E1) Post => Post </sb>
+  rule <tk> .K => #flushE(E2) </tk> <turn> -1 </turn> <sb> ListItem(E1) ListItem(E2) Post => ListItem(E1) Post </sb>
+    requires canSwap(E1, E2)
+  rule <tk> .K => #flushE(E3) </tk> <turn> -1 </turn> <sb> ListItem(E1) ListItem(E2) ListItem(E3) Post => ListItem(E1) ListItem(E2) Post </sb>
+    requires canSwap(E1, E3) andBool canSwap(E2, E3)
+  syntax Bool ::= sbIsBar(SbE) [function, total]
+  rule sbIsBar(sbe(_, _, _, _, B)) => B
+  syntax Bool ::= canSwap(SbE, SbE) [function, total]
+  rule canSwap(E1, E2) => notBool sbIsBar(E1) andBool notBool sbIsBar(E2) andBool notBool sbOverlap(ListItem(E1), sbLoc(E2), sbN(E2))
+  syntax Loc ::= sbLoc(SbE) [function, total]
+  rule sbLoc(sbe(S, A, _, _, _)) => loc(S, A)
+  syntax Int ::= sbN(SbE) [function, total]
+  rule sbN(sbe(_, _, N, _, _)) => N
 endmodule

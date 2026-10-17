@@ -35,6 +35,7 @@ module PTX-EXEC-MEM
   syntax MemOp ::= rdOp(Int)                       // bytes
                  | insOp(Int, Int, Int)            // bit offset within the byte, width, value (sub-byte element store)
                  | wrOp(Int, Int)                  // bytes, value
+                 | wrRelOp(Int, Int)               // st.release: like wrOp, but an ordering point in the relaxed memory model
                  | atOp(String, Ty, Int, Int)      // op, type, b, c
   syntax KItem ::= #mem(Loc, MemOp) | #res(Int)
                  | #ldwb(Operand, Ty) | "#drop"
@@ -42,20 +43,30 @@ module PTX-EXEC-MEM
   syntax Int   ::= memVal(MemOp, Bytes, Int) [function]
   rule memNew(rdOp(_), M, _) => M
   rule memNew(wrOp(N, V), M, A) => writeBytes(M, A, N, V)
+  rule memNew(wrRelOp(N, V), M, A) => writeBytes(M, A, N, V)
   rule memNew(atOp(OP, T, B, X), M, A) => writeBytes(M, A, bytes(T), atomNew(OP, T, readBytes(M, A, bytes(T)), B, X))
   rule memNew(insOp(O, W, V), M, A) => writeBytes(M, A, 1, (readBytes(M, A, 1) &Int (~Int (mask(W) <<Int O))) |Int ((V &Int mask(W)) <<Int O))
   rule memVal(insOp(_, _, _), _, _) => 0
   rule memVal(rdOp(N), M, A) => readBytes(M, A, N)
   rule memVal(wrOp(_, _), _, _) => 0
+  rule memVal(wrRelOp(_, _), _, _) => 0
   rule memVal(atOp(_, T, _, _), M, A) => readBytes(M, A, bytes(T))
 
   // one step per access: the memory operation is atomic
   rule <tk> #mem(loc("global", A), OP) => #res(memVal(OP, M, A)) ... </tk>
-       <gmem> M => memNew(OP, M, A) </gmem>
+       <gmem> M => memNew(OP, M, A) </gmem> <mm> "sc" </mm>
     requires A >=Int 4096
   rule <tk> #mem(loc("shared", A), OP) => #res(memVal(OP, M, A)) ... </tk>
-       <smem> M => memNew(OP, M, A) </smem>
+       <smem> M => memNew(OP, M, A) </smem> <mm> "sc" </mm>
     requires A >=Int 0
+  // relaxed memory model (ptx-exec-weak.k): global and shared accesses go through the store buffer
+  syntax KItem ::= #rm(Loc, MemOp) | #mem1(Loc, MemOp)
+  rule <tk> #mem(loc(S, A), OP) => #rm(loc(S, A), OP) ... </tk> <mm> "relaxed" </mm>
+    requires (S ==String "global" andBool A >=Int 4096) orBool (S ==String "shared" andBool A >=Int 0)
+  rule <tk> #mem1(loc("global", A), OP) => #res(memVal(OP, M, A)) ... </tk>
+       <gmem> M => memNew(OP, M, A) </gmem>
+  rule <tk> #mem1(loc("shared", A), OP) => #res(memVal(OP, M, A)) ... </tk>
+       <smem> M => memNew(OP, M, A) </smem>
   rule <tk> #mem(loc("local", A), OP) => #res(memVal(OP, M, A)) ... </tk>
        <lmem> M => memNew(OP, M, A) </lmem>
     requires A >=Int 0
@@ -73,6 +84,9 @@ module PTX-EXEC-MEM
   syntax Int ::= ldExt(Int, Ty, Map, Operand) [function, total]
   rule ldExt(V, T, RW, D) => extReg(V, T, RW, D)
 
+  syntax MemOp ::= stOp(Set, Int, Int) [function, total]
+  rule stOp(M, N, V) => wrRelOp(N, V) requires "release" in M
+  rule stOp(M, N, V) => wrOp(N, V) requires notBool "release" in M
   syntax KItem ::= #ldv(List, Loc, Ty) | #stv(List, Loc, Ty, Ctx)
   rule <tk> exec(opc("ld", M, ListItem(T)), ops(D, [ A ], .Operands), C) =>
             #mem(ea(A, spaceOf(M), C), rdOp(bytes(T))) ~> #ldwb(D, T) ... </tk>
@@ -80,7 +94,7 @@ module PTX-EXEC-MEM
   rule <tk> exec(opc("ld", M, ListItem(T)), ops({ Ds }, [ A ], .Operands), C) =>
             #ldv(opsList(Ds), ea(A, spaceOf(M), C), T) ... </tk>
   rule <tk> exec(opc("st", M, ListItem(T)), ops([ A ], V, .Operands), C) =>
-            #mem(ea(A, spaceOf(M), C), wrOp(bytes(T), rd(V, T, C))) ~> #drop ... </tk>
+            #mem(ea(A, spaceOf(M), C), stOp(M, bytes(T), rd(V, T, C))) ~> #drop ... </tk>
     requires notBool isVec(V)
   rule <tk> exec(opc("st", M, ListItem(T)), ops([ A ], { Vs }, .Operands), C) =>
             #stv(opsList(Vs), ea(A, spaceOf(M), C), T, C) ... </tk>

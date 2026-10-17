@@ -42,6 +42,7 @@ requires "ptx-exec-tma.k"
 requires "ptx-exec-misc.k"
 requires "ptx-exec-tex.k"
 requires "ptx-exec-weak.k"
+requires "ptx-exec-isa.k"
 
 module PTX-EXEC
   imports PTX-EXEC-CORE
@@ -72,6 +73,7 @@ module PTX-EXEC
   imports PTX-EXEC-MISC
   imports PTX-EXEC-TEX
   imports PTX-EXEC-WEAK
+  imports PTX-EXEC-ISA
 
   // anything else is outside the modelled subset
   rule <tk> exec(O, _, _) => #unsupported(O) ... </tk> [owise]

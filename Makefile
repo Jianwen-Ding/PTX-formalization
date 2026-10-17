@@ -9,7 +9,7 @@
 KOMPILE  ?= kompile
 # A small young generation makes the JVM collect (and close) the source-file handles that kompile's
 # parser leaks for every rule; without it a full parse runs out of file descriptors (ulimit -n).
-export K_OPTS ?= -Xmn64m
+export K_OPTS ?= -Xmn64m -Xmx10g
 KRUN     ?= krun
 BUILD    := build/ptx-kompiled
 SOURCES  := $(wildcard semantics/*.k)

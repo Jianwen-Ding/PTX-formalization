@@ -71,9 +71,9 @@ module PTX-EXEC-CORE
 
   // ------------------------------------------------------------ fetch
   syntax K ::= fetch(KItem, Ctx) [function]
-  rule fetch(ins(noG, O, Os), C) => exec(O, ops(Os), C)
+  rule fetch(ins(noG, O, Os), C) => drainPre(O) ~> exec(O, ops(Os), C)
   rule fetch(ins(g(P, N), O, Os), C) =>
-       #if (rreg(P, C) =/=Int 0) =/=Bool N #then exec(O, ops(Os), C) #else .K #fi
+       #if (rreg(P, C) =/=Int 0) =/=Bool N #then drainPre(O) ~> exec(O, ops(Os), C) #else .K #fi
   rule fetch(X, _) => X [owise]
 
   syntax Int ::= uid(Int, Int) [function, total]
@@ -81,6 +81,16 @@ module PTX-EXEC-CORE
 
   // Instructions whose effect is visible to other threads.  Everything else
   // (ALU, control flow, calls, .param/.local accesses) is thread-local.
+  // In the relaxed memory model (ptx-exec-weak.k) fences, barriers, exit and asynchronous operations first wait
+  // for the thread's store buffer to drain; the buffer is always empty in the default sequentially consistent mode.
+  syntax KItem ::= "#sbWait"
+  syntax K ::= drainPre(Opc) [function, total]
+  rule drainPre(opc(OP, M, _)) => #sbWait
+    requires OP ==String "fence" orBool OP ==String "membar" orBool OP ==String "exit"
+      orBool isBar(OP, M) orBool isBarRed(OP, M) orBool isBarWarp(OP, M) orBool isBarCluster(OP, M) orBool isCollective(OP)
+  rule drainPre(_) => .K [owise]
+  rule <tk> #sbWait => .K ... </tk> <sb> .List </sb>
+
   syntax Bool ::= isVisible(KItem) [function, total]
   rule isVisible(ins(_, opc(OP, M, _), _)) =>
        ((OP in (SetItem("ld") SetItem("st") SetItem("atom") SetItem("red")))

@@ -14,8 +14,9 @@ module PTX-HARNESS
   rule <k> .Module => .K ... </k> <fails> N </fails> requires N >Int 0
 
   // ------------------------------------------------------------ module directives
-  rule <k> .version _      => .K ... </k>
-  rule <k> .target _       => .K ... </k>
+  rule <k> .version F      => .K ... </k> <isaver> _ => Float2Int(F *Float 10.0 +Float 0.5) </isaver>
+  rule <k> .target Ns      => .K ... </k> <isasm> _ => targetSm(namesL(Ns)) </isasm> <isaarch> _ => targetArch(namesL(Ns)) </isaarch>
+  rule <k> .isacheck ; => .K ... </k> <isachk> _ => true </isachk>
   rule <k> .address_size _ => .K ... </k>
   rule <k> .file _ _       => .K ... </k>
   rule <k> .file _ _ , _ , _ => .K ... </k>

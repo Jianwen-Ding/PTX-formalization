@@ -1,0 +1,37 @@
+// Store buffering (SB): forbidden with fence.sc between the store and the load
+// Thread 0: x = 1; r0 = y        Thread 1: y = 1; r1 = x        weak outcome: r0 == 0 && r1 == 0
+// `.expect` encodes the weak outcome, so exit code 0 means "the weak outcome is reachable":
+//   krun -d build/ptx-kompiled examples/litmus-sb-fence.ptx --search --pattern '<exit-code> X:Int </exit-code>'
+.version 8.0
+.target sm_90
+.address_size 64
+
+.global .align 4 .u32 x;
+.global .align 4 .u32 y;
+.global .align 4 .u32 r0;
+.global .align 4 .u32 r1;
+
+.visible .entry k()
+{
+    .reg .b32 %t, %v, %one; .reg .pred %p;
+    mov.u32 %one, 1;
+    mov.u32 %t, %tid.x;
+    setp.eq.u32 %p, %t, 0;
+    @%p bra T0;
+    st.relaxed.gpu.global.u32 [y], %one;
+    fence.sc.gpu;
+    ld.relaxed.gpu.global.u32 %v, [x];
+    st.global.u32 [r1], %v;
+    ret;
+T0:
+    st.relaxed.gpu.global.u32 [x], %one;
+    fence.sc.gpu;
+    ld.relaxed.gpu.global.u32 %v, [y];
+    st.global.u32 [r0], %v;
+    ret;
+}
+
+.memmodel relaxed ;
+.launch k <<< 1, 2 >>> ();
+.expect r0 .u32 = { 0 };
+.expect r1 .u32 = { 0 };

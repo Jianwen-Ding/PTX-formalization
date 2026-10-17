@@ -166,6 +166,7 @@ module PTX-SYNTAX
                       | ".sampler" Name ".attrs" "{" Ints "}" ";"
                       | ".surface" Name Type Name ".dims" "{" Ints "}" ".attrs" "{" Ints "}" ";"
                       | ".memmodel" Name ";"
+                      | ".isacheck" ";"
                       | ".append" Name Type "=" "{" InitVals "}" ";"            // extend the most recent buffer (keeps text small)
 
   // ---------------------------------------------------------------- modules
