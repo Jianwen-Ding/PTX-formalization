@@ -3,27 +3,32 @@
 # golden tests/*.out file; a test passes when the output matches and krun
 # exits with 0 (all `.expect` checks held).
 #   scripts/run-tests.sh [--update] [test.ptx ...]
+# JOBS=N runs N tests in parallel (default: number of CPUs).
 set -u
 export K_OPTS="${K_OPTS:--Xss512m}"
 cd "$(dirname "$0")/.."
-DEF=${PTX_DEF:-build/ptx-kompiled}
+export DEF=${PTX_DEF:-build/ptx-kompiled}
 update=0
 if [ "${1:-}" = "--update" ]; then update=1; shift; fi
+export update
 tests=("$@")
 [ ${#tests[@]} -eq 0 ] && tests=(tests/*.ptx)
 
-pass=0; fail=0
-for t in "${tests[@]}"; do
-  golden="${t%.ptx}.out"
+one() {
+  t=$1; golden="${t%.ptx}.out"
   actual=$(krun -d "$DEF" "$t" --output none 2>/dev/null)
   code=$?
-  if [ $update -eq 1 ]; then printf '%s\n' "$actual" > "$golden"; fi
+  if [ "$update" -eq 1 ]; then printf '%s\n' "$actual" > "$golden"; fi
   if [ $code -eq 0 ] && [ -f "$golden" ] && [ "$actual" = "$(cat "$golden")" ]; then
-    echo "PASS  $t"; pass=$((pass + 1))
+    echo "PASS  $t"
   else
-    echo "FAIL  $t (exit $code)"; fail=$((fail + 1))
+    echo "FAIL  $t (exit $code)"
     [ -f "$golden" ] && diff <(printf '%s\n' "$actual") "$golden" | head -20
   fi
-done
+}
+export -f one
+out=$(printf '%s\n' "${tests[@]}" | xargs -P "${JOBS:-$(nproc)}" -I{} bash -c 'one {}')
+printf '%s\n' "$out"
+pass=$(printf '%s\n' "$out" | grep -c '^PASS'); fail=$(printf '%s\n' "$out" | grep -c '^FAIL')
 echo "---- $pass passed, $fail failed"
-[ $fail -eq 0 ]
+[ "$fail" -eq 0 ]
