@@ -3,7 +3,7 @@
 # golden tests/*.out file; a test passes when the output matches and krun
 # exits with 0 (all `.expect` checks held).
 #   scripts/run-tests.sh [--update] [test.ptx ...]
-# JOBS=N runs N tests in parallel (default: number of CPUs).
+# JOBS=N runs N tests in parallel (default 2; the large wgmma/mma tests need several GB each).
 set -u
 export K_OPTS="${K_OPTS:--Xss512m}"
 cd "$(dirname "$0")/.."
@@ -27,7 +27,7 @@ one() {
   fi
 }
 export -f one
-out=$(printf '%s\n' "${tests[@]}" | xargs -P "${JOBS:-$(nproc)}" -I{} bash -c 'one {}')
+out=$(printf '%s\n' "${tests[@]}" | xargs -P "${JOBS:-2}" -I{} bash -c 'one {}')
 printf '%s\n' "$out"
 pass=$(printf '%s\n' "$out" | grep -c '^PASS'); fail=$(printf '%s\n' "$out" | grep -c '^FAIL')
 echo "---- $pass passed, $fail failed"
