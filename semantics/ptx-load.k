@@ -98,6 +98,7 @@ module PTX-LOAD
   rule pdecls(A1:DAttrs T:Type A2:DAttrs I:DItem, Ps:ParamDecls) =>
        regPD(vwidth(aset(A1) |Set aset(A2)), itemName(I), typeOf(T)) pdecls(Ps)
     requires "reg" in (aset(A1) |Set aset(A2))
+  rule pdecls(.ParamDecls) => .List
   syntax Int ::= vwidth(Set) [function, total]
   rule vwidth(S) => 2 requires "v2" in S
   rule vwidth(S) => 4 requires "v4" in S
