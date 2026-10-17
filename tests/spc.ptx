@@ -22,7 +22,7 @@
     st.global.b32 [%rd1+8], %c1;
     st.global.b32 [%rd1+12], %c2;
     st.global.b32 [%rd1+16], %c3;
-    spdecompress.b8.b2.sp::2:4.x4 {%e0,%e1,%e2,%e3,%e4,%e5,%e6,%e7}, {%m0}, {%c0,%c1,%c2,%c3};
+    spdecompress.b8.b2.sp::2:4.x8 {%e0,%e1,%e2,%e3,%e4,%e5,%e6,%e7}, {%m0}, {%c0,%c1,%c2,%c3};
     st.global.b32 [%rd1+20], %e0;
     st.global.b32 [%rd1+24], %e1;
     st.global.b32 [%rd1+28], %e2;
@@ -40,7 +40,7 @@
     st.global.b32 [%rd1+52], %m0;
     st.global.b32 [%rd1+56], %c0;
     st.global.b32 [%rd1+60], %c1;
-    spdecompress.b8.b2.sp::2:4.x2 {%e0,%e1,%e2,%e3}, {%m0}, {%c0,%c1};
+    spdecompress.b8.b2.sp::2:4.x4 {%e0,%e1,%e2,%e3}, {%m0}, {%c0,%c1};
     st.global.b32 [%rd1+64], %e0;
     st.global.b32 [%rd1+68], %e1;
     st.global.b32 [%rd1+72], %e2;
@@ -68,7 +68,7 @@
     st.global.b32 [%rd1+108], %m0;
     st.global.b32 [%rd1+112], %c0;
     st.global.b32 [%rd1+116], %c1;
-    spdecompress.b8.b4.sp::2:4.x2 {%e0,%e1,%e2,%e3}, {%m0}, {%c0,%c1};
+    spdecompress.b8.b4.sp::2:4.x4 {%e0,%e1,%e2,%e3}, {%m0}, {%c0,%c1};
     st.global.b32 [%rd1+120], %e0;
     st.global.b32 [%rd1+124], %e1;
     st.global.b32 [%rd1+128], %e2;

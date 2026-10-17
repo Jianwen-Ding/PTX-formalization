@@ -193,7 +193,8 @@ for n, (es, ib, op, tc, num) in enumerate(cases):
     for g in range(ng):
         for s in range(2):
             bigd |= cd[2 * g + s] << (es * (4 * g + idx[2 * g + s]))
-    body[-1] += (f"    spdecompress.{qual} {{{','.join(f'%e{i}' for i in range(2 * num))}}}, {{{ms}}}, {{{cs}}};",)
+    qd = qual.rsplit('.x', 1)[0] + f".x{len(idx) // 2}"      # spdecompress: .numN counts the groups of four
+    body[-1] += (f"    spdecompress.{qd} {{{','.join(f'%e{i}' for i in range(2 * num))}}}, {{{ms}}}, {{{cs}}};",)
     exp_o += [(bigd >> (32 * i)) & 0xffffffff for i in range(2 * num)]
 NO = len(exp_o)
 maxd = 2 * max(c[4] for c in cases)

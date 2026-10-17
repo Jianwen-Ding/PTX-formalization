@@ -120,13 +120,19 @@ against an independent Python model in `scripts/gen_tcgen05_*.py`):
   column `[scale-A]`; scale B for column n is byte `SFB_ID+blk` of the word at lane n mod 32, column `[scale-B] + n/32`.
   Scale types UE8M0 and UE4M3 (idesc bit 23); block 32 (`scale_vec::1X`/`2X`) or 16 (`4X`).
 * `tcgen05.cp` reads source rows as K-major 32-bit elements; `shift` moves rows down by one lane; `commit` signals
-  its mbarrier.
+  its mbarrier (multicast: one arrive per CTA in the mask).  `.cta_group::2` makes both CTAs of the pair copy from their own
+  shared memory (same descriptor / taddr) or shift their own tensor memory.
+* `tcgen05.cp` decompression (`.b8x16.b6x16_p32`, `.b8x16.b4x16_p64`): groups of four source words (16 elements of 6 / 4 bits
+  followed by padding) become four words of 8-bit elements; an element's value is placed in the low bits of its byte
+  (assumption: the bit mapping is in figures).
+* `tcgen05.ld.red` reduces the values a thread loaded (f32 min/max with `.abs`/`.NaN`, or u32/s32).
+  `tcgen05.ld[.red].spcompress` keeps, in each group of four loaded f32 values, two (by `.min`/`.max`, optionally `.abs`),
+  writes them in index order to `cdata` and their 2-bit indices (packed LSB first) to `mdata`.  Ties keep the lowest index,
+  NaNs are always kept (the ISA says these are implementation-specific).  `spcompress`/`spdecompress` (PTX ISA 9.4) use the
+  same selection; vectors are bit-packed little-endian across their registers and `spdecompress`'s `.numN` counts
+  source groups.
 
-* `.cta_group::2`: the CTA pair is cluster ranks (2k, 2k+1).  Each CTA supplies M/2 rows of A (from its own shared or tensor
-  memory) and receives M/2 rows of D at the same taddr; B is split by columns, N/2 from each CTA's shared memory with the
-  same descriptor (assumption, ISA gives figures).  Dense kinds only (not `.sp`, not block-scaled).
-
-Not modelled: `tcgen05.cp` decompression, `ld.red`/`spcompress`, commit multicast.
+Not modelled: `.cta_group::2` for sparse / block-scaled MMA, `.decompress::lut::b` (needs the lookup-table figures), `kind::ti16`.
 
 ## Tensor maps / TMA
 
