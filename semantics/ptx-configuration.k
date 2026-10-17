@@ -65,6 +65,7 @@ module PTX-CONFIGURATION
       <exit-code exit=""> 1 </exit-code>
       <fails> 0 </fails>
       <funcs> .Map </funcs>
+      <faddrs> .Map </faddrs>                 // function address |-> name (for indirect calls)
       <syms> .Map </syms>
       <bufs> .Map </bufs>
       <gmem> .Bytes </gmem>

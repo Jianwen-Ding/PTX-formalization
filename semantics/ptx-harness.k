@@ -39,8 +39,11 @@ module PTX-HARNESS
   rule <k> _:DAttrs _:FuncHead _:PerfDirs ; => .K ... </k>          // prototype
 
   syntax KItem ::= #addFunc(String, String, List, List, PPS) | #static(List)
+  // every function also gets an address (symbol F), usable in mov, initializers and indirect calls
   rule <k> #addFunc(F, K, RS, PS, pps(C, _, L, RW, SH)) => #static(SH) ... </k>
        <funcs> FS => FS[F <- fdef(K, RS, PS, C, L, RW)] </funcs>
+       <syms> S => #if F in_keys(S) #then S #else S[F <- sym("func", 536870912 +Int 64 *Int size(FA))] #fi </syms>
+       <faddrs> FA => #if F in_keys(S) #then FA #else FA[536870912 +Int 64 *Int size(FA) <- F] #fi </faddrs>
 
   rule <k> A1:DAttrs T:Type A2:DAttrs Is:DItems ; =>
            #static(sdecls(aset(A1) |Set aset(A2), alignOr(A1, A2, typeOf(T)), typeOf(T), itemsL(Is), .List)) ... </k>

@@ -33,6 +33,28 @@ module PTX-EXEC-CTRL
   rule <tk> exec(opc("call", _, _), ops(F:Name, .Operands), C) =>
             #call(Name2String(F), .List, .List, C) ... </tk>
 
+  // indirect calls: call (ret), %fptr, (args), proto_or_targets ;   the target is checked against the address table
+  syntax KItem ::= #icall(Int, List, List, Ctx)
+  rule <tk> exec(opc("call", _, _), ops(( RS ), F:Reg, ( AS ), T:Name, .Operands), C) =>
+            #icall(rd(F, ty("u", 64), C), opsList(RS), opsList(AS), C) ... </tk>
+  rule <tk> exec(opc("call", _, _), ops(( RS ), F:Reg, T:Name, .Operands), C) =>
+            #icall(rd(F, ty("u", 64), C), opsList(RS), .List, C) ... </tk>
+  rule <tk> exec(opc("call", _, _), ops(F:Reg, ( AS ), T:Name, .Operands), C) =>
+            #icall(rd(F, ty("u", 64), C), .List, opsList(AS), C) ... </tk>
+  rule <tk> exec(opc("call", _, _), ops(F:Reg, T:Name, .Operands), C) =>
+            #icall(rd(F, ty("u", 64), C), .List, .List, C) ... </tk>
+  rule <tk> #icall(A, RS, AS, C) => #call(F, RS, AS, C) ... </tk>
+       <faddrs> ... A |-> F ... </faddrs>
+  rule <tk> #icall(A, _, _, _) => #fault("indirect call through an invalid function pointer", A) ... </tk> [owise]
+
+  // brx.idx i, table ;   (table: label : .branchtargets L0, L1, ... ;)
+  rule <tk> exec(opc("brx", _, _), ops(I, T:Name, .Operands), ctx(R, E, S, L, RW)) => #brx(rd(I, ty("u", 32), ctx(R, E, S, L, RW)), {L["@branchtargets:" +String Name2String(T)] orDefault .List}:>List, L) ... </tk>
+  syntax KItem ::= #brx(Int, List, Map)
+  rule <tk> #brx(I, Ts, L) => .K ... </tk>
+       <pc> _ => {L[{Ts[I]}:>String]}:>Int </pc>
+    requires I >=Int 0 andBool I <Int size(Ts) andBool {Ts[I]}:>String in_keys(L)
+  rule <tk> #brx(I, _, _) => #fault("brx.idx: index outside the target list", I) ... </tk> [owise]
+
   rule <tk> #call(F, RS, AS, C) => #bindArgs(PS, AS, C, .Map, F, RS) ... </tk>
        <funcs> ... F |-> fdef(_, _, PS, _, _, _) ... </funcs>
   // a .param variable argument is passed by binding the callee's formal
