@@ -42,19 +42,22 @@ module PTX-EXEC-MMA
 
   // ---------------------------------------------------------------- element decode / encode
   syntax Bool ::= isFloatElem(Ty) [function, total]
-  rule isFloatElem(ty(K, _)) => K in (SetItem("f") SetItem("bf") SetItem("tf") SetItem("e4m3") SetItem("e5m2"))
+  rule isFloatElem(ty(K, _)) => K in (SetItem("f") SetItem("bf") SetItem("tf") SetItem("e4m3") SetItem("e5m2") SetItem("e2m3") SetItem("e3m2") SetItem("e2m1"))
   syntax Float ::= elemF(Ty, Int) [function, total]
   rule elemF(ty("f", W), B) => roundFloat(decodeF(B, W), 300, WEXP)
   rule elemF(ty("bf", _), B) => roundFloat(decodeF(B, 116), 300, WEXP)
   rule elemF(ty("tf", _), B) => roundFloat(decodeF(B &Int (~Int 8191), 32), 300, WEXP)
   rule elemF(ty("e4m3", _), B) => roundFloat(decodeF(miniToF16("e4m3", B), 16), 300, WEXP)
   rule elemF(ty("e5m2", _), B) => roundFloat(decodeF(miniToF16("e5m2", B), 16), 300, WEXP)
+  rule elemF(ty("e2m3", _), B) => roundFloat(decodeF(miniToF16("e2m3", B &Int 63), 16), 300, WEXP)
+  rule elemF(ty("e3m2", _), B) => roundFloat(decodeF(miniToF16("e3m2", B &Int 63), 16), 300, WEXP)
+  rule elemF(ty("e2m1", _), B) => roundFloat(decodeF(miniToF16("e2m1", B &Int 15), 16), 300, WEXP)
   rule elemF(_, _) => Int2Float(0, 300, WEXP) [owise]
   syntax Int ::= elemI(Ty, Int) [function, total]
   rule elemI(T, B) => ival(B, T)
   // element width of the A/B operands in bits
   syntax Int ::= ew(Ty) [function, total]
-  rule ew(ty("e4m3", _)) => 8   rule ew(ty("e5m2", _)) => 8
+  rule ew(ty("e4m3", _)) => 8   rule ew(ty("e5m2", _)) => 8   rule ew(ty("e2m3", _)) => 8   rule ew(ty("e3m2", _)) => 8   rule ew(ty("e2m1", _)) => 8   // fp6/fp4 in 8-bit containers
   rule ew(ty(_, W)) => W [owise]
 
   // ---------------------------------------------------------------- fragment layouts

@@ -20,10 +20,10 @@ TCODE = {'f16': 0, 'bf16': 1, 'tf32': 2, 'u8': 0, 's8': 1, 'e4m3': 0, 'e5m2': 1}
 CFG = [
  (8, 32, 'f16', 'f32', 'f16', 'f16', 'desc', True, 1, True, 1, 1, 0, 0, 0, 128, 0, 0),
  (8, 32, 'f16', 'f32', 'bf16', 'bf16', 'tmem', True, 0, False, 2, 1, 0, 0, 1, 128, 2, 0),
- (16, 16, 'tf32', 'f32', 'tf32', 'tf32', 'desc', True, 3, True, 3, 1, 0, 1, 0, 64, 3, 0),
+ (16, 16, 'tf32', 'f32', 'tf32', 'tf32', 'desc', True, 3, True, 2, 1, 0, 1, 0, 64, 3, 0),
  (8, 64, 'i8', 's32', 'u8', 's8', 'desc', True, 1, True, 1, 1, 0, 0, 0, 128, 0, 1),
  (8, 64, 'f8f6f4', 'f32', 'e4m3', 'e5m2', 'tmem', True, 0, True, 1, 1, 0, 0, 0, 64, 0, 0),
- (16, 32, 'f16', 'f16', 'f16', 'f16', 'desc', False, 2, False, 3, 1, 1, 0, 0, 128, 1, 0),
+ (8, 32, 'f16', 'f16', 'f16', 'f16', 'desc', False, 2, False, 3, 1, 1, 0, 0, 128, 1, 0),
 ]
 for kk, (N, K, kind, dt, at, bt, aform, akm, az, bkm, bz, en, sc, na, nb, M, sel, sat) in enumerate(CFG):
     wa, wb = bw(at), bw(bt)

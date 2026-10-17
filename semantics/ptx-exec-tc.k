@@ -21,10 +21,12 @@
 // =============================================================================
 requires "ptx-exec-wg.k"
 requires "ptx-exec-ldm.k"
+requires "ptx-exec-mbar.k"
 
 module PTX-EXEC-TC
   imports PTX-EXEC-WG
   imports PTX-EXEC-LDM
+  imports PTX-EXEC-MBAR
 
   rule isCollective("tcgen05") => true      // makes the instructions visible steps (they touch shared state)
 
@@ -154,8 +156,11 @@ module PTX-EXEC-TC
   rule tcDT(M, I) => #if ((I >>Int 4) &Int 3) ==Int 0 #then ty("f", 16) #else ty("f", 32) #fi [owise]
   rule tcAT(M, I) => ty("tf", 32) requires "kind::tf32" in M
   rule tcAT(M, I) => #if ((I >>Int 7) &Int 7) ==Int 0 #then ty("u", 8) #else ty("s", 8) #fi requires "kind::i8" in M
-  rule tcAT(M, I) => #if ((I >>Int 7) &Int 7) ==Int 0 #then ty("e4m3", 8) #else ty("e5m2", 8) #fi requires "kind::f8f6f4" in M
+  rule tcAT(M, I) => tcF8((I >>Int 7) &Int 7) requires "kind::f8f6f4" in M orBool "kind::mxf8f6f4" in M
   rule tcAT(M, I) => #if ((I >>Int 7) &Int 7) ==Int 0 #then ty("f", 16) #else ty("bf", 16) #fi [owise]
+  syntax Ty ::= tcF8(Int) [function, total]
+  rule tcF8(0) => ty("e4m3", 8)   rule tcF8(1) => ty("e5m2", 8)   rule tcF8(3) => ty("e2m3", 8)   rule tcF8(4) => ty("e3m2", 8)
+  rule tcF8(5) => ty("e2m1", 8)   rule tcF8(_) => ty("e4m3", 8) [owise]
   syntax Ty ::= tcBT(Set, Int) [function, total]
   rule tcBT(M, I) => tcAT(M, I >>Int 3)
   syntax Int ::= tcK(Set, Int) [function, total]
@@ -174,12 +179,26 @@ module PTX-EXEC-TC
                      #else (tcWord(TM, tcKey(R, tcCol(V) +Int (Kk *Int ew(T)) /Int 32)) >>Int ((Kk *Int ew(T)) %Int 32)) &Int mask(ew(T)) #fi)])
     requires R <Int M
   rule tcTileA(_, _, _, _, _, _, _, _, _, _, _, _, Acc) => Acc [owise]
-  syntax Map ::= tcTileB(Int, Bytes, Ty, Int, Bool, Int, Int, Int, Int, Map) [function, total]
-  rule tcTileB(V, SM, T, Sg, KM, N, K, Nn, Kk, Acc) =>
+  syntax Map ::= tcTileB(Int, Bytes, Ty, Int, Bool, Int, Int, Int, Int, Map, Int, Int, Int) [function, total]
+  // ..., accumulator, column shift, zero-column mask descriptor (-1: none), rows of the M dimension
+  rule tcTileB(V, SM, T, Sg, KM, N, K, Nn, Kk, Acc, Sh, Z, Md) =>
        tcTileB(V, SM, T, Sg, KM, N, K, #if Kk +Int 1 ==Int K #then Nn +Int 1 #else Nn #fi, #if Kk +Int 1 ==Int K #then 0 #else Kk +Int 1 #fi,
-               Acc[rc(Kk, Nn) <- wgNeg(T, Sg, wgElem(SM, tcDesc(V), KM, ew(T), Nn, Kk))])
+               Acc[rc(Kk, Nn) <- #if tcZero(Z, Md, N, Nn) #then 0 #else wgNeg(T, Sg, wgElem(SM, tcDesc(V), KM, ew(T), Nn +Int Sh, Kk)) #fi], Sh, Z, Md)
     requires Nn <Int N
-  rule tcTileB(_, _, _, _, _, _, _, _, _, Acc) => Acc [owise]
+  rule tcTileB(_, _, _, _, _, _, _, _, _, Acc, _, _, _) => Acc [owise]
+  // zero-column mask descriptor (.ws): is output column C zeroed?  Sub-masks: 128/M of them, each covering N/(128/M) columns.
+  syntax Bool ::= tcZero(Int, Int, Int, Int) [function, total]
+  rule tcZero(Z, Md, N, C) => tcZBit(Z, C /Int (N /Int (128 /Int Md)), C %Int (N /Int (128 /Int Md))) requires Z >=Int 0 andBool Md >Int 0 andBool Md <=Int 128 andBool N /Int (128 /Int Md) >Int 0
+  rule tcZero(_, _, _, _) => false [owise]
+  syntax Bool ::= tcZBit(Int, Int, Int) [function, total]                 // descriptor, sub-mask, position
+  rule tcZBit(Z, I, P) => ((Z >>Int 39) &Int 1) ==Int 1 andBool
+       tcRun(((Z >>Int (32 +Int I)) &Int 1), ((Z >>Int (8 *Int I)) &Int 255), ((Z >>Int 40) &Int 255) +Int 1, ((Z >>Int 48) &Int 255) +Int 1, P)
+  // first run has value V0 (1 = zero the column) and loses `Sc` columns; runs of ones last `On`, runs of zeros `Zr`
+  syntax Bool ::= tcRun(Int, Int, Int, Int, Int) [function, total]
+  rule tcRun(V0, Sc, On, Zr, P) => (V0 ==Int 1) requires P <Int (#if V0 ==Int 1 #then On #else Zr #fi) -Int Sc
+  rule tcRun(V0, Sc, On, Zr, P) =>
+       (((P -Int ((#if V0 ==Int 1 #then On #else Zr #fi) -Int Sc)) %Int (On +Int Zr)) <Int (#if V0 ==Int 1 #then Zr #else On #fi)) ==Bool (V0 ==Int 0)
+    requires P >=Int (#if V0 ==Int 1 #then On #else Zr #fi) -Int Sc
   // D accumulator input: scaled by 2^-s
   syntax Map ::= tcTileD(Map, Ty, Int, Int, Int, Int, Int, Int, Int, Map) [function, total]
   rule tcTileD(TM, T, Base, M, N, R, Cn, S, Z, Acc) =>
@@ -198,15 +217,15 @@ module PTX-EXEC-TC
               #else TM[tcKey(K /Int 1024, Base +Int K %Int 1024) <- {Res[K] orDefault 0}:>Int] #fi, Res, Ks, Base, Mask, M, N, 0, T)
   rule tcPutD(TM, _, _, _, _, _, _, _, _) => TM [owise]
 
-  syntax Map ::= tcMma(Set, Map, Bytes, Bool, Int, Int, Int, Int, Bool, Int, Int, Int) [function, total]
+  syntax Map ::= tcMma(Set, Map, Bytes, Bool, Int, Int, Int, Int, Bool, Int, Int, Int, Int) [function, total]
   // mods, tmem, smem, a-is-desc, a value, b desc, idesc, d-taddr, enable, scale, mask -> new tmem
-  rule tcMma(M, TM, SM, AD, AV, BV, ID, DA, En, S, Mask, Meta) =>
+  rule tcMma(M, TM, SM, AD, AV, BV, ID, DA, En, S, Mask, Meta, Z) =>
        tcPutD(TM,
               resRows("m" +String Int2String(((ID >>Int 24) &Int 31) *Int 16) +String "n" +String Int2String(((ID >>Int 17) &Int 63) *Int 8) +String "k" +String Int2String(tcKS(M, ID, Meta)),
                       tcDT(M, ID), tcAT(M, ID), tcBT(M, ID), tcDT(M, ID),
                       tcAMat(M, TM, SM, AD, AV, ID, Meta),
                       tcTileB(BV, SM, tcBT(M, ID), #if ((ID >>Int 14) &Int 1) ==Int 1 #then 0 -Int 1 #else 1 #fi, ((ID >>Int 16) &Int 1) ==Int 0,
-                              ((ID >>Int 17) &Int 63) *Int 8, tcKS(M, ID, Meta), 0, 0, .Map),
+                              ((ID >>Int 17) &Int 63) *Int 8, tcKS(M, ID, Meta), 0, 0, .Map, tcShiftZ(Z), Z, ((ID >>Int 24) &Int 31) *Int 16),
                       #if En #then tcTileD(TM, tcDT(M, ID), tcCol(DA), ((ID >>Int 24) &Int 31) *Int 16, ((ID >>Int 17) &Int 63) *Int 8, 0, 0, S, 0, .Map) #else .Map #fi,
                       0, 0, #if ((ID >>Int 3) &Int 1) ==Int 1 #then SetItem("satfinite") #else .Set #fi, .Map),
               rowKeys(((ID >>Int 24) &Int 31) *Int 16, ((ID >>Int 17) &Int 63) *Int 8, 0, 0, .List),
@@ -219,18 +238,27 @@ module PTX-EXEC-TC
   rule tcKS(M, ID, Meta) => 2 *Int tcK(M, ID) requires Meta >=Int 0
   rule tcKS(M, ID, Meta) => tcK(M, ID) requires Meta <Int 0
   syntax Map ::= tcAMat(Set, Map, Bytes, Bool, Int, Int, Int) [function, total]
-  rule tcAMat(M, TM, SM, AD, AV, ID, Meta) =>
+  rule tcAMat(M, TM, SM, AD, AV, ID, Meta) => tcAshift(tcAMat0(M, TM, SM, AD, AV, ID, Meta), "ashift" in M)
+  // .ashift: the rows of A move down one row (row 0 is kept, the last row is dropped)
+  syntax Map ::= tcAshift(Map, Bool) [function, total]
+  rule tcAshift(A, false) => A
+  rule tcAshift(A, true) => tcAshiftK(A, keys_list(A), .Map)
+  syntax Map ::= tcAshiftK(Map, List, Map) [function, total]
+  rule tcAshiftK(A, ListItem(K:Int) Ks, Acc) => tcAshiftK(A, Ks, Acc[K <- {A[#if K >=Int 1024 #then K -Int 1024 #else K #fi] orDefault 0}:>Int])
+  rule tcAshiftK(_, _, Acc) => Acc [owise]
+  syntax Map ::= tcAMat0(Set, Map, Bytes, Bool, Int, Int, Int) [function, total]
+  rule tcAMat0(M, TM, SM, AD, AV, ID, Meta) =>
        tcTileA(AD, AV, TM, SM, tcAT(M, ID), #if ((ID >>Int 13) &Int 1) ==Int 1 #then 0 -Int 1 #else 1 #fi, ((ID >>Int 15) &Int 1) ==Int 0,
                ((ID >>Int 24) &Int 31) *Int 16, tcK(M, ID), 0, 0, 0, .Map)
     requires Meta <Int 0
-  rule tcAMat(M, TM, SM, AD, AV, ID, Meta) =>
+  rule tcAMat0(M, TM, SM, AD, AV, ID, Meta) =>
        tcSpExp(tcTileA(AD, AV, TM, SM, tcAT(M, ID), #if ((ID >>Int 13) &Int 1) ==Int 1 #then 0 -Int 1 #else 1 #fi, ((ID >>Int 15) &Int 1) ==Int 0,
                        ((ID >>Int 24) &Int 31) *Int 16, tcK(M, ID), 0, 0, 0, .Map),
                TM, tcAT(M, ID), ((ID >>Int 24) &Int 31) *Int 16, tcK(M, ID), Meta, ID &Int 3, 0, 0, .Map)
     requires Meta >=Int 0
   syntax Map ::= tcSpExp(Map, Map, Ty, Int, Int, Int, Int, Int, Int, Map) [function, total]   // packed, tmem, type, rows, packed cols, meta column, selector, r, kp, acc
   rule tcSpExp(Pk, TM, T, M, KP, MC, Sel, R, K, Acc) =>
-       tcSpExp(Pk, TM, T, M, KP, MC, Sel, #if K +Int 1 ==Int KP then R +Int 1 #else R #fi, #if K +Int 1 ==Int KP then 0 #else K +Int 1 #fi,
+       tcSpExp(Pk, TM, T, M, KP, MC, Sel, #if K +Int 1 ==Int KP #then R +Int 1 #else R #fi, #if K +Int 1 ==Int KP #then 0 #else K +Int 1 #fi,
                Acc[rc(R, spCw(T) *Int (K /Int spNz(T)) +Int spPos(T, tcNib(TM, T, R, MC, Sel, K /Int spNz(T), KP), K %Int spNz(T)))
                    <- {Pk[rc(R, K)] orDefault 0}:>Int])
     requires R <Int M
@@ -238,6 +266,10 @@ module PTX-EXEC-TC
   syntax Int ::= tcNib(Map, Ty, Int, Int, Int, Int, Int) [function, total]                      // tmem, type, row, meta col, selector, chunk, packed cols
   rule tcNib(TM, T, R, MC, Sel, C, KP) => (tcWord(TM, tcKey(R, MC +Int Sel)) >>Int (4 *Int C)) &Int 15 requires 2 *Int KP /Int spCw(T) <=Int 8
   rule tcNib(TM, T, R, MC, Sel, C, KP) => (tcWord(TM, tcKey(R, MC +Int C /Int 8)) >>Int (4 *Int (C %Int 8))) &Int 15 requires 2 *Int KP /Int spCw(T) >Int 8
+
+  syntax Int ::= tcShiftZ(Int) [function, total]
+  rule tcShiftZ(Z) => (Z >>Int 56) &Int 63 requires Z >=Int 0
+  rule tcShiftZ(_) => 0 [owise]
 
   // the result keys (r, c) in order
   syntax List ::= rowKeys(Int, Int, Int, Int, List) [function, total]
@@ -266,7 +298,7 @@ module PTX-EXEC-TC
   syntax KItem ::= #tcMma(Set, Bool, Int, Int, Int, Int, Int, List, Ctx)
   rule <tk> #tcMma(M, AD, AV, BV, ID, DA, Meta, Rest, C) => .K ... </tk>
        <smem> SM </smem>
-       <tmem> TM => tcMma(M, TM, SM, AD, AV, BV, ID, DA, tcEn(Rest, C), tcSc(Rest, C), tcMk(Rest, C), Meta) </tmem>
+       <tmem> TM => tcMma(M, TM, SM, AD, AV, BV, ID, DA, tcEn(Rest, C), #if "ws" in M #then 0 #else tcSc(Rest, C) #fi, tcMk(Rest, C), Meta, tcZm(M, Rest, C)) </tmem>
   // optional vector mask first, then the enable predicate, then the optional scale
   syntax List ::= tcOps(List) [function, total]
   rule tcOps(ListItem(V:Operand) Vs) => #if isVec(V) #then Vs #else ListItem(V) Vs #fi
@@ -277,7 +309,78 @@ module PTX-EXEC-TC
   syntax Bool ::= tcEn(List, Ctx) [function, total]
   rule tcEn(L, C) => rd({tcOps(L)[0]}:>Operand, ty("u", 32), C) =/=Int 0 requires size(tcOps(L)) >Int 0
   rule tcEn(_, _) => true [owise]
+  syntax Int ::= tcZm(Set, List, Ctx) [function, total]
+  rule tcZm(M, L, C) => rd({tcOps(L)[1]}:>Operand, ty("b", 64), C) requires "ws" in M andBool size(tcOps(L)) >Int 1
+  rule tcZm(_, _, _) => 0 -Int 1 [owise]
   syntax Int ::= tcSc(List, Ctx) [function, total]
   rule tcSc(L, C) => rd({tcOps(L)[1]}:>Operand, ty("u", 32), C) requires size(tcOps(L)) >Int 1
   rule tcSc(_, _) => 0 [owise]
+
+  // ---------------------------------------------------------------- tcgen05.commit / cp / shift
+  // Asynchronous operations complete at issue, so commit is an arrive (count 1) on the mbarrier(s) right away.
+  //   tcgen05.commit.cta_group::N.mbarrier::arrive::one{.shared::cluster}{.multicast::cluster{::16b,::32b}}.b64 [mbar]{, ctaMask}
+  rule <tk> exec(opc("tcgen05", M, _), ops([ A ], .Operands), C) => .K ... </tk>
+       <ctaid> CT </ctaid> <gridDim> GD </gridDim> <clusterDim> CD </clusterDim>
+       <mbars> MB => mbArriveKeys(MB, ListItem(mbKey(ea(A, spaceOf(M), C), CT, GD, CD))) </mbars>
+    requires "commit" in M
+  rule <tk> exec(opc("tcgen05", M, _), ops([ A ], Mk, .Operands), C) => .K ... </tk>
+       <ctaid> CT </ctaid> <gridDim> GD </gridDim> <clusterDim> CD </clusterDim>
+       <mbars> MB => mbArriveKeys(MB, tcMcKeys(locOff(ea(A, spaceOf(M), C)) &Int 16777215, rd(Mk, ty("u", 32), C), 0, CT, GD, CD, .List)) </mbars>
+    requires "commit" in M andBool "multicast" in M
+  syntax Map ::= mbArriveKeys(Map, List) [function, total]
+  rule mbArriveKeys(MB, ListItem(K:Int) Ks) => mbArriveKeys(#if K in_keys(MB) #then MB[K <- mbArrive(mbGet(MB, K), 1)] #else MB #fi, Ks)
+  rule mbArriveKeys(MB, _) => MB [owise]
+  syntax List ::= tcMcKeys(Int, Int, Int, Int, Dim3, Dim3, List) [function, total]          // offset, mask, bit, own CTA, grid, cluster, acc
+  rule tcMcKeys(Off, Mk, B, CT, GD, CD, Acc) =>
+       tcMcKeys(Off, Mk, B +Int 1, CT, GD, CD,
+                #if (Mk >>Int B) &Int 1 ==Int 1 #then Acc ListItem(mbKey(loc("cluster", ((B +Int 1) <<Int 24) |Int Off), CT, GD, CD)) #else Acc #fi)
+    requires B <Int 32
+  rule tcMcKeys(_, _, _, _, _, _, Acc) => Acc [owise]
+
+  //   tcgen05.cp.cta_group::N.shape{.multicast}  [taddr], s-desc    shared memory -> tensor memory
+  // shape lane x size: `lane` rows of size/32 words; row i goes to tensor-memory lane (taddr.lane + i).  The source is read like
+  // a K-major tile of 32-bit elements through the (sm_100) descriptor.  Not modelled: the .b8x16.b6x16_p32 / .b4x16_p64 decompression.
+  syntax Int ::= tcCpRows(Set) [function, total] | tcCpWords(Set) [function, total]
+  rule tcCpRows(M) => 128 requires "128x256b" in M orBool "128x128b" in M
+  rule tcCpRows(M) => 4 requires "4x256b" in M
+  rule tcCpRows(M) => 64 requires "64x128b" in M
+  rule tcCpRows(M) => 32 requires "32x128b" in M
+  rule tcCpRows(M) => 0 requires notBool ("128x256b" in M orBool "128x128b" in M orBool "4x256b" in M orBool "64x128b" in M orBool "32x128b" in M)
+  rule tcCpWords(M) => 8 requires "128x256b" in M orBool "4x256b" in M
+  rule tcCpWords(M) => 4 [owise]
+  // destination lanes (relative to the base lane) of source row i: plain copy, or warp multicast
+  syntax List ::= tcCpDst(Set, Int) [function, total]
+  rule tcCpDst(M, I) => ListItem(I) requires notBool ("warpx2" in M orBool "warpx4" in M)
+  rule tcCpDst(M, I) => ListItem(I) ListItem(I +Int 32) ListItem(I +Int 64) ListItem(I +Int 96) requires "warpx4" in M
+  rule tcCpDst(M, I) => ListItem(I %Int 32 +Int 32 *Int (2 *Int (I /Int 32))) ListItem(I %Int 32 +Int 32 *Int (2 *Int (I /Int 32) +Int 1))
+    requires "warpx2::02_13" in M
+  rule tcCpDst(M, I) => ListItem(I %Int 32 +Int 32 *Int (I /Int 32)) ListItem(I %Int 32 +Int 32 *Int (I /Int 32 +Int 2))
+    requires "warpx2::01_23" in M
+  rule <tk> exec(opc("tcgen05", M, _), ops([ T ], Dd, .Operands), C) => .K ... </tk>
+       <smem> SM </smem> <tmem> TM => tcCp(TM, SM, M, tcLane(tcAddr(T, C)), tcCol(tcAddr(T, C)), tcDesc(rd(Dd, ty("b", 64), C)), 0) </tmem>
+    requires "cp" in M
+  syntax Map ::= tcCp(Map, Bytes, Set, Int, Int, Int, Int) [function, total]            // tmem, smem, mods, lane, column, descriptor, source row
+  rule tcCp(TM, SM, M, L, Cl, D, I) => tcCp(tcCpPut(TM, tcCpDst(M, I), L, Cl, tcCpRow(SM, D, I, 0, tcCpWords(M), .List)), SM, M, L, Cl, D, I +Int 1)
+    requires I <Int tcCpRows(M)
+  rule tcCp(TM, _, _, _, _, _, _) => TM [owise]
+  syntax List ::= tcCpRow(Bytes, Int, Int, Int, Int, List) [function, total]
+  rule tcCpRow(SM, D, I, W, N, Acc) => tcCpRow(SM, D, I, W +Int 1, N, Acc ListItem(wgElem(SM, D, true, 32, I, W))) requires W <Int N
+  rule tcCpRow(_, _, _, _, _, Acc) => Acc [owise]
+  syntax Map ::= tcCpPut(Map, List, Int, Int, List) [function, total]
+  rule tcCpPut(TM, ListItem(R:Int) Rs, L, Cl, Ws) => tcCpPut(tcCpWr(TM, L +Int R, Cl, Ws), Rs, L, Cl, Ws)
+  rule tcCpPut(TM, _, _, _, _) => TM [owise]
+  syntax Map ::= tcCpWr(Map, Int, Int, List) [function, total]
+  rule tcCpWr(TM, Ln, Cl, ListItem(V:Int) Ws) => tcCpWr(TM[tcKey(Ln, Cl) <- V], Ln, Cl +Int 1, Ws)
+  rule tcCpWr(TM, _, _, _) => TM [owise]
+
+  //   tcgen05.shift.cta_group::N.down [taddr]: the 32-byte (8-word) rows of the 32-lane block move down one row; the last row is dropped
+  rule <tk> exec(opc("tcgen05", M, _), ops([ T ], .Operands), C) => .K ... </tk>
+       <tmem> TM => tcShift(TM, tcLane(tcAddr(T, C)), tcCol(tcAddr(T, C)), 30) </tmem>
+    requires "shift" in M
+  syntax Map ::= tcShift(Map, Int, Int, Int) [function, total]                           // tmem, base lane, column, row (descending)
+  rule tcShift(TM, L, Cl, R) => tcShift(tcCpWr(TM, L +Int R +Int 1, Cl, tcRowWords(TM, L +Int R, Cl, 0, .List)), L, Cl, R -Int 1) requires R >=Int 0
+  rule tcShift(TM, _, _, _) => TM [owise]
+  syntax List ::= tcRowWords(Map, Int, Int, Int, List) [function, total]
+  rule tcRowWords(TM, Ln, Cl, W, Acc) => tcRowWords(TM, Ln, Cl, W +Int 1, Acc ListItem(tcWord(TM, tcKey(Ln, Cl +Int W)))) requires W <Int 8
+  rule tcRowWords(_, _, _, _, Acc) => Acc [owise]
 endmodule
