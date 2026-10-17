@@ -230,9 +230,17 @@ module PTX-LOAD
 
   // registers: remember declared widths (%r<4> declares %r0 .. %r3)
   rule ppDecl("reg", S, AL, T, ListItem(R:Reg < N:Int >) Is, P) =>
-       ppDecl("reg", S, AL, T, Is, ppRegs(Reg2String(R), 0, N, wid(T), P))
+       ppDecl("reg", S, AL, T, Is, ppRegs(Reg2String(R), 0, N, wid(T), P)) requires vwidth(S) ==Int 0
   rule ppDecl("reg", S, AL, T, ListItem(R:Name < N:Int >) Is, P) =>
-       ppDecl("reg", S, AL, T, Is, ppRegs(Name2String(R), 0, N, wid(T), P))
+       ppDecl("reg", S, AL, T, Is, ppRegs(Name2String(R), 0, N, wid(T), P)) requires vwidth(S) ==Int 0
+  // vector register arrays: .reg .v2 .b16 x<4>;
+  rule ppDecl("reg", S, AL, T, ListItem(R:Reg < N:Int >) Is, pps(C, PC, L, RW, SH)) =>
+       ppDecl("reg", S, AL, T, Is, pps(C, PC, L, vdeclareN(RW, Reg2String(R), wid(T), vwidth(S), 0, N), SH)) requires vwidth(S) >Int 0
+  rule ppDecl("reg", S, AL, T, ListItem(R:Name < N:Int >) Is, pps(C, PC, L, RW, SH)) =>
+       ppDecl("reg", S, AL, T, Is, pps(C, PC, L, vdeclareN(RW, Name2String(R), wid(T), vwidth(S), 0, N), SH)) requires vwidth(S) >Int 0
+  syntax Map ::= vdeclareN(Map, String, Int, Int, Int, Int) [function, total]
+  rule vdeclareN(RW, B, W, K, I, N) => vdeclareN(vdeclare(RW, B +String Int2String(I), W, K, 0), B, W, K, I +Int 1, N) requires I <Int N
+  rule vdeclareN(RW, _, _, _, I, N) => RW requires I >=Int N
   rule ppDecl("reg", S, AL, T, ListItem(I:DItem) Is, pps(C, PC, L, RW, SH)) =>
        ppDecl("reg", S, AL, T, Is, pps(C, PC, L, vdeclare(RW, itemName(I), wid(T), vwidth(S), 0), SH)) requires vwidth(S) >Int 0
   rule ppDecl("reg", S, AL, T, ListItem(I:DItem) Is, pps(C, PC, L, RW, SH)) =>
