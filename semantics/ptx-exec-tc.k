@@ -152,8 +152,10 @@ module PTX-EXEC-TC
 
   // element types from the instruction descriptor
   syntax Ty ::= tcDT(Set, Int) [function, total] | tcAT(Set, Int) [function, total]
+  rule tcDT(M, I) => ty("f", 32) requires "kind::mxf8f6f4" in M orBool "kind::mxf4" in M orBool "kind::mxf4nvf4" in M
   rule tcDT(M, I) => ty("s", 32) requires "kind::i8" in M
   rule tcDT(M, I) => #if ((I >>Int 4) &Int 3) ==Int 0 #then ty("f", 16) #else ty("f", 32) #fi [owise]
+  rule tcAT(M, I) => ty("e2m1p", 4) requires "kind::mxf4" in M orBool "kind::mxf4nvf4" in M         // two 4-bit elements per byte
   rule tcAT(M, I) => ty("tf", 32) requires "kind::tf32" in M
   rule tcAT(M, I) => #if ((I >>Int 7) &Int 7) ==Int 0 #then ty("u", 8) #else ty("s", 8) #fi requires "kind::i8" in M
   rule tcAT(M, I) => tcF8((I >>Int 7) &Int 7) requires "kind::f8f6f4" in M orBool "kind::mxf8f6f4" in M
@@ -163,7 +165,13 @@ module PTX-EXEC-TC
   rule tcF8(5) => ty("e2m1", 8)   rule tcF8(_) => ty("e4m3", 8) [owise]
   syntax Ty ::= tcBT(Set, Int) [function, total]
   rule tcBT(M, I) => tcAT(M, I >>Int 3)
+  syntax Int ::= tcMD(Set, Int) [function, total]            // M: bits 24-28 (x16), or bits 27-28 (x128) for the block-scaled kinds
+  rule tcMD(M, I) => ((I >>Int 27) &Int 3) *Int 128 requires "kind::mxf8f6f4" in M orBool "kind::mxf4" in M orBool "kind::mxf4nvf4" in M
+  rule tcMD(M, I) => ((I >>Int 24) &Int 31) *Int 16 [owise]
   syntax Int ::= tcK(Set, Int) [function, total]
+  rule tcK(M, I) => #if ((I >>Int 31) &Int 1) ==Int 1 #then 64 #else 32 #fi requires "kind::mxf8f6f4" in M
+  rule tcK(M, I) => #if ((I >>Int 3) &Int 1) ==Int 1 #then 128 #else #if ((I >>Int 31) &Int 1) ==Int 1 #then 96 #else 64 #fi #fi
+    requires "kind::mxf4" in M orBool "kind::mxf4nvf4" in M
   rule tcK(M, I) => 8 requires "kind::tf32" in M
   rule tcK(M, I) => 32 requires "kind::i8" in M
   rule tcK(M, I) => #if ((I >>Int 29) &Int 1) ==Int 1 #then 64 #else 32 #fi requires "kind::f8f6f4" in M
@@ -221,14 +229,14 @@ module PTX-EXEC-TC
   // mods, tmem, smem, a-is-desc, a value, b desc, idesc, d-taddr, enable, scale, mask -> new tmem
   rule tcMma(M, TM, SM, AD, AV, BV, ID, DA, En, S, Mask, Meta, Z) =>
        tcPutD(TM,
-              resRows("m" +String Int2String(((ID >>Int 24) &Int 31) *Int 16) +String "n" +String Int2String(((ID >>Int 17) &Int 63) *Int 8) +String "k" +String Int2String(tcKS(M, ID, Meta)),
+              resRows("m" +String Int2String(tcMD(M, ID)) +String "n" +String Int2String(((ID >>Int 17) &Int 63) *Int 8) +String "k" +String Int2String(tcKS(M, ID, Meta)),
                       tcDT(M, ID), tcAT(M, ID), tcBT(M, ID), tcDT(M, ID),
                       tcAMat(M, TM, SM, AD, AV, ID, Meta),
                       tcTileB(BV, SM, tcBT(M, ID), #if ((ID >>Int 14) &Int 1) ==Int 1 #then 0 -Int 1 #else 1 #fi, ((ID >>Int 16) &Int 1) ==Int 0,
-                              ((ID >>Int 17) &Int 63) *Int 8, tcKS(M, ID, Meta), 0, 0, .Map, tcShiftZ(Z), Z, ((ID >>Int 24) &Int 31) *Int 16),
-                      #if En #then tcTileD(TM, tcDT(M, ID), tcCol(DA), ((ID >>Int 24) &Int 31) *Int 16, ((ID >>Int 17) &Int 63) *Int 8, 0, 0, S, 0, .Map) #else .Map #fi,
+                              ((ID >>Int 17) &Int 63) *Int 8, tcKS(M, ID, Meta), 0, 0, .Map, tcShiftZ(Z), Z, tcMD(M, ID)),
+                      #if En #then tcTileD(TM, tcDT(M, ID), tcCol(DA), tcMD(M, ID), ((ID >>Int 17) &Int 63) *Int 8, 0, 0, S, 0, .Map) #else .Map #fi,
                       0, 0, #if ((ID >>Int 3) &Int 1) ==Int 1 #then SetItem("satfinite") #else .Set #fi, .Map),
-              rowKeys(((ID >>Int 24) &Int 31) *Int 16, ((ID >>Int 17) &Int 63) *Int 8, 0, 0, .List),
+              rowKeys(tcMD(M, ID), ((ID >>Int 17) &Int 63) *Int 8, 0, 0, .List),
               tcCol(DA), Mask, 0, 0, 0, tcDT(M, ID))
   // sparse A (tcgen05.mma.sp): the packed M x K/2 matrix is read like a dense one and expanded with the metadata
   // words in tensor memory (assumed layout, see docs/prior-work.md): row r's metadata sits in lane r, 4 bits per chunk;
@@ -249,12 +257,12 @@ module PTX-EXEC-TC
   syntax Map ::= tcAMat0(Set, Map, Bytes, Bool, Int, Int, Int) [function, total]
   rule tcAMat0(M, TM, SM, AD, AV, ID, Meta) =>
        tcTileA(AD, AV, TM, SM, tcAT(M, ID), #if ((ID >>Int 13) &Int 1) ==Int 1 #then 0 -Int 1 #else 1 #fi, ((ID >>Int 15) &Int 1) ==Int 0,
-               ((ID >>Int 24) &Int 31) *Int 16, tcK(M, ID), 0, 0, 0, .Map)
+               tcMD(M, ID), tcK(M, ID), 0, 0, 0, .Map)
     requires Meta <Int 0
   rule tcAMat0(M, TM, SM, AD, AV, ID, Meta) =>
        tcSpExp(tcTileA(AD, AV, TM, SM, tcAT(M, ID), #if ((ID >>Int 13) &Int 1) ==Int 1 #then 0 -Int 1 #else 1 #fi, ((ID >>Int 15) &Int 1) ==Int 0,
-                       ((ID >>Int 24) &Int 31) *Int 16, tcK(M, ID), 0, 0, 0, .Map),
-               TM, tcAT(M, ID), ((ID >>Int 24) &Int 31) *Int 16, tcK(M, ID), Meta, ID &Int 3, 0, 0, .Map)
+                       tcMD(M, ID), tcK(M, ID), 0, 0, 0, .Map),
+               TM, tcAT(M, ID), tcMD(M, ID), tcK(M, ID), Meta, ID &Int 3, 0, 0, .Map)
     requires Meta >=Int 0
   syntax Map ::= tcSpExp(Map, Map, Ty, Int, Int, Int, Int, Int, Int, Map) [function, total]   // packed, tmem, type, rows, packed cols, meta column, selector, r, kp, acc
   rule tcSpExp(Pk, TM, T, M, KP, MC, Sel, R, K, Acc) =>
@@ -284,17 +292,17 @@ module PTX-EXEC-TC
   // tcgen05.mma.cta_group::1.kind [d], a-desc | [a-tmem], b-desc, idesc, {mask}, enable[, scale]
   rule <tk> exec(opc("tcgen05", M, _), ops([ D ], [ A ], Bd, ID, Rest:Operands), C) =>
             #tcMma(M, false, tcAddr(A, C), rd(Bd, ty("b", 64), C), rd(ID, ty("b", 32), C), tcAddr(D, C), 0 -Int 1, opsList(Rest), C) ... </tk>
-    requires "mma" in M andBool notBool "sp" in M
+    requires "mma" in M andBool notBool "sp" in M andBool notBool "block_scale" in M
   rule <tk> exec(opc("tcgen05", M, _), ops([ D ], Ad, Bd, ID, Rest:Operands), C) =>
             #tcMma(M, true, rd(Ad, ty("b", 64), C), rd(Bd, ty("b", 64), C), rd(ID, ty("b", 32), C), tcAddr(D, C), 0 -Int 1, opsList(Rest), C) ... </tk>
-    requires "mma" in M andBool notBool "sp" in M [priority(60)]
+    requires "mma" in M andBool notBool "sp" in M andBool notBool "block_scale" in M [priority(60)]
   // sparse: [d], a-desc | [a-tmem], b-desc, [sp-meta-tmem], idesc, ...
   rule <tk> exec(opc("tcgen05", M, _), ops([ D ], [ A ], Bd, [ MT ], ID, Rest:Operands), C) =>
             #tcMma(M, false, tcAddr(A, C), rd(Bd, ty("b", 64), C), rd(ID, ty("b", 32), C), tcAddr(D, C), tcCol(tcAddr(MT, C)), opsList(Rest), C) ... </tk>
-    requires "mma" in M andBool "sp" in M
+    requires "mma" in M andBool "sp" in M andBool notBool "block_scale" in M
   rule <tk> exec(opc("tcgen05", M, _), ops([ D ], Ad, Bd, [ MT ], ID, Rest:Operands), C) =>
             #tcMma(M, true, rd(Ad, ty("b", 64), C), rd(Bd, ty("b", 64), C), rd(ID, ty("b", 32), C), tcAddr(D, C), tcCol(tcAddr(MT, C)), opsList(Rest), C) ... </tk>
-    requires "mma" in M andBool "sp" in M [priority(60)]
+    requires "mma" in M andBool "sp" in M andBool notBool "block_scale" in M [priority(60)]
   syntax KItem ::= #tcMma(Set, Bool, Int, Int, Int, Int, Int, List, Ctx)
   rule <tk> #tcMma(M, AD, AV, BV, ID, DA, Meta, Rest, C) => .K ... </tk>
        <smem> SM </smem>
@@ -383,4 +391,89 @@ module PTX-EXEC-TC
   syntax List ::= tcRowWords(Map, Int, Int, Int, List) [function, total]
   rule tcRowWords(TM, Ln, Cl, W, Acc) => tcRowWords(TM, Ln, Cl, W +Int 1, Acc ListItem(tcWord(TM, tcKey(Ln, Cl +Int W)))) requires W <Int 8
   rule tcRowWords(_, _, _, _, Acc) => Acc [owise]
+
+  // ---------------------------------------------------------------- block-scaled MMA  (.kind::mxf8f6f4, .kind::mxf4, .kind::mxf4nvf4)
+  //   D = sum over K-blocks of scaleA[m][blk] * scaleB[blk][n] * (A row block . B column block) + D
+  // Assumed scale placement (the ISA gives it as figures): scale A for row r is byte (SFA_ID + blk) of the tensor-memory word at lane r,
+  // column [scale-A-tmem]; scale B for column n is byte (SFB_ID + blk) of the word at lane n mod 32, column [scale-B-tmem] + n div 32.
+  // Scale types: UE8M0 (2^(x-127)), UE4M3, UE5M3; elements of .kind::mxf4/.mxf4nvf4 are 4-bit values packed two per byte.
+  syntax Int ::= tcBlk(Set, Int, Int) [function, total]                      // block size from the qualifiers
+  rule tcBlk(M, ID, K) => K requires "kind::mxf8f6f4" in M
+  rule tcBlk(M, ID, K) => 16 requires notBool "kind::mxf8f6f4" in M andBool "block16" in M
+  rule tcBlk(M, ID, K) => K /Int 4 requires notBool "kind::mxf8f6f4" in M andBool notBool "block16" in M andBool "scale_vec::4X" in M
+  rule tcBlk(M, ID, K) => K /Int 2 requires notBool "kind::mxf8f6f4" in M andBool notBool "block16" in M andBool notBool "scale_vec::4X" in M andBool "scale_vec::2X" in M
+  rule tcBlk(M, ID, K) => 32 requires notBool "kind::mxf8f6f4" in M andBool notBool "block16" in M andBool notBool "scale_vec::4X" in M andBool notBool "scale_vec::2X" in M
+  syntax Float ::= tcScaleF(Int, Int) [function, total]                       // scale type code, byte
+  rule tcScaleF(1, X) => scaleP2(Int2Float(1, 64, WEXP), X -Int 127)
+  rule tcScaleF(0, X) => tcUE(X, 3, 7)
+  rule tcScaleF(2, X) => tcUE(X, 3, 15)
+  rule tcScaleF(_, X) => tcUE(X, 3, 7) [owise]
+  syntax Float ::= tcUE(Int, Int, Int) [function, total]                      // unsigned float with Mn mantissa bits and bias Bi
+  rule tcUE(X, Mn, Bi) =>
+       #if (X >>Int Mn) ==Int 0 #then scaleP2(Int2Float(X &Int mask(Mn), 64, WEXP), 1 -Int Bi -Int Mn)
+       #else scaleP2(Int2Float((X &Int mask(Mn)) +Int (1 <<Int Mn), 64, WEXP), (X >>Int Mn) -Int Bi -Int Mn) #fi
+  syntax Int ::= tcScaleTy(Set, Int) [function, total]
+  rule tcScaleTy(M, ID) => (ID >>Int 23) &Int 3 requires "kind::mxf4nvf4" in M
+  rule tcScaleTy(M, ID) => 1 requires notBool "kind::mxf4nvf4" in M
+  syntax Map ::= tcScalesA(Map, Int, Int, Int, Int, Int, Int, Map) [function, total]           // tmem, column, SFA_ID, rows, blocks, r, blk, acc
+  rule tcScalesA(TM, Cl, Id, M, NB, R, J, Acc) =>
+       tcScalesA(TM, Cl, Id, M, NB, #if J +Int 1 ==Int NB #then R +Int 1 #else R #fi, #if J +Int 1 ==Int NB #then 0 #else J +Int 1 #fi,
+                 Acc[rc(R, J) <- (tcWord(TM, tcKey(R, Cl)) >>Int (8 *Int (Id +Int J))) &Int 255])
+    requires R <Int M
+  rule tcScalesA(_, _, _, _, _, _, _, Acc) => Acc [owise]
+  syntax Map ::= tcScalesB(Map, Int, Int, Int, Int, Int, Int, Map) [function, total]           // tmem, column, SFB_ID, N, blocks, n, blk, acc
+  rule tcScalesB(TM, Cl, Id, N, NB, Nn, J, Acc) =>
+       tcScalesB(TM, Cl, Id, N, NB, #if J +Int 1 ==Int NB #then Nn +Int 1 #else Nn #fi, #if J +Int 1 ==Int NB #then 0 #else J +Int 1 #fi,
+                 Acc[rc(J, Nn) <- (tcWord(TM, tcKey(Nn %Int 32, Cl +Int Nn /Int 32)) >>Int (8 *Int (Id +Int J))) &Int 255])
+    requires Nn <Int N
+  rule tcScalesB(_, _, _, _, _, _, _, Acc) => Acc [owise]
+  syntax Float ::= dotFS(Ty, Ty, Map, Map, Map, Map, Int, Int, Int, Int, Int, Int, Float) [function, total]
+  // atype, btype, A, B, scale A, scale B, scale type, r, c, k, K, block size, acc
+  rule dotFS(AT, BT, A, B, SA, SB, ST, R, Cn, I, K, Bs, Acc) =>
+       dotFS(AT, BT, A, B, SA, SB, ST, R, Cn, I +Int 1, K, Bs,
+             Acc +Float elemF(AT, {A[rc(R, I)] orDefault 0}:>Int) *Float elemF(BT, {B[rc(I, Cn)] orDefault 0}:>Int)
+                 *Float tcScaleF(ST, {SA[rc(R, I /Int Bs)] orDefault 0}:>Int) *Float tcScaleF(ST, {SB[rc(I /Int Bs, Cn)] orDefault 0}:>Int))
+    requires I <Int K
+  rule dotFS(_, _, _, _, _, _, _, _, _, _, _, _, Acc) => Acc [owise]
+  syntax Map ::= bsRows(Ty, Ty, Map, Map, Map, Map, Map, Int, Int, Int, Int, Int, Int, Int, Map) [function, total]
+  // atype, btype, A, B, D in, scale A, scale B, scale type, M, N, K, block size, r, c, acc
+  rule bsRows(AT, BT, A, B, C, SA, SB, ST, M, N, K, Bs, R, Cn, Acc) =>
+       bsRows(AT, BT, A, B, C, SA, SB, ST, M, N, K, Bs, #if Cn +Int 1 ==Int N #then R +Int 1 #else R #fi, #if Cn +Int 1 ==Int N #then 0 #else Cn +Int 1 #fi,
+              Acc[rc(R, Cn) <- fpFin(.Set, fw(ty("f", 32)),
+                                     dotFS(AT, BT, A, B, SA, SB, ST, R, Cn, 0, K, Bs, elemF(ty("f", 32), {C[rc(R, Cn)] orDefault 0}:>Int)), 0)])
+    requires R <Int M
+  rule bsRows(_, _, _, _, _, _, _, _, _, _, _, _, _, _, Acc) => Acc [owise]
+  syntax Map ::= tcMmaBS(Set, Map, Bytes, Bool, Int, Int, Int, Int, Bool, Int, Int, Int) [function, total]
+  // mods, tmem, smem, a-is-desc, a value, b desc, idesc, d-taddr, enable, scale-A column, scale-B column, meta column (-1: dense)
+  rule tcMmaBS(M, TM, SM, AD, AV, BV, ID, DA, En, SAC, SBC, Meta) =>
+       tcPutD(TM,
+              bsRows(tcAT(M, ID), tcBT(M, ID), tcAMat(M, TM, SM, AD, AV, ID, Meta),
+                     tcTileB(BV, SM, tcBT(M, ID), #if ((ID >>Int 14) &Int 1) ==Int 1 #then 0 -Int 1 #else 1 #fi, ((ID >>Int 16) &Int 1) ==Int 0,
+                             ((ID >>Int 17) &Int 63) *Int 8, tcKS(M, ID, Meta), 0, 0, .Map, 0, 0 -Int 1, tcMD(M, ID)),
+                     #if En #then tcTileD(TM, ty("f", 32), tcCol(DA), tcMD(M, ID), ((ID >>Int 17) &Int 63) *Int 8, 0, 0, 0, 0, .Map) #else .Map #fi,
+                     tcScalesA(TM, SAC, (ID >>Int 29) &Int 3, tcMD(M, ID), tcKS(M, ID, Meta) /Int tcBlk(M, ID, tcKS(M, ID, Meta)), 0, 0, .Map),
+                     tcScalesB(TM, SBC, (ID >>Int 4) &Int 3, ((ID >>Int 17) &Int 63) *Int 8, tcKS(M, ID, Meta) /Int tcBlk(M, ID, tcKS(M, ID, Meta)), 0, 0, .Map),
+                     tcScaleTy(M, ID), tcMD(M, ID), ((ID >>Int 17) &Int 63) *Int 8, tcKS(M, ID, Meta), tcBlk(M, ID, tcKS(M, ID, Meta)), 0, 0, .Map),
+              rowKeys(tcMD(M, ID), ((ID >>Int 17) &Int 63) *Int 8, 0, 0, .List), tcCol(DA), 0, 0, 0, 0, 0, ty("f", 32))
+  // tcgen05.mma[.sp].cta_group::1.kind.block_scale{.scale_vectorsize} [d], a-desc | [a], b-desc, {[sp-meta],} idesc, [scale-A], [scale-B], enable
+  rule <tk> exec(opc("tcgen05", M, _), ops([ D ], [ A ], Bd, ID, [ SA ], [ SB ], En, .Operands), C) => .K ... </tk>
+       <smem> SM </smem>
+       <tmem> TM => tcMmaBS(M, TM, SM, false, tcAddr(A, C), rd(Bd, ty("b", 64), C), rd(ID, ty("b", 32), C), tcAddr(D, C),
+                            rd(En, ty("u", 32), C) =/=Int 0, tcCol(tcAddr(SA, C)), tcCol(tcAddr(SB, C)), 0 -Int 1) </tmem>
+    requires "mma" in M andBool "block_scale" in M andBool notBool "sp" in M
+  rule <tk> exec(opc("tcgen05", M, _), ops([ D ], Ad, Bd, ID, [ SA ], [ SB ], En, .Operands), C) => .K ... </tk>
+       <smem> SM </smem>
+       <tmem> TM => tcMmaBS(M, TM, SM, true, rd(Ad, ty("b", 64), C), rd(Bd, ty("b", 64), C), rd(ID, ty("b", 32), C), tcAddr(D, C),
+                            rd(En, ty("u", 32), C) =/=Int 0, tcCol(tcAddr(SA, C)), tcCol(tcAddr(SB, C)), 0 -Int 1) </tmem>
+    requires "mma" in M andBool "block_scale" in M andBool notBool "sp" in M [priority(60)]
+  rule <tk> exec(opc("tcgen05", M, _), ops([ D ], [ A ], Bd, [ MT ], ID, [ SA ], [ SB ], En, .Operands), C) => .K ... </tk>
+       <smem> SM </smem>
+       <tmem> TM => tcMmaBS(M, TM, SM, false, tcAddr(A, C), rd(Bd, ty("b", 64), C), rd(ID, ty("b", 32), C), tcAddr(D, C),
+                            rd(En, ty("u", 32), C) =/=Int 0, tcCol(tcAddr(SA, C)), tcCol(tcAddr(SB, C)), tcCol(tcAddr(MT, C))) </tmem>
+    requires "mma" in M andBool "block_scale" in M andBool "sp" in M
+  rule <tk> exec(opc("tcgen05", M, _), ops([ D ], Ad, Bd, [ MT ], ID, [ SA ], [ SB ], En, .Operands), C) => .K ... </tk>
+       <smem> SM </smem>
+       <tmem> TM => tcMmaBS(M, TM, SM, true, rd(Ad, ty("b", 64), C), rd(Bd, ty("b", 64), C), rd(ID, ty("b", 32), C), tcAddr(D, C),
+                            rd(En, ty("u", 32), C) =/=Int 0, tcCol(tcAddr(SA, C)), tcCol(tcAddr(SB, C)), tcCol(tcAddr(MT, C))) </tmem>
+    requires "mma" in M andBool "block_scale" in M andBool "sp" in M [priority(60)]
 endmodule
