@@ -38,7 +38,7 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 
 ## 5. Matrix (after 3, 12)
 - [x] 18 wmma
-- [ ] 19 mma.sync with specified fragment layouts
+- [x] 19 mma.sync with specified fragment layouts
 - [x] 20 ldmatrix / stmatrix / movmatrix (after 19)
 - [x] 21 mma.sp (after 19)
 - [x] 22 wgmma, sm_90a (after 19, 27)
