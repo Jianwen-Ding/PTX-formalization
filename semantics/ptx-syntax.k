@@ -160,6 +160,7 @@ module PTX-SYNTAX
                       | ".print" Name Type Int ";"
                       | ".expect" Name Type "=" "{" InitVals "}" ";"
                       | ".expect" Name Type "@" Int "=" "{" InitVals "}" ";"     // from element offset
+                      | ".patch" Name Type "@" Int "=" "{" InitVals "}" ";"      // write values at an element offset
                       | ".append" Name Type "=" "{" InitVals "}" ";"            // extend the most recent buffer (keeps text small)
 
   // ---------------------------------------------------------------- modules

@@ -27,6 +27,9 @@ module PTX-EXEC-WG
   rule <tk> exec(opc("wgmma", M, _), ops(_), _) => .K ... </tk> requires "fence" in M orBool "commit_group" in M
   rule <tk> exec(opc("wgmma", M, _), ops(_, .Operands), _) => .K ... </tk> requires "wait_group" in M
 
+  syntax String ::= wgShape(Set) [function, total]
+  rule wgShape(M) => pick(M, ListItem("m64n8k8") ListItem("m64n16k8") ListItem("m64n24k8") ListItem("m64n32k8") ListItem("m64n40k8") ListItem("m64n48k8") ListItem("m64n56k8") ListItem("m64n64k8") ListItem("m64n72k8") ListItem("m64n80k8") ListItem("m64n88k8") ListItem("m64n96k8") ListItem("m64n104k8") ListItem("m64n112k8") ListItem("m64n120k8") ListItem("m64n128k8") ListItem("m64n136k8") ListItem("m64n144k8") ListItem("m64n152k8") ListItem("m64n160k8") ListItem("m64n168k8") ListItem("m64n176k8") ListItem("m64n184k8") ListItem("m64n192k8") ListItem("m64n200k8") ListItem("m64n208k8") ListItem("m64n216k8") ListItem("m64n224k8") ListItem("m64n232k8") ListItem("m64n240k8") ListItem("m64n248k8") ListItem("m64n256k8") ListItem("m64n8k16") ListItem("m64n16k16") ListItem("m64n24k16") ListItem("m64n32k16") ListItem("m64n40k16") ListItem("m64n48k16") ListItem("m64n56k16") ListItem("m64n64k16") ListItem("m64n72k16") ListItem("m64n80k16") ListItem("m64n88k16") ListItem("m64n96k16") ListItem("m64n104k16") ListItem("m64n112k16") ListItem("m64n120k16") ListItem("m64n128k16") ListItem("m64n136k16") ListItem("m64n144k16") ListItem("m64n152k16") ListItem("m64n160k16") ListItem("m64n168k16") ListItem("m64n176k16") ListItem("m64n184k16") ListItem("m64n192k16") ListItem("m64n200k16") ListItem("m64n208k16") ListItem("m64n216k16") ListItem("m64n224k16") ListItem("m64n232k16") ListItem("m64n240k16") ListItem("m64n248k16") ListItem("m64n256k16") ListItem("m64n8k32") ListItem("m64n16k32") ListItem("m64n24k32") ListItem("m64n32k32") ListItem("m64n40k32") ListItem("m64n48k32") ListItem("m64n56k32") ListItem("m64n64k32") ListItem("m64n72k32") ListItem("m64n80k32") ListItem("m64n88k32") ListItem("m64n96k32") ListItem("m64n104k32") ListItem("m64n112k32") ListItem("m64n120k32") ListItem("m64n128k32") ListItem("m64n136k32") ListItem("m64n144k32") ListItem("m64n152k32") ListItem("m64n160k32") ListItem("m64n168k32") ListItem("m64n176k32") ListItem("m64n184k32") ListItem("m64n192k32") ListItem("m64n200k32") ListItem("m64n208k32") ListItem("m64n216k32") ListItem("m64n224k32") ListItem("m64n232k32") ListItem("m64n240k32") ListItem("m64n248k32") ListItem("m64n256k32") ListItem("m64n8k256") ListItem("m64n16k256") ListItem("m64n24k256") ListItem("m64n32k256") ListItem("m64n40k256") ListItem("m64n48k256") ListItem("m64n56k256") ListItem("m64n64k256") ListItem("m64n72k256") ListItem("m64n80k256") ListItem("m64n88k256") ListItem("m64n96k256") ListItem("m64n104k256") ListItem("m64n112k256") ListItem("m64n120k256") ListItem("m64n128k256") ListItem("m64n136k256") ListItem("m64n144k256") ListItem("m64n152k256") ListItem("m64n160k256") ListItem("m64n168k256") ListItem("m64n176k256") ListItem("m64n184k256") ListItem("m64n192k256") ListItem("m64n200k256") ListItem("m64n208k256") ListItem("m64n216k256") ListItem("m64n224k256") ListItem("m64n232k256") ListItem("m64n240k256") ListItem("m64n248k256") ListItem("m64n256k256"), "")
+
   // ---------------------------------------------------------------- shared-memory tiles
   // field extraction of the matrix descriptor
   syntax Int ::= dStart(Int) [function, total] | dLbo(Int) [function, total] | dSbo(Int) [function, total] | dSwz(Int) [function, total]
@@ -137,16 +140,16 @@ module PTX-EXEC-WG
                          #if wgI(Data, 12) ==Int 1 #then wgFillA(Data, Arr, keys_list(Arr), .Map) #else wgAd(Data, 0, 0, .Map) #fi,
                          wgB(Data, 0, 0, .Map),
                          #if wgI(Data, 11) =/=Int 0 #then wgFillD(shapeD(Data), dTy(Data), Arr, keys_list(Arr), .Map) #else .Map #fi,
-                         0, 0, modsD(Data), .Map),
+                         0, 0, {Data[4]}:>Set, .Map),
                  keys_list(Arr))
 
   // wgmma.mma_async.sync.aligned.shape.dtype.atype.btype d, a|a-desc, b-desc, scale-d, imm...
   rule <tk> exec(opc("wgmma", M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(Dv, Av, Bv, Rest:Operands), C) =>
             #coll("wgmma", 340282366920938463463374607431768211455,
-                  ListItem(shapeOf(M)) ListItem(DT) ListItem(AT) ListItem(BT) ListItem(M)
+                  ListItem(wgShape(M)) ListItem(DT) ListItem(AT) ListItem(BT) ListItem(M)
                   ListItem(#if isVec(Av) #then 0 #else rd(Av, ty("b", 64), C) #fi) ListItem(rd(Bv, ty("b", 64), C))
                   ListItem(wgArg(opsList(Rest), 1, 1, C)) ListItem(wgArg(opsList(Rest), 2, 1, C))
-                  ListItem(wgArg(opsList(Rest), 3, 0, C)) ListItem(wgArg(opsList(Rest), size(opsList(Rest)) -Int 1, 0, C))
+                  ListItem(wgArg(opsList(Rest), 3, 0, C)) ListItem(wgArg(opsList(Rest), #if size(opsList(Rest)) >=Int 4 #then size(opsList(Rest)) -Int 1 #else 0 -Int 1 #fi, 0, C))
                   ListItem(wgArg(opsList(Rest), 0, 1, C)) ListItem(#if isVec(Av) #then 1 #else 0 #fi) ListItem(SM),
                   vecRegs(Dv, DT, C) vecRegs(Av, AT, C), vecOps(Dv)) ... </tk>
        <smem> SM </smem>

@@ -4,6 +4,7 @@
 # exits with 0 (all `.expect` checks held).
 #   scripts/run-tests.sh [--update] [test.ptx ...]
 set -u
+export K_OPTS="${K_OPTS:--Xss512m}"
 cd "$(dirname "$0")/.."
 DEF=${PTX_DEF:-build/ptx-kompiled}
 update=0

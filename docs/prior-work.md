@@ -82,3 +82,14 @@ text.  `semantics/ptx-exec-sp.k` therefore uses the assignment implied by the fo
 stored little-endian in chunk order.  Tests `tests/sp-*.ptx` are generated with the same
 assumption, so they check the arithmetic and the A/B/C fragment formulas, not this layout; it
 should be validated against hardware (e.g. CUTLASS' sparse metadata reorder tables).
+
+## wgmma (sm_90a) modelling choices
+
+`wgmma.mma_async` is executed as a 128-thread rendezvous; the last arriver snapshots shared
+memory and the whole product is computed at that point (one legal schedule of the asynchronous
+operation), so `wgmma.fence/commit_group/wait_group` are no-ops.  The swizzled shared-memory
+layouts are transcribed from the CuTe canonical-layout table of the ISA (swizzle functors are
+applied to byte addresses); the D fragment is the m16n8 accumulator layout repeated every 8
+columns per warp (the ISA gives it only as a figure).  The tests build shared memory from
+swizzle atoms (independently of the address formula) but share the D/A fragment assumption.
+`wgmma.mma_async.sp` is not modelled.

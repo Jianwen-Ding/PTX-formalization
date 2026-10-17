@@ -65,12 +65,18 @@ module PTX-HARNESS
        <bufs> B => B[N <- buf(alignUp(G, 256), T, C)] </bufs>
        <gmem> M => initMem(M, alignUp(G, 256), T, Vs) </gmem>
 
-  rule <k> .append N T = { Vs } ; => .K ... </k>
+  syntax KItem ::= #patch(String, Ty, Int, List) | #appendTo(String, Ty, List)
+  rule <k> .patch N T @ O = { Vs } ; => #patch(Name2String(N), typeOf(T), O, ivList(Vs)) ... </k>
+  rule <k> #patch(N, T, O, Vs) => .K ... </k>
        <syms> ... N |-> sym(_, A) ... </syms>
-       <bufs> ... N |-> buf(A, T0, C => C +Int size(ivList(Vs))) ... </bufs>
-       <gtop> G => maxInt(G, A +Int (C +Int size(ivList(Vs))) *Int bytes(T0)) </gtop>
-       <gmem> M => initMem(M, A +Int C *Int bytes(T0), T0, ivList(Vs)) </gmem>
-    requires typeOf(T) ==K T0
+       <gmem> M => initMem(M, A +Int O *Int bytes(T), T, Vs) </gmem>
+  rule <k> .append N T = { Vs } ; => #appendTo(Name2String(N), typeOf(T), ivList(Vs)) ... </k>
+  rule <k> #appendTo(N, T, Vs) => .K ... </k>
+       <syms> ... N |-> sym(_, A) ... </syms>
+       <bufs> ... N |-> buf(A, T0, C => C +Int size(Vs)) ... </bufs>
+       <gtop> G => maxInt(G, A +Int (C +Int size(Vs)) *Int bytes(T0)) </gtop>
+       <gmem> M => initMem(M, A +Int C *Int bytes(T0), T0, Vs) </gmem>
+    requires T ==K T0
 
   // ------------------------------------------------------------ launch
   syntax Dim3 ::= dimOf(Dim) [function, total]

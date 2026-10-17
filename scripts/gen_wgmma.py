@@ -66,7 +66,7 @@ CFG = [
  (16, 32, 's32', 's8', 'u8', '.satfinite', 'desc', True, 1, True, 1, 1, 1, 1, False),
  (8, 32, 's32', 'u8', 's8', '', 'reg', True, 0, True, 3, 0, 1, 1, False),
  (8, 256, 's32', 'b1', 'b1', '.and.popc', 'desc', True, 1, True, 1, 1, 1, 1, False),
- (40, 16, 'f32', 'f16', 'f16', '', 'desc', True, 3, False, 1, 1, 1, 1, False),
+ (24, 16, 'f32', 'f16', 'f16', '', 'desc', True, 3, False, 1, 1, 1, 1, False),
 ]
 h = lambda xs: ", ".join(str(x) for x in xs)
 for kk, (N, K, dt, at, bt, extra, aform, akm, az, bkm, bz, sd, sa, sb, small) in enumerate(CFG):
@@ -191,7 +191,15 @@ for kk, (N, K, dt, at, bt, extra, aform, akm, az, bkm, bz, sd, sa, sb, small) in
         return "\n".join(out)
     def expect(name, ty, vals):
         return "\n".join(f".expect {name} .{ty} @ {i} = {{ {h(vals[i:i + CH])} }};" for i in range(0, len(vals), CH))
-    L.append(buf('IMG', 'u8', list(data)))
+    # IMG is mostly swizzle padding (zeros): allocate it zeroed and patch only the non-zero runs
+    L.append(f".buffer IMG .u8 [{len(data)}];")
+    i = 0
+    while i < len(data):
+        if data[i] == 0: i += 1; continue
+        j = i
+        while j < len(data) and (j - i < 400) and not (data[j] == 0 and all(x == 0 for x in data[j:j + 16])): j += 1
+        L.append(f".patch IMG .u8 @ {i} = {{ {h(data[i:j])} }};")
+        i = j
     L.append(buf('DIN', 'u32', flat(fd_in)))
     L.append(buf('AIN', 'u32', flat(fa) if fa else [0]))
     L.append(f".buffer O .u32 [{128 * nd}];\n.launch k{kk} <<< 1, 128 >>> (IMG, DIN, AIN, O);")
