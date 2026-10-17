@@ -93,4 +93,24 @@ module PTX-EXEC-SP
             #coll("mma.sp", 4294967295, ListItem(shapeOf(M)) ListItem(DT) ListItem(AT) ListItem(BT) ListItem(CT) ListItem(M) ListItem(rd(F, ty("u", 32), C)),
                   vecRegs(Av, AT, C) vecRegs(Bv, BT, C) vecRegs(Cv, CT, C) ListItem(rd(E, ty("b", 32), C)), vecOps(Dv)) ... </tk>
     requires "sync" in M andBool "sp" in M
+
+  // sparse block-scaled forms: mma.sp::ordered_metadata.sync.aligned.m16n8k{64,128}.row.col.kind::mx*.block_scale... d, a, b, c, e, f, scale-a, {..}, scale-b, {..}
+  // (arrivals: A, B, C, the six scale operands, then the metadata e last)
+  rule collCompute("mmabs.sp", Data, Arr) =>
+       scatterAll(shapeD(Data), dTy(Data),
+                  resRowsBS(shapeD(Data), aTy(Data), bTy(Data), cTy(Data),
+                            spFillAll(shapeD(Data), aTy(Data), Arr, keys_list(Arr), {Data[7]}:>Int, .Map),
+                            fillAll(1, shapeD(Data), bTy(Data), Arr, keys_list(Arr), nElB(shapeD(Data)), regsOf(spNel(shapeD(Data)), aTy(Data)), .Map),
+                            fillC(shapeD(Data), cTy(Data), Arr, keys_list(Arr), regsOf(spNel(shapeD(Data)), aTy(Data)) +Int regsOf(nElB(shapeD(Data)), bTy(Data)), .Map),
+                            bsScA(Arr, regsOf(spNel(shapeD(Data)), aTy(Data)) +Int regsOf(nElB(shapeD(Data)), bTy(Data)) +Int regsOf(nElC(shapeD(Data)), cTy(Data)),
+                                  bsNB(modsD(Data)), 0, 0, .Map),
+                            bsScB(Arr, regsOf(spNel(shapeD(Data)), aTy(Data)) +Int regsOf(nElB(shapeD(Data)), bTy(Data)) +Int regsOf(nElC(shapeD(Data)), cTy(Data)),
+                                  bsNB(modsD(Data)), 0, 0, .Map),
+                            stTy(Data) ==K ty("ue4m3", 8), shK(shapeD(Data)) /Int bsNB(modsD(Data)), 0, 0, .Map),
+                  keys_list(Arr))
+  rule <tk> exec(opc("mma", M, ListItem(DT) ListItem(AT) ListItem(BT) ListItem(CT) ListItem(ST)), ops(Dv, Av, Bv, Cv, E, F, SA, SelA, SB, SelB, .Operands), C) =>
+            #coll("mmabs.sp", 4294967295, ListItem(shapeOf(M)) ListItem(DT) ListItem(mxTy(M, AT)) ListItem(mxTy(M, BT)) ListItem(CT) ListItem(M) ListItem(ST) ListItem(rd(F, ty("u", 32), C)),
+                  vecRegs(Av, mxTy(M, AT), C) vecRegs(Bv, mxTy(M, BT), C) vecRegs(Cv, CT, C)
+                  ListItem(rd(SA, ty("b", 32), C)) vecRegs(SelA, ty("b", 32), C) ListItem(rd(SB, ty("b", 32), C)) vecRegs(SelB, ty("b", 32), C) ListItem(rd(E, ty("b", 32), C)), vecOps(Dv)) ... </tk>
+    requires "sync" in M andBool "sp" in M andBool "block_scale" in M
 endmodule

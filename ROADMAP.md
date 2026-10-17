@@ -87,7 +87,7 @@ Items are numbered in task order (44 onward).  Sources: `docs/coverage.md`, `doc
 - [x] 51 tcgen05.mma .cta_group::2 (CTA pairs, peer TMEM, operand sharing)
 - [x] 52 tcgen05.mma .ws, collector::a modes, ashift; kind::i8/f8f6f4/tf32 audit
 - [x] 53 tcgen05.cp (all shapes, decompression), shift, ld/st 16x32bx2 and .red, commit multicast
-- [ ] 54 mma.sync kind::f8f6f4 / block-scaled mx forms, sm_100 shapes
+- [x] 54 mma.sync kind::f8f6f4 / block-scaled mx forms, sm_100 shapes
 - [ ] 55 ldmatrix/stmatrix sm_100 m16n8 b8/b6/b4 forms
 - [ ] 56 TMA im2col, im2col::w, w::128 modes
 - [ ] 57 TMA interleave layouts, OOB fill, L2 promotion, all swizzles audit

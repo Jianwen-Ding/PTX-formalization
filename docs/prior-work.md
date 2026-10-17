@@ -158,3 +158,17 @@ high-priority catch-alls on `exec(...)` made kompile run out of memory, hence th
 instruction the minimum PTX version, minimum sm and whether an arch-specific (`a`/`f`) target is required.  With
 `.isacheck ;` the launch faults if any instruction of the module exceeds the declared `.version`/`.target`.
 Qualifier-level requirements are not checked.  `make negative` runs `tests/neg/`.
+
+## mma.sync with fp6 / fp4 and block scaling (sm_120a, PTX ISA 8.7)
+
+`kind::f8f6f4` takes fp6 / fp4 elements in 8-bit containers (ISA text: `e2m1` in the central 4 bits, `e3m2` / `e2m3` in the low 6 bits;
+the other container bits are ignored).  `kind::mxf4` / `mxf4nvf4` use two packed 4-bit elements per byte, with the `m16n8k64` 4-bit
+fragment layouts.  For `.block_scale` the ISA gives the placement of the scale factors only as figures; the model assumes: the
+factors of row r of scale_A come from the thread of quad (r mod 8) whose lane % 4 is `2 * thread-id-a + r div 8`, the factors of column
+n of scale_B from the thread of quad n whose lane % 4 is `thread-id-b`; chunk j (`scale_vec::NX` has N chunks per row / column)
+is byte `byte-id + j` of the 32-bit scale register; selectors are read from lane 0.  The sparse forms (`mma.sp::ordered_metadata`
+with `kind::f8f6f4` or block scaling, `m16n8k64` / `m16n8k128`) reuse the sparse A fragment and metadata model.
+Test generators: `scripts/gen_mma_bs.py`, `scripts/gen_mmasp_bs.py`.
+
+tcgen05 kinds `f8f6f4` / `mxf8f6f4`: fp6 / fp4 elements are bit-packed in shared memory (ISA 9.7.18.10.4.4): with Dense-K 32 every 16
+elements occupy a 16-byte chunk (padding after the 12 / 8 data bytes), with Dense-K 64 rows are contiguous.  K-major tiles only.
