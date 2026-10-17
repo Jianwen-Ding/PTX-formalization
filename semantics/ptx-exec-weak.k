@@ -75,6 +75,8 @@ module PTX-EXEC-WEAK
   // A thread whose computation is idle while the turn is free may retire a buffered store: the oldest one, or a
   // younger one that is allowed to overtake all older ones (different locations, no release entries involved).
   // The reorder window is three entries.  A thread draining before a fence/atomic/exit retires oldest-first.
+  // a thread retires only once its buffer is empty
+  rule <tk> #exit => #sbWait ~> #exit ... </tk> <sb> ListItem(_) _ </sb>
   syntax KItem ::= #flushE(SbE)
   rule <tk> #flushE(sbe(S, A, N, V, _)) => #mem1(loc(S, A), wrOp(N, V)) ~> #drop ... </tk>
   rule <tk> #sbWait => #flushE(E) ~> #sbWait ... </tk> <sb> ListItem(E) Post => Post </sb>

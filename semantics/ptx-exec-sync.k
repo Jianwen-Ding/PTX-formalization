@@ -82,7 +82,7 @@ module PTX-EXEC-SYNC
        <tid> T </tid>
        <wlive> WL => WL[T /Int 32 <- clearBit({WL[T /Int 32] orDefault 0}:>Int, T %Int 32)] </wlive>
        <live> L => L -Int 1 </live>
-       <barCnt> BC </barCnt>
+       <barCnt> BC </barCnt> <sb> .List </sb>
   rule <tk> #barCheckAll(ListItem(B:Int) Bs) => #barCheck(B) ~> #barCheckAll(Bs) ... </tk>
   rule <tk> #barCheckAll(.List) => .K ... </tk>
   rule <threads> ... (<thread> <tid> _ </tid> <tk> #die ... </tk> ... </thread> => .Bag) ... </threads>
