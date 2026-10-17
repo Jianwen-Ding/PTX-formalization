@@ -28,7 +28,7 @@ module PTX-SYNTAX
   // opcodes with `::` qualifiers (ld.shared::cta.u32, mbarrier.arrive.expect_tx.shared::cta.b64): a
   // separate token that needs a lower-case start and at least one `::`, so that K's own `X::Sort`
   // variable syntax in the builtin modules is not affected
-  syntax QName  ::= r"[a-z][a-zA-Z0-9_]*(\\.[a-zA-Z0-9_]+)*::[a-zA-Z0-9_]+((\\.|::)[a-zA-Z0-9_]+)*" [token]
+  syntax QName  ::= r"[a-z][a-zA-Z0-9_]*(\\.[a-zA-Z0-9_]+)*::[a-zA-Z0-9_]+(:[0-9]+)*((\\.|::)[a-zA-Z0-9_]+(:[0-9]+)*)*" [token]
   // Registers, including special registers such as %tid.x or %ctaid.y
   syntax Reg    ::= r"%[a-zA-Z_$][a-zA-Z0-9_$]*(\\.[a-zA-Z][a-zA-Z0-9]*)?" [token]
   // 0x1F (hex integer), 0b101 (binary), 0f3F800000 (f32 bit pattern),

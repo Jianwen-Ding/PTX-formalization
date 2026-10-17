@@ -22,11 +22,13 @@
 requires "ptx-exec-wg.k"
 requires "ptx-exec-ldm.k"
 requires "ptx-exec-mbar.k"
+requires "ptx-exec-spc.k"
 
 module PTX-EXEC-TC
   imports PTX-EXEC-WG
   imports PTX-EXEC-LDM
   imports PTX-EXEC-MBAR
+  imports PTX-EXEC-SPC
 
   rule isCollective("tcgen05") => true      // makes the instructions visible steps (they touch shared state)
 
@@ -134,6 +136,50 @@ module PTX-EXEC-TC
             #wmWr(vecOps(Dv), tcLoad(TM, M, tcAddr(A, C), TID %Int 32, rd(Off, ty("u", 32), C), 0, size(vecOps(Dv)), "pack::16b" in M)) ... </tk>
        <tid> TID </tid> <tmem> TM </tmem>
     requires "ld" in M
+  // tcgen05.ld.red: the loaded values of every lane are also reduced (min/max; f32 with .abs/.NaN, or u32/s32) into `redval`
+  syntax List ::= tcLd(Map, Set, Int, Int, Int) [function, total]            // tmem, mods, taddr, thread, half-split offset: all registers of the load
+  rule tcLd(TM, M, A, T, H) => tcLoad(TM, M, A, T, H, 0, tcNum(M) *Int tcPer(M), "pack::16b" in M)
+  syntax Set ::= tcRedM(Set) [function, total]
+  rule tcRedM(M) => SetItem("NaN") requires "NaN" in M
+  rule tcRedM(_) => .Set [owise]
+  syntax Int ::= tcAbsIf(Set, Int) [function, total]
+  rule tcAbsIf(M, A) => A &Int 2147483647 requires "abs" in M
+  rule tcAbsIf(_, A) => A [owise]
+  syntax Int ::= tcSg(Int) [function, total]
+  rule tcSg(A) => #if A >=Int 2147483648 #then A -Int 4294967296 #else A #fi
+  syntax Int ::= tcRed(Set, List, List) [function, total]
+  rule tcRed(M, Ts, ListItem(A:Int) Rest) => tcRedF(M, Ts, "min" in M, Rest, tcAbsIf(M, A))
+  rule tcRed(_, _, _) => 0 [owise]
+  syntax Int ::= tcRedF(Set, List, Bool, List, Int) [function, total]
+  rule tcRedF(M, Ts, IsMin, ListItem(A:Int) Rest, Acc) => tcRedF(M, Ts, IsMin, Rest, fpMinMax(tcRedM(M), 32, Acc, tcAbsIf(M, A), IsMin)) requires ty("f", 32) in Ts
+  rule tcRedF(M, Ts, IsMin, ListItem(A:Int) Rest, Acc) =>
+       tcRedF(M, Ts, IsMin, Rest, #if IsMin #then #if A <Int Acc #then A #else Acc #fi #else #if A >Int Acc #then A #else Acc #fi #fi) requires ty("u", 32) in Ts
+  rule tcRedF(M, Ts, IsMin, ListItem(A:Int) Rest, Acc) =>
+       tcRedF(M, Ts, IsMin, Rest, #if IsMin #then #if tcSg(A) <Int tcSg(Acc) #then A #else Acc #fi #else #if tcSg(A) >Int tcSg(Acc) #then A #else Acc #fi #fi) requires ty("s", 32) in Ts
+  rule tcRedF(_, _, _, _, Acc) => Acc [owise]
+  rule <tk> exec(opc("tcgen05", M, Ts), ops(Dv, RV, [ A ], .Operands), C) =>
+            #wmWr(vecOps(Dv), tcLd(TM, M, tcAddr(A, C), TID %Int 32, 0)) ~> #wmWr(ListItem(RV), ListItem(tcRed(M, Ts, tcLd(TM, M, tcAddr(A, C), TID %Int 32, 0)))) ... </tk>
+       <tid> TID </tid> <tmem> TM </tmem>
+    requires "ld" in M andBool "red" in M andBool notBool "spcompress" in M
+  rule <tk> exec(opc("tcgen05", M, Ts), ops(Dv, RV, [ A ], Off, .Operands), C) =>
+            #wmWr(vecOps(Dv), tcLd(TM, M, tcAddr(A, C), TID %Int 32, rd(Off, ty("u", 32), C))) ~> #wmWr(ListItem(RV), ListItem(tcRed(M, Ts, tcLd(TM, M, tcAddr(A, C), TID %Int 32, rd(Off, ty("u", 32), C))))) ... </tk>
+       <tid> TID </tid> <tmem> TM </tmem>
+    requires "ld" in M andBool "red" in M andBool notBool "spcompress" in M
+  // tcgen05.ld.spcompress: 2:4 compression (f32, 2-bit indices) of the loaded values; with .red also the reduction over all loaded values
+  syntax Int ::= tcSpOp(Set) [function, total]
+  rule tcSpOp(M) => (#if "min" in M #then 2 #else 0 #fi) +Int (#if "abs" in M #then 1 #else 0 #fi)
+  rule <tk> exec(opc("tcgen05", M, _), ops(MD, CD, [ A ], .Operands), C) =>
+            #wmWr(vecOps(MD), {spcFin(spcKeep(tcSpOp(M), 6, 32, tcLd(TM, M, tcAddr(A, C), TID %Int 32, 0), .List, .List), 32, 2, size(vecOps(MD)), size(vecOps(CD)))[0]}:>List)
+            ~> #wmWr(vecOps(CD), {spcFin(spcKeep(tcSpOp(M), 6, 32, tcLd(TM, M, tcAddr(A, C), TID %Int 32, 0), .List, .List), 32, 2, size(vecOps(MD)), size(vecOps(CD)))[1]}:>List) ... </tk>
+       <tid> TID </tid> <tmem> TM </tmem>
+    requires "ld" in M andBool "spcompress" in M andBool notBool "red" in M
+  rule <tk> exec(opc("tcgen05", M, Ts), ops(MD, CD, RV, [ A ], .Operands), C) =>
+            #wmWr(vecOps(MD), {spcFin(spcKeep(tcSpOp(M), 6, 32, tcLd(TM, M, tcAddr(A, C), TID %Int 32, 0), .List, .List), 32, 2, size(vecOps(MD)), size(vecOps(CD)))[0]}:>List)
+            ~> #wmWr(vecOps(CD), {spcFin(spcKeep(tcSpOp(M), 6, 32, tcLd(TM, M, tcAddr(A, C), TID %Int 32, 0), .List, .List), 32, 2, size(vecOps(MD)), size(vecOps(CD)))[1]}:>List)
+            ~> #wmWr(ListItem(RV), ListItem(tcRed(M, Ts, tcLd(TM, M, tcAddr(A, C), TID %Int 32, 0)))) ... </tk>
+       <tid> TID </tid> <tmem> TM </tmem>
+    requires "ld" in M andBool "spcompress" in M andBool "red" in M
+
   rule <tk> exec(opc("tcgen05", M, _), ops([ A ], Vs, .Operands), C) => .K ... </tk>
        <tid> TID </tid>
        <tmem> TM => tcStore(TM, M, tcAddr(A, C), TID %Int 32, 0, 0, vecRegs(Vs, ty("b", 32), C), "unpack::16b" in M) </tmem>
@@ -401,14 +447,30 @@ module PTX-EXEC-TC
     requires "warpx2::01_23" in M
   rule <tk> exec(opc("tcgen05", M, _), ops([ T ], Dd, .Operands), C) => .K ... </tk>
        <smem> SM </smem> <tmem> TM => tcCp(TM, SM, M, tcLane(tcAddr(T, C)), tcCol(tcAddr(T, C)), tcDesc(rd(Dd, ty("b", 64), C)), 0) </tmem>
-    requires "cp" in M
+    requires "cp" in M andBool notBool "cta_group::2" in M
+  // .cta_group::2: the current and the peer CTA both copy from their own shared memory (same descriptor and taddr)
+  rule <cta> <ctaid> CT </ctaid> <smem> SM1 </smem> <tmem> TM1 => tcCp(TM1, SM1, M, tcLane(tcAddr(T, C)), tcCol(tcAddr(T, C)), tcDesc(rd(Dd, ty("b", 64), C)), 0) </tmem>
+         <threads> ... <thread> <tk> exec(opc("tcgen05", M, _), ops([ T ], Dd, .Operands), C) => .K ... </tk> ... </thread> ... </threads> ... </cta>
+       <cta> <ctaid> PT </ctaid> <smem> SM2 </smem> <tmem> TM2 => tcCp(TM2, SM2, M, tcLane(tcAddr(T, C)), tcCol(tcAddr(T, C)), tcDesc(rd(Dd, ty("b", 64), C)), 0) </tmem> ... </cta>
+       <gridDim> GD </gridDim> <clusterDim> CD </clusterDim>
+    requires "cp" in M andBool "cta_group::2" in M andBool PT ==Int clTarget(CT, rreg("%cluster_ctarank", C) xorInt 1, GD, CD) andBool PT =/=Int CT
   syntax Map ::= tcCp(Map, Bytes, Set, Int, Int, Int, Int) [function, total]            // tmem, smem, mods, lane, column, descriptor, source row
-  rule tcCp(TM, SM, M, L, Cl, D, I) => tcCp(tcCpPut(TM, tcCpDst(M, I), L, Cl, tcCpRow(SM, D, I, 0, tcCpWords(M), .List)), SM, M, L, Cl, D, I +Int 1)
+  rule tcCp(TM, SM, M, L, Cl, D, I) => tcCp(tcCpPut(TM, tcCpDst(M, I), L, Cl, tcCpDec(M, tcCpRow(SM, D, I, 0, tcCpWords(M), .List))), SM, M, L, Cl, D, I +Int 1)
     requires I <Int tcCpRows(M)
   rule tcCp(TM, _, _, _, _, _, _) => TM [owise]
   syntax List ::= tcCpRow(Bytes, Int, Int, Int, Int, List) [function, total]
   rule tcCpRow(SM, D, I, W, N, Acc) => tcCpRow(SM, D, I, W +Int 1, N, Acc ListItem(wgElem(SM, D, true, 32, I, W))) requires W <Int N
   rule tcCpRow(_, _, _, _, _, Acc) => Acc [owise]
+  // optional decompression (.b8x16.b6x16_p32 / .b8x16.b4x16_p64): groups of 16 elements of 6 (4) bits, stored in 4 words with 4 (8) bytes of padding,
+  // become 16 elements of 8 bits (4 words); the element value goes to the low bits of its byte (assumption: the ISA gives the bit mapping as figures)
+  syntax List ::= tcDecomp(Int, List) [function, total]
+  rule tcDecomp(NB, ListItem(A:Int) ListItem(B:Int) ListItem(C:Int) ListItem(D:Int) Rs) =>
+       wordsOf(packEl(elemsOf(bitsOf(ListItem(A) ListItem(B) ListItem(C), 0), NB, 0, 16), 8, 0), 4) tcDecomp(NB, Rs)
+  rule tcDecomp(_, _) => .List [owise]
+  syntax List ::= tcCpDec(Set, List) [function, total]
+  rule tcCpDec(M, L) => tcDecomp(6, L) requires "b6x16_p32" in M
+  rule tcCpDec(M, L) => tcDecomp(4, L) requires "b4x16_p64" in M
+  rule tcCpDec(_, L) => L [owise]
   syntax Map ::= tcCpPut(Map, List, Int, Int, List) [function, total]
   rule tcCpPut(TM, ListItem(R:Int) Rs, L, Cl, Ws) => tcCpPut(tcCpWr(TM, L +Int R, Cl, Ws), Rs, L, Cl, Ws)
   rule tcCpPut(TM, _, _, _, _) => TM [owise]
@@ -419,7 +481,12 @@ module PTX-EXEC-TC
   //   tcgen05.shift.cta_group::N.down [taddr]: the 32-byte (8-word) rows of the 32-lane block move down one row; the last row is dropped
   rule <tk> exec(opc("tcgen05", M, _), ops([ T ], .Operands), C) => .K ... </tk>
        <tmem> TM => tcShift(TM, tcLane(tcAddr(T, C)), tcCol(tcAddr(T, C)), 30) </tmem>
-    requires "shift" in M
+    requires "shift" in M andBool notBool "cta_group::2" in M
+  rule <cta> <ctaid> CT </ctaid> <tmem> TM1 => tcShift(TM1, tcLane(tcAddr(T, C)), tcCol(tcAddr(T, C)), 30) </tmem>
+         <threads> ... <thread> <tk> exec(opc("tcgen05", M, _), ops([ T ], .Operands), C) => .K ... </tk> ... </thread> ... </threads> ... </cta>
+       <cta> <ctaid> PT </ctaid> <tmem> TM2 => tcShift(TM2, tcLane(tcAddr(T, C)), tcCol(tcAddr(T, C)), 30) </tmem> ... </cta>
+       <gridDim> GD </gridDim> <clusterDim> CD </clusterDim>
+    requires "shift" in M andBool "cta_group::2" in M andBool PT ==Int clTarget(CT, rreg("%cluster_ctarank", C) xorInt 1, GD, CD) andBool PT =/=Int CT
   syntax Map ::= tcShift(Map, Int, Int, Int) [function, total]                           // tmem, base lane, column, row (descending)
   rule tcShift(TM, L, Cl, R) => tcShift(tcCpWr(TM, L +Int R +Int 1, Cl, tcRowWords(TM, L +Int R, Cl, 0, .List)), L, Cl, R -Int 1) requires R >=Int 0
   rule tcShift(TM, _, _, _) => TM [owise]
