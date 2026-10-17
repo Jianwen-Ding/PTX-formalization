@@ -307,6 +307,6 @@ module PTX-EXEC-TEX
   rule <tk> exec(opc("istypep", M, _), ops(D, A, .Operands), C) => #mem(loc("global", rd(A, ty("u", 64), C)), rdOp(8)) ~> #istp(D, istpMagic(M)) ... </tk>
        <gtop> G </gtop> requires rd(A, ty("u", 64), C) >=Int 4096 andBool rd(A, ty("u", 64), C) +Int 8 <=Int G
   rule <tk> exec(opc("istypep", _, _), ops(D, A, .Operands), C) => #res(0 -Int 3) ~> #istp(D, 0 -Int 2) ... </tk>
-       <gtop> G </gtop> requires notBool (rd(A, ty("u", 64), C) >=Int 4096 andBool rd(A, ty("u", 64), C) +Int 8 <=Int G) [owise]
+       <gtop> G </gtop> requires notBool (rd(A, ty("u", 64), C) >=Int 4096 andBool rd(A, ty("u", 64), C) +Int 8 <=Int G)
   rule <tk> #res(V) ~> #istp(D, Mg) => .K ... </tk> <regs> R => wr(R, D, b2i(V ==Int Mg)) </regs>
 endmodule
