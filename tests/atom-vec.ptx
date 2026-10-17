@@ -1,0 +1,18 @@
+.version 8.6
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 pa, .param .u64 po)
+{
+    .reg .b64 %a, %o; .reg .b32 %x<4>, %y<4>; .reg .f32 %f<4>, %g<4>;
+    ld.param.u64 %a, [pa]; ld.param.u64 %o, [po];
+    mov.b32 %x0, 0x3f800000; mov.b32 %x1, 0x40000000; // 1.0, 2.0
+    atom.global.add.v2.f32 {%f0, %f1}, [%a], {%x0, %x1};
+    st.global.b32 [%o], %f0; st.global.b32 [%o+4], %f1;
+    red.global.add.v4.f32 [%a+8], {%x0, %x1, %x0, %x1};
+    ret;
+}
+.buffer M .u32 = { 0x40400000, 0x40800000, 0, 0, 0, 0 };
+.buffer O .u32 [4];
+.launch k <<< 1, 1 >>> (M, O);
+.expect O .u32 = { 0x40400000, 0x40800000, 0, 0 };
+.expect M .u32 = { 0x40800000, 0x40c00000, 0x3f800000, 0x40000000, 0x3f800000, 0x40000000 };

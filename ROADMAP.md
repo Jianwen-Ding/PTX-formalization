@@ -46,7 +46,7 @@ Order: 41 → 1 → {2, 3, 4} → feature work. `(after N)` marks other dependen
 
 ## 6. Memory, async and clusters
 - [x] 24 Memory-operation qualifiers, cache controls, createpolicy, isspacep
-- [ ] 25 Extended atomics (f16/bf16/vector/b128, .sem/.scope)
+- [x] 25 Extended atomics (f16/bf16/vector/b128, .sem/.scope)
 - [ ] 26 Thread-block clusters and distributed shared memory
 - [ ] 27 mbarrier
 - [ ] 28 cp.async (after 27)
