@@ -92,7 +92,67 @@ module PTX-LOAD
   rule pdecls(A1:DAttrs T:Type A2:DAttrs I:DItem, Ps:ParamDecls) =>
        ListItem(pdecl(itemName(I), typeOf(T), itemSize(I, typeOf(T)), alignOr(A1, A2, typeOf(T))))
        pdecls(Ps)
-  rule pdecls(.ParamDecls) => .List
+    requires notBool "reg" in (aset(A1) |Set aset(A2))
+  // `.reg` formals are passed by value: alignment -1 (scalar) / -2 (first component of a vector of `size` components,
+  // flattened to name.x, name.y, ...)
+  rule pdecls(A1:DAttrs T:Type A2:DAttrs I:DItem, Ps:ParamDecls) =>
+       regPD(vwidth(aset(A1) |Set aset(A2)), itemName(I), typeOf(T)) pdecls(Ps)
+    requires "reg" in (aset(A1) |Set aset(A2))
+  syntax Int ::= vwidth(Set) [function, total]
+  rule vwidth(S) => 2 requires "v2" in S
+  rule vwidth(S) => 4 requires "v4" in S
+  rule vwidth(S) => 8 requires "v8" in S
+  rule vwidth(S) => 0 requires notBool ("v2" in S orBool "v4" in S orBool "v8" in S)
+  syntax List ::= regPD(Int, String, Ty) [function, total] | regComps(String, Ty, Int, Int) [function, total]
+  rule regPD(0, N, T) => ListItem(pdecl(N, T, 1, -1))
+  rule regPD(K, N, T) => regComps(N, T, 0, K) requires K >Int 0
+  rule regComps(N, T, I, K) => ListItem(pdecl(N +String "." +String vcomp(I), T, #if I ==Int 0 #then K #else 1 #fi, #if I ==Int 0 #then -2 #else -1 #fi))
+                               regComps(N, T, I +Int 1, K) requires I <Int K
+  rule regComps(_, _, I, K) => .List requires I >=Int K
+  // register-width / vector-name seed for a function: its `.reg` formals
+  syntax Map ::= fmarks(List) [function, total] | fmark1(PDecl) [function, total]
+  rule fmarks(.List) => .Map
+  rule fmarks(ListItem(P) Ps) => updateMap(fmark1(P), fmarks(Ps))
+  rule fmark1(pdecl(N, T, _, -1)) => N |-> wid(T)
+  rule fmark1(pdecl(N, T, K, -2)) => (N |-> wid(T)) ("@vec:" +String substrString(N, 0, lengthString(N) -Int 2) |-> K)
+  rule fmark1(_) => .Map [owise]
+
+  // vector registers: .reg .v4 .f32 v;  declares the components v.x v.y v.z v.w and the marker "@vec:v"
+  syntax String ::= vcomp(Int) [function, total]
+  rule vcomp(0) => "x"
+  rule vcomp(1) => "y"
+  rule vcomp(2) => "z"
+  rule vcomp(3) => "w"
+  rule vcomp(I) => "s" +String Int2String(I) requires I >=Int 4 orBool I <Int 0
+  syntax Map ::= vdeclare(Map, String, Int, Int, Int) [function, total]
+  rule vdeclare(RW, N, W, K, I) => vdeclare(RW[N +String "." +String vcomp(I) <- W], N, W, K, I +Int 1) requires I <Int K
+  rule vdeclare(RW, N, _, K, I) => RW["@vec:" +String N <- K] requires I >=Int K
+  syntax Name ::= String2Name(String) [function, total, hook(STRING.string2token)]
+  syntax Reg  ::= String2Reg(String)  [function, total, hook(STRING.string2token)]
+  syntax Operand ::= compTok(String) [function, total]
+  rule compTok(S) => String2Reg(S)  requires substrString(S, 0, 1) ==String "%"
+  rule compTok(S) => String2Name(S) requires substrString(S, 0, 1) =/=String "%"
+  syntax Operands ::= vcomps(String, Int, Int) [function, total]
+  rule vcomps(B, I, K) => compTok(B +String "." +String vcomp(I)) , vcomps(B, I +Int 1, K) requires I +Int 1 <Int K
+  rule vcomps(B, I, K) => compTok(B +String "." +String vcomp(I)) requires I +Int 1 >=Int K
+  syntax Int ::= vecK(Operand, Map) [function, total]
+  rule vecK(N:Name, RW) => {RW["@vec:" +String Name2String(N)] orDefault 0}:>Int
+  rule vecK(R:Reg, RW) => {RW["@vec:" +String Reg2String(R)] orDefault 0}:>Int
+  rule vecK(_, _) => 0 [owise]
+  // bare vector registers in an instruction become {v.x, v.y, ...}; inside call argument lists they are flattened
+  syntax Operands ::= vexp(Map, Operands) [function, total] | vflat(Map, Operands) [function, total]
+  rule vexp(_, .Operands) => .Operands
+  rule vexp(RW, ( As:Operands ) , Os:Operands) => ( vflat(RW, As) ) , vexp(RW, Os)
+  rule vexp(RW, O:Operand , Os:Operands) => vexp1(RW, O) , vexp(RW, Os) [owise]
+  syntax Operand ::= vexp1(Map, Operand) [function, total]
+  rule vexp1(RW, O) => { vcomps(opStr(O), 0, vecK(O, RW)) } requires vecK(O, RW) >Int 0
+  rule vexp1(RW, O) => O requires vecK(O, RW) <=Int 0
+  rule vflat(_, .Operands) => .Operands
+  rule vflat(RW, O:Operand , Os:Operands) => vcompsT(opStr(O), 0, vecK(O, RW), vflat(RW, Os)) requires vecK(O, RW) >Int 0
+  rule vflat(RW, O:Operand , Os:Operands) => O , vflat(RW, Os) requires vecK(O, RW) <=Int 0
+  syntax Operands ::= vcompsT(String, Int, Int, Operands) [function, total]
+  rule vcompsT(B, I, K, T) => compTok(B +String "." +String vcomp(I)) , vcompsT(B, I +Int 1, K, T) requires I <Int K
+  rule vcompsT(_, I, K, T) => T requires I >=Int K
 
   // ------------------------------------------------------------ function heads
   syntax String ::= fname(FuncHead) [function, total]
@@ -128,7 +188,8 @@ module PTX-LOAD
   rule pp(S:Stmt Ss:Stmts, P) => pp(Ss, pp1(S, P))
   rule pp(.Stmts, P) => P
 
-  rule emit(X, pps(C, I, L, RW, SH)) => pps(C[I <- X], I +Int 1, L, RW, SH)
+  rule emit(ins(G, O, Os), pps(C, I, L, RW, SH)) => pps(C[I <- ins(G, O, vexp(RW, Os))], I +Int 1, L, RW, SH)
+  rule emit(X, pps(C, I, L, RW, SH)) => pps(C[I <- X], I +Int 1, L, RW, SH) [owise]
 
   rule pp1(N:Name :, pps(C, I, L, RW, SH)) => pps(C, I, L[Name2String(N) <- I], RW, SH)
   rule pp1(N:Name Os:Operands ;, P) => emit(ins(noG, decodeOpc(Name2String(N)), Os), P)
@@ -171,6 +232,8 @@ module PTX-LOAD
        ppDecl("reg", S, AL, T, Is, ppRegs(Reg2String(R), 0, N, wid(T), P))
   rule ppDecl("reg", S, AL, T, ListItem(R:Name < N:Int >) Is, P) =>
        ppDecl("reg", S, AL, T, Is, ppRegs(Name2String(R), 0, N, wid(T), P))
+  rule ppDecl("reg", S, AL, T, ListItem(I:DItem) Is, pps(C, PC, L, RW, SH)) =>
+       ppDecl("reg", S, AL, T, Is, pps(C, PC, L, vdeclare(RW, itemName(I), wid(T), vwidth(S), 0), SH)) requires vwidth(S) >Int 0
   rule ppDecl("reg", S, AL, T, ListItem(I:DItem) Is, pps(C, PC, L, RW, SH)) =>
        ppDecl("reg", S, AL, T, Is, pps(C, PC, L, RW[itemName(I) <- wid(T)], SH)) [owise]
   rule ppRegs(R, I, N, W, pps(C, PC, L, RW, SH)) =>

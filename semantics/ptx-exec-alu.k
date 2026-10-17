@@ -38,8 +38,16 @@ module PTX-EXEC-ALU
     requires notBool isVec(D) andBool notBool isVec(A)
   rule <tk> exec(opc("mov", _, ListItem(T)), ops(D, { Vs }, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, pack(opsList(Vs), wid(T) /Int size(opsList(Vs)), 0, C)) </regs>
+    requires notBool isVec(D)
   rule <tk> exec(opc("mov", _, ListItem(T)), ops({ Ds }, A, .Operands), C) => .K ... </tk>
        <regs> R => unpack(R, opsList(Ds), wid(T) /Int size(opsList(Ds)), rd(A, T, C)) </regs>
+    requires notBool isVec(A)
+  // vector to vector (mov.v2.u32 {a, b}, {c, d}), elementwise
+  rule <tk> exec(opc("mov", _, ListItem(T)), ops({ Ds }, { Vs }, .Operands), C) => .K ... </tk>
+       <regs> R => movv(R, opsList(Ds), opsList(Vs), T, C) </regs>
+  syntax Map ::= movv(Map, List, List, Ty, Ctx) [function, total]
+  rule movv(R, ListItem(D:Operand) Ds, ListItem(V:Operand) Vs, T, C) => movv(wr(R, D, rd(V, T, C)), Ds, Vs, T, C)
+  rule movv(R, _, _, _, _) => R [owise]
 
   syntax Int ::= pack(List, Int, Int, Ctx) [function]
   rule pack(ListItem(V:Operand) L, W, Sh, C) => (rd(V, ty("b", W), C) <<Int Sh) |Int pack(L, W, Sh +Int W, C)

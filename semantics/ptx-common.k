@@ -18,6 +18,10 @@ module PTX-COMMON
   imports K-EQUAL
 
   // ------------------------------------------------------------ token -> string
+  syntax String ::= opStr(Operand) [function, total]
+  rule opStr(N:Name) => Name2String(N)
+  rule opStr(R:Reg) => Reg2String(R)
+  rule opStr(_) => "" [owise]
   syntax String ::= Name2String(Name)     [function, total, hook(STRING.token2string)]
                   | QName2String(QName)   [function, total, hook(STRING.token2string)]
                   | Reg2String(Reg)       [function, total, hook(STRING.token2string)]

@@ -59,28 +59,50 @@ module PTX-EXEC-CTRL
        <funcs> ... F |-> fdef(_, _, PS, _, _, _) ... </funcs>
   // a .param variable argument is passed by binding the callee's formal
   // parameter to the caller's variable; other arguments get a fresh slot
-  rule <tk> #bindArgs(ListItem(pdecl(P, _, _, _)) PS, ListItem(N:Name) AS, C, E, F, RS) =>
+  // `.reg` formals (alignment < 0) are passed by value: the value is parked in the environment as "@in:P" and
+  // written into the callee's register P on entry; "@out:P" names the caller register receiving P on return
+  rule <tk> #bindArgs(ListItem(pdecl(P, T, _, AL)) PS, ListItem(V:Operand) AS, C, E, F, RS) =>
+            #bindArgs(PS, AS, C, E[("@in:" +String P) <- sym("regin", rd(V, T, C))], F, RS) ... </tk>
+    requires AL <Int 0
+  rule <tk> #bindArgs(ListItem(pdecl(P, _, _, AL)) PS, ListItem(N:Name) AS, C, E, F, RS) =>
             #bindArgs(PS, AS, C, E[P <- lookupSym(Name2String(N), C)], F, RS) ... </tk>
+    requires AL >=Int 0
   rule <tk> #bindArgs(ListItem(pdecl(P, T, SZ, AL)) PS, ListItem(V:Operand) AS, C, E, F, RS) =>
             #bindArgs(PS, AS, C, E[P <- sym("param", alignUp(PT, AL))], F, RS) ... </tk>
        <pmem> PM => writeBytes(PM, alignUp(PT, AL), SZ, rd(V, T, C)) </pmem>
        <ptop> PT => alignUp(PT, AL) +Int SZ </ptop>
-    requires notBool isName(V)
+    requires notBool isName(V) andBool AL >=Int 0
   rule <tk> #bindArgs(.List, .List, C, E, F, RS) => #bindRets(RPS, RS, C, E, F) ... </tk>
        <funcs> ... F |-> fdef(_, RPS, _, _, _, _) ... </funcs>
-  rule <tk> #bindRets(ListItem(pdecl(P, _, _, _)) RPS, ListItem(N:Name) RS, C, E, F) =>
+  rule <tk> #bindRets(ListItem(pdecl(P, _, _, AL)) RPS, ListItem(D:Operand) RS, C, E, F) =>
+            #bindRets(RPS, RS, C, E[("@out:" +String P) <- noSym(opStr(D))], F) ... </tk>
+    requires AL <Int 0
+  rule <tk> #bindRets(ListItem(pdecl(P, _, _, AL)) RPS, ListItem(N:Name) RS, C, E, F) =>
             #bindRets(RPS, RS, C, E[P <- lookupSym(Name2String(N), C)], F) ... </tk>
+    requires AL >=Int 0
   rule <tk> #bindRets(.List, .List, _, E, F) => #enter(F, E) ... </tk>
   rule <tk> #enter(F, E) => .K ... </tk>
        <fn> CF => F </fn> <pc> PC => 0 </pc>
-       <regs> R => SR </regs> <rw> RW => FRW </rw> <env> CE => E </env>
+       <regs> R => regIns(SR, keys_list(E), E) </regs> <rw> RW => FRW </rw> <env> CE => E </env>
        <ltop> LT </ltop> <sregs> SR </sregs>
        <stack> .List => ListItem(frame(CF, PC, R, RW, CE, LT)) ... </stack>
        <funcs> ... F |-> fdef(_, _, _, _, _, FRW) ... </funcs>
 
   rule <tk> #ret => .K ... </tk>
        <stack> ListItem(frame(F, PC, R, RW, E, LT)) => .List ... </stack>
-       <fn> _ => F </fn> <pc> _ => PC </pc> <regs> _ => R </regs> <rw> _ => RW </rw>
-       <env> _ => E </env> <ltop> _ => LT </ltop>
+       <fn> _ => F </fn> <pc> _ => PC </pc> <regs> CR => regOuts(R, keys_list(CE), CE, CR) </regs> <rw> _ => RW </rw>
+       <env> CE => E </env> <ltop> _ => LT </ltop>
+  syntax Map ::= regIns(Map, List, Map) [function, total] | regOuts(Map, List, Map, Map) [function, total]
+  rule regIns(R, .List, _) => R
+  rule regIns(R, ListItem(K:String) Ks, E) => regIns(#if substrString(K, 0, 4) ==String "@in:" andBool lengthString(K) >Int 4
+                                                       #then R[substrString(K, 4, lengthString(K)) <- symAddr({E[K]}:>Sym)] #else R #fi, Ks, E)
+  rule regIns(R, _, _) => R [owise]
+  rule regOuts(R, .List, _, _) => R
+  rule regOuts(R, ListItem(K:String) Ks, E, CR) => regOuts(#if substrString(K, 0, 5) ==String "@out:" andBool lengthString(K) >Int 5
+                                                       #then R[symName({E[K]}:>Sym) <- {CR[substrString(K, 5, lengthString(K))] orDefault 0}:>Int] #else R #fi, Ks, E, CR)
+  rule regOuts(R, _, _, _) => R [owise]
+  syntax String ::= symName(Sym) [function, total]
+  rule symName(noSym(S)) => S
+  rule symName(sym(S, _)) => S
   rule <tk> #ret => #exit ... </tk> <stack> .List </stack>
 endmodule

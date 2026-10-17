@@ -28,7 +28,7 @@ module PTX-HARNESS
     requires Name2String(B) in_keys(F)
 
   rule <k> A:DAttrs H:FuncHead P:PerfDirs { Ss:Stmts } =>
-           #addFunc(fname(H), fkind(H), frets(H), fparams(H), pp(Ss, pps(.Map, 0, .Map, .Map, .List))) ... </k>
+           #addFunc(fname(H), fkind(H), frets(H), fparams(H), pp(Ss, pps(.Map, 0, .Map, fmarks(frets(H) fparams(H)), .List))) ... </k>
        <clusterDims> CDs => CDs[fname(H) <- clusterOf(P)] </clusterDims>
     requires notBool "extern" in aset(A)
   syntax Dim3 ::= clusterOf(PerfDirs) [function, total]
