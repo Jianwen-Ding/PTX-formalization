@@ -64,6 +64,8 @@ module PTX-SYNTAX
                    | "[" Addr "]"              // memory address
                    | "[" Addr "," Operand "]"             // [tex, {x,y}] / [surf, {x}]
                    | "[" Addr "," Addr "," Operand "]"    // [tex, smp, {x,y}]
+                   | "[" Addr "," Addr "," Operand "," Operand "]"                                   // [tmap, gAddr, {size}, {coords}]  (.override::global_dim)
+                   | "[" Addr "," Addr "," Operand "," Operand "," Operand "," Operand "]"           // [tmap, gAddr, {size}, {lower}, upper, {coords}]
                    | "{" Operands "}"          // vector operand
                    | "(" Operands ")"          // call argument / return list
                    | Reg "|" Reg               // setp dual destination

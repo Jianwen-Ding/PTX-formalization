@@ -129,12 +129,25 @@ module PTX-HARNESS
   // 15 element strides (8 bits each)
   syntax List ::= tmBlob(Ty, Int, List, List, List, Int) [function, total]
   rule tmBlob(T, A, Ds, Ss, Bs, Z) =>
-       ListItem(1414021456) ListItem(tmCode(T)) ListItem(size(Ds)) ListItem(A)
+       ListItem(1414021456) ListItem(tmEt(T)) ListItem(size(Ds)) ListItem(A)
        ListItem(nth(Ds, 0)) ListItem(nth(Ds, 1)) ListItem(nth(Ds, 2)) ListItem(nth(Ds, 3)) ListItem(nth(Ds, 4))
        ListItem(nth(Ss, 0)) ListItem(nth(Ss, 1)) ListItem(nth(Ss, 2)) ListItem(nth(Ss, 3))
        ListItem(nth(Bs, 0) |Int (nth(Bs, 1) <<Int 16) |Int (nth(Bs, 2) <<Int 32) |Int (nth(Bs, 3) <<Int 48))
-       ListItem(nth(Bs, 4) |Int (Z <<Int 16))
+       ListItem(nth(Bs, 4) |Int (swzMode(Z &Int 255) <<Int 16) |Int ((Z >>Int 8) <<Int 24) |Int (swzAtom(Z &Int 255) <<Int 48))
        ListItem(72340172838076673)
+  // tensor-map element type: the value of tensormap.replace.elemtype (not the driver's CUtensorMapDataType)
+  syntax Int ::= tmEt(Ty) [function, total]
+  rule tmEt(ty("u", 8)) => 0    rule tmEt(ty("u", 16)) => 1   rule tmEt(ty("u", 32)) => 2   rule tmEt(ty("s", 32)) => 3
+  rule tmEt(ty("u", 64)) => 4   rule tmEt(ty("s", 64)) => 5   rule tmEt(ty("f", 16)) => 6   rule tmEt(ty("f", 32)) => 7
+  rule tmEt(ty("f", 64)) => 9   rule tmEt(ty("bf", 16)) => 10 rule tmEt(ty("tf", 32)) => 11
+  rule tmEt(_) => 0 [owise]
+  // `.swizzle Z`: the driver's swizzle enum (0 none, 1 32B, 2 64B, 3 128B, 4 / 5 / 6 = 128B with 32B atomicity / + 8B flip / 64B atomicity), fill mode in bits 8..;
+  // stored as tensormap.replace's swizzle_mode (0 none, 1 32B, 2 64B, 3 128B, 4 96B) and swizzle_atomicity (0 16B, 1 32B, 2 32B+8B flip, 3 64B)
+  syntax Int ::= swzMode(Int) [function, total] | swzAtom(Int) [function, total]
+  rule swzMode(Z) => 3 requires Z >=Int 3 andBool Z <=Int 6
+  rule swzMode(Z) => Z [owise]
+  rule swzAtom(Z) => Z -Int 3 requires Z >=Int 4 andBool Z <=Int 6
+  rule swzAtom(_) => 0 [owise]
   syntax Int ::= tmCode(Ty) [function, total]
   rule tmCode(ty("u", 8)) => 0   rule tmCode(ty("u", 16)) => 1   rule tmCode(ty("u", 32)) => 2   rule tmCode(ty("s", 32)) => 3
   rule tmCode(ty("u", 64)) => 4  rule tmCode(ty("s", 64)) => 5   rule tmCode(ty("f", 16)) => 6   rule tmCode(ty("f", 32)) => 7

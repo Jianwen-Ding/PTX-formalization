@@ -202,3 +202,13 @@ The sm_100 shared-memory matrix descriptor value 1 ("128B with 32B atomicity") i
 (the ISA gives its pattern only as a figure).  OOB-NaN fill writes a quiet NaN of the element type (f16 0x7e00, bf16 0x7fc0, f32/tf32 0x7fc00000, f64).
 L2 promotion and cache hints have no architectural effect.  Interleaved layouts (NC/8HWC8, NC/16HWC16) are plain tiled copies of the dims as seen in
 global memory.  Tests: `scripts/gen_tma_swz.py`.
+
+## Tensor maps: encoding, tensormap.replace, overrides, packed sub-byte types
+
+The tensor-map object is our own 128-byte encoding (the real one is opaque).  Element types use the numbering of `tensormap.replace.elemtype` (ISA table: 0 u8 ... 6 f16,
+7 f32, 8 f32.ftz, 9 f64, 10 bf16, 11 tf32, 12 tf32.ftz, 13 b4x16, 14 b4x16_p64, 15 b6x16_p32), which differs from the driver's `CUtensorMapDataType`.  Swizzle is stored as
+`swizzle_mode` (0 none, 1 32B, 2 64B, 3 128B) plus `swizzle_atomicity` (0 16B, 1 32B, 2 32B + 8B flip, 3 64B); the harness `.swizzle Z` takes the driver enum (4 / 5 / 6 =
+128B with 32B / 32B+flip / 64B atomicity) and fill mode in bits 8...  Every field of `tensormap.replace` (incl. `swizzle_atomicity`, `interleave_layout`, `rank`) is modelled.
+`.override::global_address`, `.override::global_dim` and `.override::global_dim_stride` patch a copy of the tensor map before use (stride = (lower + (upper << 32)) << 4).
+Packed sub-byte types (elemtype 13-15) load groups of 16 elements (8 or 12 global bytes) into 8 or 16-byte shared-memory groups (padding written as zeros), i.e. the
+format `tcgen05.mma` kinds f8f6f4 / mxf8f6f4 read; stores of `.b6p2x16` are not modelled.  Tests: `scripts/gen_tma_rep.py`.

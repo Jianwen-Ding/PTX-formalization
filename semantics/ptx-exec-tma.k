@@ -39,28 +39,40 @@ module PTX-EXEC-TMA
   rule tmBox(B, I) => (tmW(B, 13) >>Int (16 *Int I)) &Int 65535 requires I <Int 4
   rule tmBox(B, _) => tmW(B, 14) &Int 65535 [owise]
   rule tmEst(B, I) => (tmW(B, 15) >>Int (8 *Int I)) &Int 255
-  rule tmSwz(B) => (tmW(B, 14) >>Int 16) &Int 255
+  rule tmSwz(B) => (tmW(B, 14) >>Int 16) &Int 255                 // swizzle_mode
+  syntax Int ::= tmAtom(Int) [function, total] | tmEffMode(Int) [function, total]
+  rule tmAtom(B) => (tmW(B, 14) >>Int 48) &Int 255                  // swizzle_atomicity
   rule tmFillMode(B) => (tmW(B, 14) >>Int 24) &Int 255
   // element size / type from the CUtensorMapDataType code
   rule tmEb(B) => tmBytesOf(tmW(B, 1) &Int 255)
   syntax Int ::= tmBytesOf(Int) [function, total]
+  // element type values of tensormap.replace.elemtype: 0 u8, 1 u16, 2 u32, 3 s32, 4 u64, 5 s64, 6 f16, 7 f32, 8 f32.ftz, 9 f64, 10 bf16, 11 tf32, 12 tf32.ftz,
+  // 13 b4x16, 14 b4x16_p64, 15 b6x16_p32 (packed sub-byte groups of 16 elements; one byte is used as the container size here)
   rule tmBytesOf(0) => 1  rule tmBytesOf(1) => 2  rule tmBytesOf(2) => 4  rule tmBytesOf(3) => 4  rule tmBytesOf(4) => 8  rule tmBytesOf(5) => 8
-  rule tmBytesOf(6) => 2  rule tmBytesOf(7) => 4  rule tmBytesOf(8) => 8  rule tmBytesOf(9) => 2  rule tmBytesOf(_) => 4 [owise]
+  rule tmBytesOf(6) => 2  rule tmBytesOf(7) => 4  rule tmBytesOf(8) => 4  rule tmBytesOf(9) => 8  rule tmBytesOf(10) => 2 rule tmBytesOf(11) => 4 rule tmBytesOf(12) => 4
+  rule tmBytesOf(_) => 1 [owise]
   syntax Ty ::= tmTy(Int) [function, total]
   rule tmTy(B) => tmTyOf(tmW(B, 1) &Int 255)
   syntax Ty ::= tmTyOf(Int) [function, total]
   rule tmTyOf(0) => ty("u", 8)  rule tmTyOf(1) => ty("u", 16)  rule tmTyOf(2) => ty("u", 32)  rule tmTyOf(3) => ty("s", 32)
   rule tmTyOf(4) => ty("u", 64)  rule tmTyOf(5) => ty("s", 64)  rule tmTyOf(6) => ty("f", 16)  rule tmTyOf(7) => ty("f", 32)
-  rule tmTyOf(8) => ty("f", 64)  rule tmTyOf(9) => ty("bf", 16)  rule tmTyOf(_) => ty("f", 32) [owise]
-  // swizzle code of the tensor map -> mode of ptx-exec-wg.k's swizzle (1 = 128B, 2 = 64B, 3 = 32B)
-  syntax Int ::= tmMode(Int) [function, total]
-  rule tmMode(3) => 1  rule tmMode(2) => 2  rule tmMode(1) => 3  rule tmMode(4) => 4  rule tmMode(5) => 5  rule tmMode(6) => 6  rule tmMode(_) => 0 [owise]
+  rule tmTyOf(8) => ty("f", 32)  rule tmTyOf(9) => ty("f", 64)  rule tmTyOf(10) => ty("bf", 16)  rule tmTyOf(11) => ty("f", 32)  rule tmTyOf(12) => ty("f", 32)
+  rule tmTyOf(_) => ty("u", 8) [owise]
+  // swizzle_mode / swizzle_atomicity of the tensor map -> mode of ptx-exec-wg.k's swizzle (1 = 128B, 2 = 64B, 3 = 32B, 4 = 128B/32B atomicity,
+  // 5 = ... + 8-byte flip, 6 = 128B/64B atomicity); the 96B swizzle (mode 4) is not modelled
+  rule tmEffMode(B) => 3 requires tmSwz(B) ==Int 1
+  rule tmEffMode(B) => 2 requires tmSwz(B) ==Int 2
+  rule tmEffMode(B) => 1 requires tmSwz(B) ==Int 3 andBool tmAtom(B) ==Int 0
+  rule tmEffMode(B) => 4 requires tmSwz(B) ==Int 3 andBool tmAtom(B) ==Int 1
+  rule tmEffMode(B) => 5 requires tmSwz(B) ==Int 3 andBool tmAtom(B) ==Int 2
+  rule tmEffMode(B) => 6 requires tmSwz(B) ==Int 3 andBool tmAtom(B) ==Int 3
+  rule tmEffMode(_) => 0 [owise]
   syntax Int ::= tmFill(Int) [function, total]
   rule tmFill(B) => 0 requires tmFillMode(B) ==Int 0
   rule tmFill(B) => 2143289344 requires tmFillMode(B) =/=Int 0 andBool tmEb(B) ==Int 4              // 0x7fc00000
   rule tmFill(B) => 32256 requires tmFillMode(B) =/=Int 0 andBool (tmW(B, 1) &Int 255) ==Int 6          // f16 0x7e00
-  rule tmFill(B) => 32704 requires tmFillMode(B) =/=Int 0 andBool (tmW(B, 1) &Int 255) ==Int 9          // bf16 0x7fc0
-  rule tmFill(B) => 9221120237041090560 requires tmFillMode(B) =/=Int 0 andBool tmEb(B) ==Int 8        // f64 0x7ff8000000000000
+  rule tmFill(B) => 32704 requires tmFillMode(B) =/=Int 0 andBool (tmW(B, 1) &Int 255) ==Int 10          // bf16 0x7fc0
+  rule tmFill(B) => 9221120237041090560 requires tmFillMode(B) =/=Int 0 andBool (tmW(B, 1) &Int 255) ==Int 9        // f64 0x7ff8000000000000
   rule tmFill(_) => 0 [owise]
 
   // ---------------------------------------------------------------- element addresses
@@ -90,6 +102,52 @@ module PTX-EXEC-TMA
        #then 0 -Int 1
        #else tmAddrOf(B) +Int (nth(Cs, 0) +Int (E %Int tmBox(B, 0))) *Int tmEb(B) +Int nth(Cs, 1 +Int E /Int tmBox(B, 0)) *Int tmStride(B, 1) #fi
 
+
+  // ---------------------------------------------------------------- operand forms: [tensorMap{, gAddrToOverride}{, attributeOverrideInfo}, tensorCoords]
+  // (.override::global_address / .override::global_dim[_stride], PTX ISA 9.4): the tensor-map object is patched before use.
+  syntax KItem ::= #tmLd(Set, Addr, Int, Operand, Addr, Operands, Ctx) | #tmSt(Set, Int, Operand, Addr, Ctx)
+  syntax Int ::= tmObj(Bytes, Loc) [function, total]
+  rule tmObj(GM, L) => readBytes(GM, locOff(L), 128)
+  // new base address; dims (8- or 16-bit values) and strides ((lower + (upper << 32)) << 4, upper = 4-bit fields of one register) for the dimensions given
+  syntax Int ::= tmOvAddr(Int, Int) [function, total] | tmOvDims(Int, List, Int) [function, total] | tmOvStr(Int, List, Int, Int) [function, total]
+  rule tmOvAddr(B, G) => setWord(B, 3, G)
+  rule tmOvDims(B, ListItem(V:Int) Vs, I) => tmOvDims(setWord(B, 4 +Int I, V), Vs, I +Int 1)
+  rule tmOvDims(B, _, _) => B [owise]
+  rule tmOvStr(B, ListItem(V:Int) Vs, Up, I) => tmOvStr(setWord(B, 9 +Int I, (V +Int (((Up >>Int (4 *Int I)) &Int 15) <<Int 32)) <<Int 4), Vs, Up, I +Int 1)
+  rule tmOvStr(B, _, _, _) => B [owise]
+  syntax Int ::= tmOv(Int, Int, List, List, Int) [function, total]          // blob, address, dims, lower strides, upper strides
+  rule tmOv(B, G, Ds, Ls, Up) => tmOvStr(tmOvDims(tmOvAddr(B, G), Ds, 0), Ls, Up, 0)
+  rule <tk> exec(opc("cp", M, _), ops([ D:Addr ], [ T:Addr , Cs ], [ Mb:Addr ], Rest:Operands), C) => #tmLd(M, D, tmObj(GM, ea(T, "generic", C)), Cs, Mb, Rest, C) ... </tk>
+       <gmem> GM </gmem>
+    requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "mbarrier::complete_tx::bytes" in M
+  rule <tk> exec(opc("cp", M, _), ops([ D:Addr ], [ T:Addr , G:Addr , Cs ], [ Mb:Addr ], Rest:Operands), C) =>
+            #tmLd(M, D, tmOvAddr(tmObj(GM, ea(T, "generic", C)), locOff(ea(G, "generic", C))), Cs, Mb, Rest, C) ... </tk>
+       <gmem> GM </gmem>
+    requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "mbarrier::complete_tx::bytes" in M
+  rule <tk> exec(opc("cp", M, _), ops([ D:Addr ], [ T:Addr , G:Addr , Sz , Cs ], [ Mb:Addr ], Rest:Operands), C) =>
+            #tmLd(M, D, tmOv(tmObj(GM, ea(T, "generic", C)), locOff(ea(G, "generic", C)), tmCoords(Sz, C), .List, 0), Cs, Mb, Rest, C) ... </tk>
+       <gmem> GM </gmem>
+    requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "mbarrier::complete_tx::bytes" in M
+  rule <tk> exec(opc("cp", M, _), ops([ D:Addr ], [ T:Addr , G:Addr , Sz , Lo , Up , Cs ], [ Mb:Addr ], Rest:Operands), C) =>
+            #tmLd(M, D, tmOv(tmObj(GM, ea(T, "generic", C)), locOff(ea(G, "generic", C)), tmCoords(Sz, C), tmCoords(Lo, C), rd(Up, ty("b", 16), C)), Cs, Mb, Rest, C) ... </tk>
+       <gmem> GM </gmem>
+    requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "mbarrier::complete_tx::bytes" in M
+  rule <tk> exec(opc("cp", M, _), ops([ T:Addr , Cs ], [ S:Addr ], _:Operands), C) => #tmSt(M, tmObj(GM, ea(T, "generic", C)), Cs, S, C) ... </tk>
+       <gmem> GM </gmem>
+    requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "bulk_group" in M
+  rule <tk> exec(opc("cp", M, _), ops([ T:Addr , G:Addr , Cs ], [ S:Addr ], _:Operands), C) =>
+            #tmSt(M, tmOvAddr(tmObj(GM, ea(T, "generic", C)), locOff(ea(G, "generic", C))), Cs, S, C) ... </tk>
+       <gmem> GM </gmem>
+    requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "bulk_group" in M
+  rule <tk> exec(opc("cp", M, _), ops([ T:Addr , G:Addr , Sz , Cs ], [ S:Addr ], _:Operands), C) =>
+            #tmSt(M, tmOv(tmObj(GM, ea(T, "generic", C)), locOff(ea(G, "generic", C)), tmCoords(Sz, C), .List, 0), Cs, S, C) ... </tk>
+       <gmem> GM </gmem>
+    requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "bulk_group" in M
+  rule <tk> exec(opc("cp", M, _), ops([ T:Addr , G:Addr , Sz , Lo , Up , Cs ], [ S:Addr ], _:Operands), C) =>
+            #tmSt(M, tmOv(tmObj(GM, ea(T, "generic", C)), locOff(ea(G, "generic", C)), tmCoords(Sz, C), tmCoords(Lo, C), rd(Up, ty("b", 16), C)), Cs, S, C) ... </tk>
+       <gmem> GM </gmem>
+    requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "bulk_group" in M
+
   // ---------------------------------------------------------------- loads: global -> shared image chunks
   syntax KItem ::= #tmWr(String, List) | #tmGWr(List, String, Ty)
   syntax TmW ::= tmw(Int, Int)                         // shared/cluster address, 16-byte value
@@ -107,7 +165,7 @@ module PTX-EXEC-TMA
   rule tmChunkV(_, _, _, _, _, _) => 0 [owise]
   syntax List ::= tmLoadList(Bytes, Int, List, Int, Int, Bool) [function, total]    // gmem, blob, coords, dst base, chunk k, gather4?
   rule tmLoadList(GM, B, Cs, Base, K, G) =>
-       ListItem(tmWrap(tmMode(tmSwz(B)), Base +Int 16 *Int K, tmChunkV(GM, B, Cs, K *Int (16 /Int tmEb(B)), 0, G)))
+       ListItem(tmWrap(tmEffMode(B), Base +Int 16 *Int K, tmChunkV(GM, B, Cs, K *Int (16 /Int tmEb(B)), 0, G)))
        tmLoadList(GM, B, Cs, Base, K +Int 1, G)
     requires K *Int 16 <Int tmCount(B, G) *Int tmEb(B)
   rule tmLoadList(_, _, _, _, _, _) => .List [owise]
@@ -123,15 +181,15 @@ module PTX-EXEC-TMA
     requires R <Int 32 andBool (Mask >>Int R) >Int 0
   rule rankBases(_, _, _) => .List [owise]
 
-  rule <tk> exec(opc("cp", M, _), ops([ D ], [ T , Cs ], [ Mb ], Rest:Operands), C) =>
+  rule <tk> #tmLd(M, D, B, Cs, Mb, Rest, C) =>
             #tmWr(#if "shared::cluster" in M #then "cluster" #else "shared" #fi,
-                  tmLoadAll(GM, readBytes(GM, locOff(ea(T, "generic", C)), 128), tmCoords(Cs, C),
+                  tmLoadAll(GM, B, tmCoords(Cs, C),
                             tmBases(ea(D, #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(ListItem([ Mb ]) opsList(Rest), C), isMc(M)),
                             "gather4" in M orBool "tile::gather4" in M))
             ~> #tmTxAll(bulkLocs(ea(Mb, #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(ListItem([ Mb ]) opsList(Rest), C), isMc(M)),
-                        tmCount(readBytes(GM, locOff(ea(T, "generic", C)), 128), "tile::gather4" in M) *Int tmEb(readBytes(GM, locOff(ea(T, "generic", C)), 128))) ... </tk>
+                        tmCount(B, "tile::gather4" in M) *Int tmEb(B)) ... </tk>
        <gmem> GM </gmem>
-    requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "mbarrier::complete_tx::bytes" in M andBool notBool isI2c(M)
+    requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "mbarrier::complete_tx::bytes" in M andBool notBool isI2c(M) andBool notBool tmSub(B)
   syntax List ::= tmCoords(Operand, Ctx) [function, total]
   rule tmCoords({ Os }, C) => tmCoordList(opsList(Os), C)
   rule tmCoords(_, _) => .List [owise]
@@ -144,6 +202,51 @@ module PTX-EXEC-TMA
   rule <tk> #tmTxAll(ListItem(Mb) Ms, N) => #bulkTx(Mb, N) ~> #tmTxAll(Ms, N) ... </tk>
   rule <tk> #tmTxAll(.List, _) => .K ... </tk>
 
+
+
+  // ---------------------------------------------------------------- packed sub-byte element types (elemtype 13 b4x16, 14 b4x16_p64, 15 b6x16_p32)
+  // dim 0 counts elements and is a multiple of 16; a group of 16 elements takes 8 (4-bit) or 12 (6-bit) bytes in global memory and 8 (b4x16) or 16 bytes
+  // (the _p64 / _p32 formats: data followed by padding, written as zeros here) in shared memory.  Groups are laid out like the elements of a tile.
+  syntax Bool ::= tmSub(Int) [function, total]
+  rule tmSub(B) => (tmW(B, 1) &Int 255) >=Int 13
+  syntax Int ::= tmGB(Int) [function, total] | tmSB(Int) [function, total] | tmNb(Int) [function, total]
+  rule tmGB(B) => 12 requires (tmW(B, 1) &Int 255) ==Int 15
+  rule tmGB(_) => 8 [owise]
+  rule tmSB(B) => 8 requires (tmW(B, 1) &Int 255) ==Int 13
+  rule tmSB(_) => 16 [owise]
+  rule tmNb(B) => 6 requires (tmW(B, 1) &Int 255) ==Int 15
+  rule tmNb(_) => 4 [owise]
+  syntax Int ::= tmGroups(Int) [function, total] | tmGrpAddr(Int, List, Int) [function, total] | tmGrpK(Int, List, Int, Int, Int, Int) [function, total]
+  rule tmGroups(B) => (tmBox(B, 0) /Int 16) *Int tmVol(B, 1, 1)
+  rule tmGrpAddr(B, Cs, Q) =>
+       #if nth(Cs, 0) +Int (Q %Int (tmBox(B, 0) /Int 16)) *Int 16 <Int 0 orBool nth(Cs, 0) +Int (Q %Int (tmBox(B, 0) /Int 16)) *Int 16 >=Int tmDim(B, 0) #then 0 -Int 1
+       #else tmGrpK(B, Cs, Q /Int (tmBox(B, 0) /Int 16), 1,
+                    tmAddrOf(B) +Int ((nth(Cs, 0) +Int (Q %Int (tmBox(B, 0) /Int 16)) *Int 16) *Int tmNb(B)) /Int 8, 0) #fi
+  rule tmGrpK(B, Cs, Q, I, Acc, _) =>
+       #if nth(Cs, I) +Int (Q %Int tmBox(B, I)) *Int tmEst(B, I) <Int 0 orBool nth(Cs, I) +Int (Q %Int tmBox(B, I)) *Int tmEst(B, I) >=Int tmDim(B, I) #then 0 -Int 1
+       #else tmGrpK(B, Cs, Q /Int tmBox(B, I), I +Int 1, Acc +Int (nth(Cs, I) +Int (Q %Int tmBox(B, I)) *Int tmEst(B, I)) *Int tmStride(B, I), 0) #fi
+    requires I <Int tmRank(B)
+  rule tmGrpK(_, _, _, _, Acc, _) => Acc [owise]
+  syntax Int ::= tmGrpVal(Bytes, Int, List, Int) [function, total]
+  rule tmGrpVal(GM, B, Cs, Q) => #if Q >=Int tmGroups(B) orBool tmGrpAddr(B, Cs, Q) <Int 0 #then 0 #else readBytes(GM, tmGrpAddr(B, Cs, Q), tmGB(B)) #fi
+  syntax Int ::= tmChunkS(Bytes, Int, List, Int) [function, total]
+  rule tmChunkS(GM, B, Cs, K) => tmGrpVal(GM, B, Cs, K) requires tmSB(B) ==Int 16
+  rule tmChunkS(GM, B, Cs, K) => tmGrpVal(GM, B, Cs, 2 *Int K) |Int (tmGrpVal(GM, B, Cs, 2 *Int K +Int 1) <<Int 64) [owise]
+  syntax List ::= tmLoadListS(Bytes, Int, List, Int, Int) [function, total]
+  rule tmLoadListS(GM, B, Cs, Base, K) => ListItem(tmWrap(tmEffMode(B), Base +Int 16 *Int K, tmChunkS(GM, B, Cs, K))) tmLoadListS(GM, B, Cs, Base, K +Int 1)
+    requires K *Int 16 <Int tmGroups(B) *Int tmSB(B)
+  rule tmLoadListS(_, _, _, _, _) => .List [owise]
+  syntax List ::= tmLoadAllS(Bytes, Int, List, List) [function, total]
+  rule tmLoadAllS(GM, B, Cs, ListItem(Base:Int) Bs) => tmLoadListS(GM, B, Cs, Base, 0) tmLoadAllS(GM, B, Cs, Bs)
+  rule tmLoadAllS(_, _, _, _) => .List [owise]
+  rule <tk> #tmLd(M, D, B, Cs, Mb, Rest, C) =>
+            #tmWr(#if "shared::cluster" in M #then "cluster" #else "shared" #fi,
+                  tmLoadAllS(GM, B, tmCoords(Cs, C),
+                             tmBases(ea(D, #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(ListItem([ Mb ]) tmNoVec(opsList(Rest)), C), isMc(M))))
+            ~> #tmTxAll(bulkLocs(ea(Mb, #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(ListItem([ Mb ]) tmNoVec(opsList(Rest)), C), isMc(M)),
+                        tmGroups(B) *Int tmSB(B)) ... </tk>
+       <gmem> GM </gmem>
+    requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "mbarrier::complete_tx::bytes" in M andBool notBool isI2c(M) andBool tmSub(B)
 
   // ---------------------------------------------------------------- im2col modes
   // The tensor (dim 0 = channels C, dims 1..S = W, H, D, last dim = N; S = rank - 2) is read as a column of `pixels` pixels x `channels` channels
@@ -221,7 +324,7 @@ module PTX-EXEC-TMA
   rule tmChunkI(_, _, _, _, _, _, _) => 0 [owise]
   syntax List ::= tmLoadListI(Bytes, Int, List, List, Int, Int, Int) [function, total]
   rule tmLoadListI(GM, B, Cs, I, Md, Base, K) =>
-       ListItem(tmWrap(tmMode(tmSwz(B)), Base +Int 16 *Int K, tmChunkI(GM, B, Cs, I, Md, K *Int (16 /Int tmEb(B)), 0)))
+       ListItem(tmWrap(tmEffMode(B), Base +Int 16 *Int K, tmChunkI(GM, B, Cs, I, Md, K *Int (16 /Int tmEb(B)), 0)))
        tmLoadListI(GM, B, Cs, I, Md, Base, K +Int 1)
     requires K *Int 16 <Int tmPix(B, I, Md) *Int tmBox(B, 0) *Int tmEb(B)
   rule tmLoadListI(_, _, _, _, _, _, _) => .List [owise]
@@ -236,13 +339,13 @@ module PTX-EXEC-TMA
   rule tmInfo(Rest, C) => tmInfoL(opsList(Rest), C)
   rule tmInfoL(ListItem(O:Operand) Os, C) => #if isVec(O) #then tmCoords(O, C) #else tmInfoL(Os, C) #fi
   rule tmInfoL(_, _) => .List [owise]
-  rule <tk> exec(opc("cp", M, _), ops([ D ], [ T , Cs ], [ Mb ], Rest:Operands), C) =>
+  rule <tk> #tmLd(M, D, B, Cs, Mb, Rest, C) =>
             #tmWr(#if "shared::cluster" in M #then "cluster" #else "shared" #fi,
-                  tmLoadAllI(GM, readBytes(GM, locOff(ea(T, "generic", C)), 128), tmCoords(Cs, C), tmInfo(Rest, C), imMode(M),
+                  tmLoadAllI(GM, B, tmCoords(Cs, C), tmInfo(Rest, C), imMode(M),
                              tmBases(ea(D, #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(ListItem([ Mb ]) tmNoVec(opsList(Rest)), C), isMc(M))))
             ~> #tmTxAll(bulkLocs(ea(Mb, #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(ListItem([ Mb ]) tmNoVec(opsList(Rest)), C), isMc(M)),
-                        tmPix(readBytes(GM, locOff(ea(T, "generic", C)), 128), tmInfo(Rest, C), imMode(M)) *Int tmBox(readBytes(GM, locOff(ea(T, "generic", C)), 128), 0)
-                        *Int tmEb(readBytes(GM, locOff(ea(T, "generic", C)), 128))) ... </tk>
+                        tmPix(B, tmInfo(Rest, C), imMode(M)) *Int tmBox(B, 0)
+                        *Int tmEb(B)) ... </tk>
        <gmem> GM </gmem>
     requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "mbarrier::complete_tx::bytes" in M andBool isI2c(M)
   // im2col_no_offs::w stores / reductions: pixels from the first one outside the tensor on are not written
@@ -255,27 +358,27 @@ module PTX-EXEC-TMA
        tmStoreListI(SM, B, Cs, Base, E +Int 1, Bad)
     requires E <Int tmBox(B, 1) *Int tmBox(B, 0)
   rule tmStoreListI(_, _, _, _, _, _) => .List [owise]
-  rule <tk> exec(opc("cp", M, _), ops([ T , Cs ], [ S ], _:Operands), C) =>
-            #tmGWr(tmStoreListI(SM, readBytes(GM, locOff(ea(T, "generic", C)), 128), tmCoords(Cs, C), locOff(ea(S, "shared", C)), 0,
-                                tmBad(readBytes(GM, locOff(ea(T, "generic", C)), 128), tmCoords(Cs, C), 0, tmBox(readBytes(GM, locOff(ea(T, "generic", C)), 128), 1))),
-                   #if "reduce" in M #then atomOp(M) #else "" #fi, tmTy(readBytes(GM, locOff(ea(T, "generic", C)), 128))) ... </tk>
+  rule <tk> #tmSt(M, B, Cs, S, C) =>
+            #tmGWr(tmStoreListI(SM, B, tmCoords(Cs, C), locOff(ea(S, "shared", C)), 0,
+                                tmBad(B, tmCoords(Cs, C), 0, tmBox(B, 1))),
+                   #if "reduce" in M #then atomOp(M) #else "" #fi, tmTy(B)) ... </tk>
        <gmem> GM </gmem> <smem> SM </smem>
     requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "bulk_group" in M andBool "im2col_no_offs::w" in M
 
   // ---------------------------------------------------------------- stores / reductions: shared -> global
   // source element e of the shared image (dense, chunk-swizzled)
   syntax Int ::= tmSrcV(Bytes, Int, Int, Int) [function, total]                       // smem, blob, base, e
-  rule tmSrcV(SM, B, Base, E) => readBytes(SM, swizzle(tmMode(tmSwz(B)), Base +Int E *Int tmEb(B)), tmEb(B))
+  rule tmSrcV(SM, B, Base, E) => readBytes(SM, swizzle(tmEffMode(B), Base +Int E *Int tmEb(B)), tmEb(B))
   syntax List ::= tmStoreList(Bytes, Int, List, Int, Int, Bool) [function, total]
   rule tmStoreList(SM, B, Cs, Base, E, G) =>
        #if tmAddr(B, Cs, E, G) <Int 0 #then .List #else ListItem(tmg(tmAddr(B, Cs, E, G), tmEb(B), tmSrcV(SM, B, Base, E))) #fi
        tmStoreList(SM, B, Cs, Base, E +Int 1, G)
     requires E <Int tmCount(B, G)
   rule tmStoreList(_, _, _, _, _, _) => .List [owise]
-  rule <tk> exec(opc("cp", M, _), ops([ T , Cs ], [ S ], _:Operands), C) =>
-            #tmGWr(tmStoreList(SM, readBytes(GM, locOff(ea(T, "generic", C)), 128), tmCoords(Cs, C), locOff(ea(S, "shared", C)), 0,
+  rule <tk> #tmSt(M, B, Cs, S, C) =>
+            #tmGWr(tmStoreList(SM, B, tmCoords(Cs, C), locOff(ea(S, "shared", C)), 0,
                                "scatter4" in M orBool "tile::scatter4" in M),
-                   #if "reduce" in M #then atomOp(M) #else "" #fi, tmTy(readBytes(GM, locOff(ea(T, "generic", C)), 128))) ... </tk>
+                   #if "reduce" in M #then atomOp(M) #else "" #fi, tmTy(B)) ... </tk>
        <gmem> GM </gmem> <smem> SM </smem>
     requires "async" in M andBool "bulk" in M andBool "tensor" in M andBool "bulk_group" in M andBool notBool ("im2col_no_offs::w" in M)
   rule <tk> #tmGWr(ListItem(tmg(A, N, V)) Ls, "", T) => #mem(loc("global", A), wrOp(N, V)) ~> #drop ~> #tmGWr(Ls, "", T) ... </tk>
@@ -306,6 +409,8 @@ module PTX-EXEC-TMA
   rule tmReplace(B, "box_dim", O, V) => setBox(B, O, V)
   rule tmReplace(B, "element_stride", O, V) => setWord(B, 15, (tmW(B, 15) &Int (~Int (255 <<Int (8 *Int O)))) |Int (V <<Int (8 *Int O)))
   rule tmReplace(B, "swizzle_mode", _, V) => setWord(B, 14, (tmW(B, 14) &Int (~Int (255 <<Int 16))) |Int (V <<Int 16))
+  rule tmReplace(B, "swizzle_atomicity", _, V) => setWord(B, 14, (tmW(B, 14) &Int (~Int (255 <<Int 48))) |Int (V <<Int 48))
+  rule tmReplace(B, "interleave_layout", _, V) => setWord(B, 14, (tmW(B, 14) &Int (~Int (255 <<Int 32))) |Int (V <<Int 32))
   rule tmReplace(B, "fill_mode", _, V) => setWord(B, 14, (tmW(B, 14) &Int (~Int (255 <<Int 24))) |Int (V <<Int 24))
   rule tmReplace(B, _, _, _) => B [owise]
   syntax Int ::= setWord(Int, Int, Int) [function, total] | setBox(Int, Int, Int) [function, total]
