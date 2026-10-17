@@ -164,6 +164,8 @@ module PTX-SYNTAX
                       | ".expect" Name Type "@" Int "=" "{" InitVals "}" ";"     // from element offset
                       | ".patch" Name Type "@" Int "=" "{" InitVals "}" ";"      // write values at an element offset
                       | ".tensormap" Name Type Name ".dims" "{" Ints "}" ".strides" "{" Ints "}" ".box" "{" Ints "}" ".swizzle" Int ";"
+                      | ".tensormap" Name Type Name ".dims" "{" Ints "}" ".strides" "{" Ints "}" ".box" "{" Ints "}" ".swizzle" Int
+                        ".im2col" "{" Ints "}" "{" Ints "}" ".estrides" "{" Ints "}" ";"
                       | ".texture" Name Type Name ".dims" "{" Ints "}" ".attrs" "{" Ints "}" ";"
                       | ".sampler" Name ".attrs" "{" Ints "}" ";"
                       | ".surface" Name Type Name ".dims" "{" Ints "}" ".attrs" "{" Ints "}" ";"

@@ -181,3 +181,15 @@ register 2i+1 = M[4t+b][g+8] (b = 0..3).  `ldmatrix.m8n16` gives thread (g, t) t
 sign-extended).  `stmatrix.m16n8.b8` stores the 16 x 8 matrix transposed: memory row n (addressed by thread 8i+n, 16 bytes) holds X[0..15][n] with
 thread (g, t) holding X[g][2t..2t+1] in bytes 0-1 and X[g+8][2t..2t+1] in bytes 2-3.  These per-thread layouts are figures in the ISA (assumed);
 tests: `scripts/gen_ldm2.py`.
+
+## TMA im2col modes
+
+`cp.async.bulk.tensor ... .im2col` (3D/4D/5D), `.im2col::w`, `.im2col::w::128` and the store/reduce form `.im2col_no_offs::w`.  The ISA text
+defines the parameters (bounding-box corners, pixels per column, channels per pixel, traversal strides, im2col offsets, `wHalo`, `wOffset`) but
+the exact pixel enumeration only in figures.  Model: tensor dim 0 = channels, dims 1..S = W, H, D, last = N.  Along spatial dim k the filter-base
+positions are `L_k, L_k + st_k, ...` up to `size_k - 1 + U_k` (so `L = -pad`, `U = pad - (filter - 1) * dilation` gives the usual convolution
+output grid, matching the ISA's examples); the tensor coordinates give the first pixel's position (its box index is `(c_k - L_k) div st_k`); successive
+pixels run W-fastest, wrapping W into H into D into N; a pixel reads at base position + im2col offset, zero / NaN fill outside the tensor.  The `::w` modes vary
+only W (`c_W + q * st_W + wOffset`), load `pixels-per-column + wHalo` pixels (`::128`: 128 pixels with `wHalo` halo pixels after every 32);
+`im2col_no_offs::w` writes pixels only up to the first one outside the tensor.  Tensor-map encoding (harness `.tensormap ... .im2col {lower} {upper} .estrides {..}`):
+corners offset-binary in words 1 / 2, flag in word 14.  Tests: `scripts/gen_tma_im2col.py`.

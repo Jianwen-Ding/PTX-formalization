@@ -79,7 +79,28 @@ module PTX-HARNESS
   syntax KItem ::= #patch(String, Ty, Int, List) | #appendTo(String, Ty, List)
   // .tensormap TM .f16 BUF .dims { d0, d1, ... } .strides { s1, ... } .box { b0, b1, ... } .swizzle 0 ;
   // builds a 128-byte tensor-map object (our own encoding, see ptx-exec-tma.k) in global memory
-  syntax KItem ::= #tensormap(String, Ty, String, List, List, List, Int)
+  syntax KItem ::= #tensormap(String, Ty, String, List, List, List, Int) | #tensormapI(String, Ty, String, List, List, List, Int, List, List, List)
+  // ... .swizzle Z .im2col { lower corners (W, H, D) } { upper corners } .estrides { traversal strides of dims 0.. } ;  (im2col tensor map; box = {channels per pixel, pixels per column})
+  rule <k> .tensormap N T B .dims { Ds } .strides { Ss } .box { Bs } .swizzle Z .im2col { Ls } { Us } .estrides { Es } ; =>
+           #tensormapI(Name2String(N), typeOf(T), Name2String(B), intsL(Ds), intsL(Ss), intsL(Bs), Z, intsL(Ls), intsL(Us), intsL(Es)) ... </k>
+  rule <k> #tensormapI(N, T, B, Ds, Ss, Bs, Z, Ls, Us, Es) => #alloc(N, ty("u", 64), 16, tmBlobI(tmBlob(T, A, Ds, Ss, Bs, Z), Ls, Us, Es)) ... </k>
+       <syms> ... B |-> sym(_, A) ... </syms>
+  // corners are stored offset-binary (+32768) in bits 8.. of words 1 (lower) and 2 (upper); bit 40 of word 14 flags an im2col map; word 15 = traversal strides
+  syntax List ::= tmBlobI(List, List, List, List) [function, total]
+  rule tmBlobI(ListItem(W0) ListItem(W1) ListItem(W2) ListItem(W3) Ws, Ls, Us, Es) =>
+       ListItem(W0) ListItem(W1:Int |Int (cornerPack(Ls, 0) <<Int 8)) ListItem(W2:Int |Int (cornerPack(Us, 0) <<Int 8)) ListItem(W3) tmBlobI2(Ws, Es)
+  rule tmBlobI(L, _, _, _) => L [owise]
+  syntax List ::= tmBlobI2(List, List) [function, total]
+  // words 4..13 unchanged, word 14 gets the flag, word 15 the traversal strides
+  rule tmBlobI2(ListItem(W4) ListItem(W5) ListItem(W6) ListItem(W7) ListItem(W8) ListItem(W9) ListItem(W10) ListItem(W11) ListItem(W12) ListItem(W13) ListItem(W14:Int) ListItem(_), Es) =>
+       ListItem(W4) ListItem(W5) ListItem(W6) ListItem(W7) ListItem(W8) ListItem(W9) ListItem(W10) ListItem(W11) ListItem(W12) ListItem(W13)
+       ListItem(W14 |Int (1 <<Int 40)) ListItem(strideWord(Es, 0))
+  rule tmBlobI2(L, _) => L [owise]
+  syntax Int ::= cornerPack(List, Int) [function, total] | strideWord(List, Int) [function, total]
+  rule cornerPack(ListItem(V:Int) Vs, I) => ((V +Int 32768) <<Int (16 *Int I)) |Int cornerPack(Vs, I +Int 1)
+  rule cornerPack(_, _) => 0 [owise]
+  rule strideWord(ListItem(V:Int) Vs, I) => (V <<Int (8 *Int I)) |Int strideWord(Vs, I +Int 1)
+  rule strideWord(_, _) => 0 [owise]
   rule <k> .tensormap N T B .dims { Ds } .strides { Ss } .box { Bs } .swizzle Z ; =>
            #tensormap(Name2String(N), typeOf(T), Name2String(B), intsL(Ds), intsL(Ss), intsL(Bs), Z) ... </k>
   rule <k> #tensormap(N, T, B, Ds, Ss, Bs, Z) => #alloc(N, ty("u", 64), 16, tmBlob(T, A, Ds, Ss, Bs, Z)) ... </k>
