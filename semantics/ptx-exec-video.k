@@ -73,7 +73,7 @@ module PTX-EXEC-VIDEO
     requires OP in (SetItem("vadd") SetItem("vsub") SetItem("vabsdiff") SetItem("vmin") SetItem("vmax"))
   rule <tk> exec(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, vfinish(M, DT, vcore(OP, vrd(A, AT, C), vrd(B, BT, C)), rd(X, DT, C))) </regs>
-    requires OP in (SetItem("vadd") SetItem("vsub") SetItem("vabsdiff") SetItem("vmin") SetItem("vmax"))
+    requires OP in (SetItem("vadd") SetItem("vsub") SetItem("vabsdiff") SetItem("vmin") SetItem("vmax")) andBool selSfx(opName(D)) ==String ""
 
   // vshl / vshr : shift amount from b's low bits, clamped to 32 or wrapped mod 32
   syntax Int ::= vshift(Bool, Bool, Int, Int) [function, total]              // left?, clamp?, a, b
@@ -85,7 +85,7 @@ module PTX-EXEC-VIDEO
     requires OP in (SetItem("vshl") SetItem("vshr"))
   rule <tk> exec(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, vfinish(M, DT, vshift(OP ==String "vshl", notBool "wrap" in M, vrd(A, AT, C), vrd(B, BT, C)), rd(X, DT, C))) </regs>
-    requires OP in (SetItem("vshl") SetItem("vshr"))
+    requires OP in (SetItem("vshl") SetItem("vshr")) andBool selSfx(opName(D)) ==String ""
 
   // vset.atype.btype.cmp[.secop] d, a, b[, c]
   rule <tk> exec(opc("vset", M, ListItem(AT) ListItem(BT)), ops(D, A, B, .Operands), C) => .K ... </tk>
@@ -97,53 +97,115 @@ module PTX-EXEC-VIDEO
   syntax Int ::= cmpV(String, Int, Int) [function, total]
   rule cmpV(OP, A, B) => b2i(cmpI(OP, A, B, A, B))
 
-  // ---------------------------------------------------------------- SIMD (2 x 16, 4 x 8)
+  // ---------------------------------------------------------------- selectors and masks
+  // Operand names may carry a trailing selector: r2.h10, r3.b7654 (SIMD source/destination) or r1.b2 / r1.h0 (scalar).
+  syntax Bool ::= isDg(String) [function, total] | allDig(String) [function, total]
+  rule isDg(C) => C >=String "0" andBool C <=String "9"
+  rule allDig(S) => true requires lengthString(S) ==Int 0
+  rule allDig(S) => isDg(substrString(S, 0, 1)) andBool allDig(substrString(S, 1, lengthString(S))) requires lengthString(S) >Int 0
+  syntax String ::= selSfx(String) [function, total] | selSfxAt(String, Int) [function, total]
+  rule selSfx(S) => selSfxAt(S, rfindString(S, ".", lengthString(S)))
+  rule selSfxAt(S, I) => substrString(S, I +Int 1, lengthString(S))
+    requires I >=Int 0 andBool lengthString(S) -Int I >Int 2
+     andBool (substrString(S, I +Int 1, I +Int 2) ==String "h" orBool substrString(S, I +Int 1, I +Int 2) ==String "b")
+     andBool allDig(substrString(S, I +Int 2, lengthString(S)))
+  rule selSfxAt(_, _) => "" [owise]
+  syntax String ::= baseStr(String) [function, total]
+  rule baseStr(S) => S requires selSfx(S) ==String ""
+  rule baseStr(S) => substrString(S, 0, lengthString(S) -Int lengthString(selSfx(S)) -Int 1) requires selSfx(S) =/=String ""
+  syntax Int ::= rawV(Operand, Ctx) [function, total]       // the whole 32-bit value of a register operand, ignoring a selector suffix
+  rule rawV(O, C) => rreg(baseStr(opName(O)), C) requires selSfx(opName(O)) =/=String ""
+  rule rawV(O, C) => rd(O, ty("u", 32), C) requires selSfx(opName(O)) ==String ""
+  syntax String ::= selOr(Operand, String) [function, total]
+  rule selOr(O, Dflt) => selSfx(opName(O)) requires selSfx(opName(O)) =/=String ""
+  rule selOr(O, Dflt) => Dflt requires selSfx(opName(O)) ==String ""
+
+  // ---------------------------------------------------------------- scalar data merge   vop.dtype.atype.btype{.sat} d.dsel, a, b, c
+  syntax Bool ::= isScalarVop(String) [function, total]
+  rule isScalarVop(OP) => OP in (SetItem("vadd") SetItem("vsub") SetItem("vabsdiff") SetItem("vmin") SetItem("vmax") SetItem("vshl") SetItem("vshr"))
+  syntax Int ::= vmergeW(String) [function, total] | vmergePos(String) [function, total]
+  rule vmergeW(Sel) => #if substrString(Sel, 0, 1) ==String "h" #then 16 #else 8 #fi
+  rule vmergePos(Sel) => String2Int(substrString(Sel, 1, 2)) *Int vmergeW(Sel)
+  syntax Int ::= vmerge(Ty, Bool, String, Int, Int) [function, total]     // dtype, sat, dsel, tmp, c
+  rule vmerge(DT, Sat, Sel, V, Cr) =>
+       ((Cr &Int mask(32)) &Int (~Int (mask(vmergeW(Sel)) <<Int vmergePos(Sel))))
+       |Int ((satLane(Sat, DT, vmergeW(Sel), V) &Int mask(vmergeW(Sel))) <<Int vmergePos(Sel))
+  rule <tk> exec(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
+       <regs> R => R[baseStr(opName(D)) <- vmerge(DT, "sat" in M, selSfx(opName(D)),
+                       #if OP ==String "vshl" orBool OP ==String "vshr"
+                       #then vshift(OP ==String "vshl", notBool "wrap" in M, vrd(A, AT, C), vrd(B, BT, C))
+                       #else vcore(OP, vrd(A, AT, C), vrd(B, BT, C)) #fi,
+                       rd(X, ty("u", 32), C))] </regs>
+    requires isScalarVop(OP) andBool selSfx(opName(D)) =/=String ""
+
+  // ---------------------------------------------------------------- SIMD (2 x 16, 4 x 8), ISA semantics
   syntax Bool ::= isSimd(String) [function, total]
   rule isSimd(OP) => OP in (SetItem("vadd2") SetItem("vsub2") SetItem("vavrg2") SetItem("vabsdiff2") SetItem("vmin2")
                             SetItem("vmax2") SetItem("vset2") SetItem("vadd4") SetItem("vsub4") SetItem("vavrg4")
                             SetItem("vabsdiff4") SetItem("vmin4") SetItem("vmax4") SetItem("vset4"))
   syntax Int ::= lanes(String) [function, total]
   rule lanes(OP) => #if substrString(OP, lengthString(OP) -Int 1, lengthString(OP)) ==String "2" #then 2 #else 4 #fi
+  syntax String ::= defSel(String, Int) [function, total]       // which ("a", "b", "m"), lanes
+  rule defSel("a", 2) => "h10"
+  rule defSel("b", 2) => "h32"
+  rule defSel("m", 2) => "h10"
+  rule defSel("a", 4) => "b3210"
+  rule defSel("b", 4) => "b7654"
+  rule defSel("m", 4) => "b3210"
+  rule defSel(_, _) => "" [owise]
   syntax Int ::= simdOp(String, Int, Int, Set) [function, total]             // op (without count), ta, tb, mods
   rule simdOp("vadd", A, B, _) => A +Int B
   rule simdOp("vsub", A, B, _) => A -Int B
-  rule simdOp("vavrg", A, B, _) => (A +Int B +Int 1) >>Int 1
+  rule simdOp("vavrg", A, B, _) => #if A +Int B >=Int 0 #then (A +Int B +Int 1) >>Int 1 #else (A +Int B) >>Int 1 #fi
   rule simdOp("vabsdiff", A, B, _) => absInt(A -Int B)
   rule simdOp("vmin", A, B, _) => minInt(A, B)
   rule simdOp("vmax", A, B, _) => maxInt(A, B)
   rule simdOp("vset", A, B, M) => cmpV(cmpOp(M), A, B)
   rule simdOp(_, A, _, _) => A [owise]
-  // lane L of width W: value of dtype-clamped result
-  syntax Int ::= simdLane(String, Set, Ty, Ty, Ty, Int, Int, Int, Int) [function, total]   // op, mods, dt, at, bt, a, b, lane, width
-  rule simdLane(OP, M, DT, AT, BT, A, B, L, W) =>
-       satLane("sat" in M andBool OP =/=String "vset", DT, W,
-               simdOp(OP, ext(AT, A, L *Int W, W), ext(BT, B, L *Int W, W), M))
   syntax Int ::= satLane(Bool, Ty, Int, Int) [function, total]
   rule satLane(true, DT, W, V) => #if isS(DT) #then minInt(maxInt(V, 0 -Int (1 <<Int (W -Int 1))), (1 <<Int (W -Int 1)) -Int 1)
                                   #else minInt(maxInt(V, 0), mask(W)) #fi
   rule satLane(false, _, _, V) => V
-  syntax Int ::= simdAll(String, Set, Ty, Ty, Ty, Int, Int, Int, Int, Bool) [function, total]
-  // accumulate lanes: either packed (no .add) or summed (.add)
-  rule simdAll(OP, M, DT, AT, BT, A, B, L, W, Add) =>
+  // element number K of the 2n-element concatenation (a, b), sign- or zero-extended according to type T
+  syntax Int ::= elemOf(Ty, Int, Int, Int, Int) [function, total]            // type, a, b, k, lane width
+  rule elemOf(T, A, B, K, W) => #if K <Int 32 /Int W #then ext(T, A, K *Int W, W) #else ext(T, B, (K -Int 32 /Int W) *Int W, W) #fi
+  syntax Int ::= selDigit(String, Int, Int) [function, total]                // selector string, lane, lanes
+  rule selDigit(S, L, N) => String2Int(substrString(S, 1 +Int (N -Int 1 -Int L), 2 +Int (N -Int 1 -Int L))) requires lengthString(S) >=Int 1 +Int N
+  rule selDigit(_, L, _) => L [owise]
+  syntax Bool ::= maskHas(String, Int) [function, total]
+  rule maskHas(Mk, L) => findString(substrString(Mk, 1, lengthString(Mk)), Int2String(L), 0) >=Int 0
+  syntax Int ::= tLane(String, Set, Ty, Ty, Ty, Int, Int, String, String, Int, Int) [function, total]
+              // op, mods, dtype, atype, btype, a, b, asel, bsel, lane, lanes
+  rule tLane(OP, M, DT, AT, BT, A, B, AS, BS, L, N) =>
+       satLane("sat" in M andBool OP =/=String "vset", DT, 32 /Int N,
+               simdOp(OP, elemOf(AT, A, B, selDigit(AS, L, N), 32 /Int N), elemOf(BT, A, B, selDigit(BS, L, N), 32 /Int N), M))
+  syntax Int ::= simdAcc(String, Set, Ty, Ty, Ty, Int, Int, String, String, String, Int, Int) [function, total]
+  rule simdAcc(OP, M, DT, AT, BT, A, B, AS, BS, Mk, L, N) =>
        #if L <Int 0 #then 0
-       #else #if Add #then simdLane(OP, M, DT, AT, BT, A, B, L, W) +Int simdAll(OP, M, DT, AT, BT, A, B, L -Int 1, W, Add)
-             #else ((simdLane(OP, M, DT, AT, BT, A, B, L, W) &Int mask(W)) <<Int (L *Int W))
-                   |Int simdAll(OP, M, DT, AT, BT, A, B, L -Int 1, W, Add) #fi #fi
-
+       #else (#if maskHas(Mk, L) #then tLane(OP, M, DT, AT, BT, A, B, AS, BS, L, N) #else 0 #fi)
+             +Int simdAcc(OP, M, DT, AT, BT, A, B, AS, BS, Mk, L -Int 1, N) #fi
+  syntax Int ::= simdMrg(String, Set, Ty, Ty, Ty, Int, Int, Int, String, String, String, Int, Int) [function, total]
+  rule simdMrg(OP, M, DT, AT, BT, A, B, Cv, AS, BS, Mk, L, N) =>
+       #if L <Int 0 #then 0
+       #else (((#if maskHas(Mk, L) #then tLane(OP, M, DT, AT, BT, A, B, AS, BS, L, N) &Int mask(32 /Int N)
+               #else (Cv >>Int (L *Int (32 /Int N))) &Int mask(32 /Int N) #fi) <<Int (L *Int (32 /Int N))))
+             |Int simdMrg(OP, M, DT, AT, BT, A, B, Cv, AS, BS, Mk, L -Int 1, N) #fi
+  syntax Int ::= simdRes(String, Set, Ty, Ty, Ty, Int, Int, Int, String, String, String) [function, total]
+  rule simdRes(OP, M, DT, AT, BT, A, B, Cv, AS, BS, Mk) =>
+       #if "add" in M
+       #then trunc(Cv +Int simdAcc(substrString(OP, 0, lengthString(OP) -Int 1), M, DT, AT, BT, A, B, AS, BS, Mk, lanes(OP) -Int 1, lanes(OP)), 32)
+       #else simdMrg(substrString(OP, 0, lengthString(OP) -Int 1), M, DT, AT, BT, A, B, Cv, AS, BS, Mk, lanes(OP) -Int 1, lanes(OP)) #fi
   rule <tk> exec(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
-       <regs> R => wr(R, D, trunc(simdAll(substrString(OP, 0, lengthString(OP) -Int 1), M, DT, AT, BT,
-                                          rd(A, ty("u", 32), C), rd(B, ty("u", 32), C),
-                                          lanes(OP) -Int 1, 32 /Int lanes(OP), "add" in M)
-                                   +Int #if "add" in M #then rd(X, DT, C) #else 0 #fi, 32)) </regs>
-    requires isSimd(OP)
-
+       <regs> R => R[baseStr(opName(D)) <- simdRes(OP, M, DT, AT, BT, rawV(A, C), rawV(B, C), rd(X, ty("u", 32), C),
+                                                   selOr(A, defSel("a", lanes(OP))), selOr(B, defSel("b", lanes(OP))),
+                                                   selOr(D, defSel("m", lanes(OP))))] </regs>
+    requires isSimd(OP) andBool OP =/=String "vset2" andBool OP =/=String "vset4"
   // vset2 / vset4 have no destination type suffix (d is .u32)
   rule <tk> exec(opc(OP, M, ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
-       <regs> R => wr(R, D, trunc(simdAll(substrString(OP, 0, lengthString(OP) -Int 1), M, ty("u", 32), AT, BT,
-                                          rd(A, ty("u", 32), C), rd(B, ty("u", 32), C),
-                                          lanes(OP) -Int 1, 32 /Int lanes(OP), "add" in M)
-                                   +Int #if "add" in M #then rd(X, ty("u", 32), C) #else 0 #fi, 32)) </regs>
-    requires isSimd(OP)
+       <regs> R => R[baseStr(opName(D)) <- simdRes(OP, M, ty("u", 32), AT, BT, rawV(A, C), rawV(B, C), rd(X, ty("u", 32), C),
+                                                   selOr(A, defSel("a", lanes(OP))), selOr(B, defSel("b", lanes(OP))),
+                                                   selOr(D, defSel("m", lanes(OP))))] </regs>
+    requires OP ==String "vset2" orBool OP ==String "vset4"
 
   // ---------------------------------------------------------------- vmad
   //   vmad.dtype.atype.btype{.po}{.sat}{.scale} d, {-}a{.asel}, {-}b{.bsel}, {-}c     (see the ISA semantics)
