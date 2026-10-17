@@ -67,6 +67,13 @@ CFG = [
  (8, 32, 's32', 'u8', 's8', '', 'reg', True, 0, True, 3, 0, 1, 1, False),
  (8, 256, 's32', 'b1', 'b1', '.and.popc', 'desc', True, 1, True, 1, 1, 1, 1, False),
  (24, 16, 'f32', 'f16', 'f16', '', 'desc', True, 3, False, 1, 1, 1, 1, False),
+ (32, 16, 'f32', 'bf16', 'bf16', '', 'desc', True, 2, True, 2, 1, 1, 1, False),
+ (48, 16, 'f32', 'f16', 'f16', '', 'reg', True, 0, False, 1, 0, -1, -1, False),
+ (40, 32, 'f16', 'e4m3', 'e4m3', '', 'desc', True, 3, True, 3, 1, 1, 1, False),
+ (24, 8, 'f32', 'tf32', 'tf32', '', 'desc', True, 2, True, 2, 1, -1, -1, False),
+ (48, 32, 's32', 'u8', 'u8', '', 'reg', True, 0, True, 1, 1, 1, 1, False),
+ (24, 256, 's32', 'b1', 'b1', '.xor.popc', 'desc', True, 1, True, 1, 1, 1, 1, False),
+ (8, 16, 'f16', 'f16', 'f16', '', 'desc', False, 0, True, 0, 1, 1, 1, True),
 ]
 h = lambda xs: ", ".join(str(x) for x in xs)
 for kk, (N, K, dt, at, bt, extra, aform, akm, az, bkm, bz, sd, sa, sb, small) in enumerate(CFG):
@@ -85,7 +92,7 @@ for kk, (N, K, dt, at, bt, extra, aform, akm, az, bkm, bz, sd, sa, sb, small) in
     Cm = {}
     for r in range(64):
         for c in range(N):
-            Cm[(r, c)] = (to_bits_small('f16') if small else rand_float_bits('f32')) if dt != 's32' else random.choice([0, 1, 100, 0xFFFFFFF0, 0x7FFFFFF0, random.getrandbits(32)])
+            Cm[(r, c)] = (to_bits_small('f16') if small else rand_float_bits(dt)) if dt != 's32' else random.choice([0, 1, 100, 0xFFFFFFF0, 0x7FFFFFF0, random.getrandbits(32)])
     # expected
     def neg(ty, bits, s): return bits ^ (1 << (bw(ty) - 1)) if (s < 0 and isflt(ty)) else bits
     D = {}
@@ -96,7 +103,7 @@ for kk, (N, K, dt, at, bt, extra, aform, akm, az, bkm, bz, sd, sa, sb, small) in
                 s = acc + sum(fval(at, neg(at, A[r][k], sa)) * fval(bt, neg(bt, B[c][k], sb)) for k in range(K))
                 D[(r, c)] = to_bits(dt, s)
             elif at == 'b1':
-                s = (sx(Cm[(r, c)], 32) if sd else 0) + sum(A[r][k] & B[c][k] for k in range(K))
+                s = (sx(Cm[(r, c)], 32) if sd else 0) + sum((A[r][k] ^ B[c][k]) if 'xor' in extra else (A[r][k] & B[c][k]) for k in range(K))
                 D[(r, c)] = s & 0xFFFFFFFF
             else:
                 va = (lambda x: sx(x, 8)) if at[0] == 's' else (lambda x: x)

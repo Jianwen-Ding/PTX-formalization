@@ -24,13 +24,18 @@ CFG = [
  (8, 32, 'f32', 'f16', 'f16', 'reg', True, 0, True, 1, 0, 1, 1, 1),
  (16, 32, 'f32', 'bf16', 'bf16', 'reg', True, 0, False, 2, 1, 1, -1, 1),
  (8, 32, 'f16', 'f16', 'f16', 'desc', True, 1, True, 0, 1, 1, 1, 1),
- (8, 16, 'f32', 'tf32', 'tf32', 'reg', True, 0, True, 3, 0, 0, 1, 1),
+ (8, 16, 'f32', 'tf32', 'tf32', 'reg', True, 0, True, 2, 0, 0, 1, 1),
  (8, 16, 'f32', 'tf32', 'tf32', 'desc', True, 1, True, 1, 1, 1, 1, -1),
  (8, 64, 'f32', 'e4m3', 'e5m2', 'reg', True, 0, True, 1, 0, 1, 1, 1),
  (16, 64, 'f16', 'e5m2', 'e4m3', 'desc', True, 1, True, 1, 0, 1, -1, 1),
  (8, 64, 's32', 's8', 'u8', 'reg', True, 0, True, 1, 0, 1, 1, 1),
  (16, 64, 's32', 'u8', 's8', 'desc', True, 1, True, 1, 0, 0, 1, 1),
  (8, 32, 'f32', 'f16', 'f16', 'desc', False, 2, False, 3, 0, 1, 1, 1),
+ (8, 16, 'f32', 'tf32', 'tf32', 'reg', True, 0, True, 1, 0, 1, 1, 1),
+ (8, 16, 'f32', 'tf32', 'tf32', 'reg', True, 0, True, 1, 1, 1, 1, 1),
+ (8, 32, 'f32', 'bf16', 'bf16', 'reg', True, 0, True, 1, 1, 1, 1, 1),
+ (8, 16, 'f32', 'tf32', 'tf32', 'reg', True, 0, True, 1, 0, 0, 1, 1),
+ (8, 16, 'f32', 'tf32', 'tf32', 'reg', True, 0, True, 2, 0, 1, 1, 1),
 ]
 h = lambda xs: ", ".join(str(x) for x in xs)
 for kk, (N, K, dt, at, bt, aform, akm, az, bkm, bz, sel, sd, sa, sb) in enumerate(CFG):
