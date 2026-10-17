@@ -21,7 +21,7 @@ module PTX-EXEC-MEMQ
 
   // ld/st/atom/red with a trailing L2 cache-policy operand
   rule <tk> exec(opc(OP, M, T), ops(Os), C) => exec(opc(OP, M -Set SetItem("L2::cache_hint"), T), ops(dropLast(Os)), C) ... </tk>
-    requires "L2::cache_hint" in M andBool OP in (SetItem("ld") SetItem("st") SetItem("atom") SetItem("red"))
+    requires "L2::cache_hint" in M andBool notBool ("bulk" in M orBool "tensor" in M) andBool OP in (SetItem("ld") SetItem("st") SetItem("atom") SetItem("red") SetItem("cp"))
 
   // hints without observable effect
   rule <tk> exec(opc(OP, _, _), ops(_), _) => .K ... </tk>

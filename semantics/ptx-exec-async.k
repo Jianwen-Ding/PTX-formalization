@@ -16,6 +16,8 @@ module PTX-EXEC-ASYNC
   imports PTX-EXEC-MBAR
   imports PTX-EXEC-MEMQ
 
+  rule isCollective("cp") => true      // visible steps: the copies touch shared/global memory
+
   syntax KItem ::= #cpRd(Loc, Loc, Int, Int) | #cpWr(Loc, Int)
 
   // number of bytes taken from the source: cp-size, src-size, or 0 for a true ignore-src predicate
