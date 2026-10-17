@@ -24,7 +24,7 @@ per-instruction version/target minima are in `semantics/ptx-isa-table.k` (`.isac
 ## Not modelled
 * `multimem.*`, `fabric.*` (need multi-device objects).
 * Textures: cubemaps, mipmaps/`tex.level/.grad` LOD hardware, depth compare, formatted surface accesses (`.p`).
-* `wgmma.mma_async.sp`; tcgen05 `.cta_group::2` for sparse/block-scaled kinds, `.decompress::lut::b`, `kind::ti16`; ldmatrix sm_100 `m16n8` b8/b6/b4 forms.
+* `wgmma.mma_async.sp`; tcgen05 `.cta_group::2` for sparse/block-scaled kinds, `.decompress::lut::b`, `kind::ti16`.
 * TMA: interleaved layouts, `im2col` modes, `.override` forms.  (The tensor-map encoding is private to this semantics, not the hardware 128-byte format.)
 * `vmad`, video `.mask` destinations, permuting SIMD selectors; `istypep`.
 * `.multicast::cluster::32b` for mbarrier; generic-window cluster addresses.

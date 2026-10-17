@@ -172,3 +172,12 @@ Test generators: `scripts/gen_mma_bs.py`, `scripts/gen_mmasp_bs.py`.
 
 tcgen05 kinds `f8f6f4` / `mxf8f6f4`: fp6 / fp4 elements are bit-packed in shared memory (ISA 9.7.18.10.4.4): with Dense-K 32 every 16
 elements occupy a 16-byte chunk (padding after the 12 / 8 data bytes), with Dense-K 64 rows are contiguous.  K-major tiles only.
+
+## ldmatrix / stmatrix sm_100 forms
+
+`ldmatrix.m16n16` (`.trans` mandatory; 16 row addresses of 16 bytes per matrix, `.x1`/`.x2`) gives thread (g, t) register 2i = bytes M[4t+b][g] and
+register 2i+1 = M[4t+b][g+8] (b = 0..3).  `ldmatrix.m8n16` gives thread (g, t) the elements 4t..4t+3 of row g.  With `.b8x16.b6x16_p32` /
+`.b4x16_p64` / `.s8.s4` the row's 16 elements are expanded to bytes (fp6: low 6 bits, fp4: central 4 bits as for mma.sync containers, s4:
+sign-extended).  `stmatrix.m16n8.b8` stores the 16 x 8 matrix transposed: memory row n (addressed by thread 8i+n, 16 bytes) holds X[0..15][n] with
+thread (g, t) holding X[g][2t..2t+1] in bytes 0-1 and X[g+8][2t..2t+1] in bytes 2-3.  These per-thread layouts are figures in the ISA (assumed);
+tests: `scripts/gen_ldm2.py`.

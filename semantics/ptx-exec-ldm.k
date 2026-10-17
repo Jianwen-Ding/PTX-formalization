@@ -8,7 +8,7 @@
 // Matrix i (0..num-1) of ldmatrix/stmatrix has its row r addressed (16 bytes, 8 b16
 // elements) by lane 8*i + r.  Without .trans, lane (g = lane/4, t = lane%4) holds
 // elements (g, 2t) [low half] and (g, 2t+1) [high half] of register i; with .trans it
-// holds (2t, g) and (2t+1, g).  Not modelled: the sm_100 m16n8/m8n16 b8/b6/b4 forms.
+// holds (2t, g) and (2t+1, g).  The sm_100 m16n16 / m8n16 / m16n8 forms (b8, b6, b4) follow below.
 //
 // ldmatrix: each lane reads its row, then a warp rendezvous redistributes the rows.
 // stmatrix: a rendezvous builds the rows, each addressing lane then writes its row.
@@ -42,6 +42,7 @@ module PTX-EXEC-LDM
             #coll("ldmatrix", 4294967295, ListItem(numOf(M)) ListItem("trans" in M),
                   ListItem(locOff(ea(A, spaceOf(M), C))), ldmScr(0, 2 *Int numOf(M)))
             ~> #ldmFetch(locSp(ea(A, spaceOf(M), C), spaceOf(M)), 2 *Int numOf(M), dlist(Dv)) ... </tk>
+    requires notBool ("m16n16" in M orBool "m8n16" in M)
 
   // addresses of T[a][b], b being the b16 element index in the row
   syntax Int ::= ldmAddr(Map, Int, Int, Int) [function, total]
@@ -93,11 +94,85 @@ module PTX-EXEC-LDM
   rule <tk> #res(V) ~> #ldmH(Sp, A2, As, D, Ds) => #mem(mkLoc(Sp, A2), rdOp(2)) ~> #ldmH2(V, Sp, As, D, Ds) ... </tk>
   rule <tk> #res(W) ~> #ldmH2(V, Sp, As, D, Ds) => #wmWr(ListItem(D), ListItem(V |Int (W <<Int 16))) ~> #ldmRd(Sp, As, Ds) ... </tk>
 
+
+  // ---------------------------------------------------------------- ldmatrix.m8n16 / m16n16 (sm_100a): 8-bit data, optionally expanded from 6 / 4-bit
+  //   ldmatrix.sync.aligned.m16n16.num.trans{.ss}.b8 | .b8x16.b6x16_p32 | .b8x16.b4x16_p64   r, [p]   (16 row addresses per matrix, 16 bytes each)
+  //   ldmatrix.sync.aligned.m8n16.num{.ss}.b8x16.b6x16_p32 | .b8x16.b4x16_p64 | .s8.s4         r, [p]   (8 row addresses per matrix)
+  // m8n16: thread (g, t) receives the elements 4t..4t+3 of row g; m16n16 (transposed): register 2i holds M[4t+b][g] and register 2i+1
+  // M[4t+b][g+8] (b = 0..3) -- byte b of the register.  Expanded elements sit in 8-bit containers (6-bit: low bits, 4-bit: central bits, as for
+  // mma.sync; s4 is sign-extended).  The per-thread layouts are given by figures in the ISA; this is an assumption.
+  syntax Int ::= ldmFmt(Set, List) [function, total]       // 0 plain 8-bit, 6 / 4: unsigned 6 / 4-bit elements, 5: signed 4-bit
+  rule ldmFmt(M, _) => 6 requires "b6x16_p32" in M
+  rule ldmFmt(M, _) => 4 requires "b4x16_p64" in M
+  rule ldmFmt(_, Ts) => 5 requires ty("s", 4) in Ts
+  rule ldmFmt(_, _) => 0 [owise]
+  syntax Int ::= ldmEl(Int, Int, Int) [function, total]    // format, 128-bit row, column -> 8-bit element
+  rule ldmEl(0, R, C) => (R >>Int (8 *Int C)) &Int 255
+  rule ldmEl(6, R, C) => (R >>Int (6 *Int C)) &Int 63
+  rule ldmEl(4, R, C) => ((R >>Int (4 *Int C)) &Int 15) <<Int 2
+  rule ldmEl(5, R, C) => (#if ((R >>Int (4 *Int C)) &Int 8) ==Int 8 #then ((R >>Int (4 *Int C)) &Int 15) |Int 240 #else (R >>Int (4 *Int C)) &Int 15 #fi) &Int 255
+  rule ldmEl(_, _, _) => 0 [owise]
+  // addresses lane L needs
+  syntax List ::= ldm2Addrs(Map, Int, Int, Int, Int) [function, total]     // arrivals, kind (0 m8n16, 1 m16n16), lane, matrix, count
+  rule ldm2Addrs(Arr, K, L, I, N) => ldm2A1(Arr, K, L, I) ldm2Addrs(Arr, K, L, I +Int 1, N) requires I <Int N
+  rule ldm2Addrs(_, _, _, _, _) => .List [owise]
+  syntax List ::= ldm2A1(Map, Int, Int, Int) [function, total]
+  rule ldm2A1(Arr, 0, L, I) => ListItem(at(listAt(Arr, 8 *Int I +Int L /Int 4), 0))
+  rule ldm2A1(Arr, 1, L, I) => ListItem(at(listAt(Arr, 16 *Int I +Int 4 *Int (L %Int 4)), 0)) ListItem(at(listAt(Arr, 16 *Int I +Int 4 *Int (L %Int 4) +Int 1), 0))
+                                ListItem(at(listAt(Arr, 16 *Int I +Int 4 *Int (L %Int 4) +Int 2), 0)) ListItem(at(listAt(Arr, 16 *Int I +Int 4 *Int (L %Int 4) +Int 3), 0))
+  rule ldm2A1(_, _, _, _) => .List [owise]
+  syntax Map ::= ldm2All(Map, List, Int, Int) [function, total]
+  rule ldm2All(Arr, ListItem(L:Int) Ls, K, N) => (L |-> ldm2Addrs(Arr, K, L, 0, N)) ldm2All(Arr, Ls, K, N)
+  rule ldm2All(_, _, _, _) => .Map [owise]
+  rule collCompute("ldmatrix2", ListItem(K:Int) ListItem(N:Int), Arr) => ldm2All(Arr, keys_list(Arr), K, N)
+  // register values from the rows read (ListItem per address, in the order of ldm2Addrs)
+  syntax List ::= ldm2Out(Int, Int, Int, List) [function, total]           // kind, format, thread-in-warp, rows
+  rule ldm2Out(0, F, T, ListItem(R:Int) Rs) =>
+       ListItem(ldmEl(F, R, 4 *Int (T %Int 4)) |Int (ldmEl(F, R, 4 *Int (T %Int 4) +Int 1) <<Int 8) |Int (ldmEl(F, R, 4 *Int (T %Int 4) +Int 2) <<Int 16) |Int (ldmEl(F, R, 4 *Int (T %Int 4) +Int 3) <<Int 24))
+       ldm2Out(0, F, T, Rs)
+  rule ldm2Out(1, F, T, ListItem(R0:Int) ListItem(R1:Int) ListItem(R2:Int) ListItem(R3:Int) Rs) =>
+       ListItem(ldmEl(F, R0, T /Int 4) |Int (ldmEl(F, R1, T /Int 4) <<Int 8) |Int (ldmEl(F, R2, T /Int 4) <<Int 16) |Int (ldmEl(F, R3, T /Int 4) <<Int 24))
+       ListItem(ldmEl(F, R0, T /Int 4 +Int 8) |Int (ldmEl(F, R1, T /Int 4 +Int 8) <<Int 8) |Int (ldmEl(F, R2, T /Int 4 +Int 8) <<Int 16) |Int (ldmEl(F, R3, T /Int 4 +Int 8) <<Int 24))
+       ldm2Out(1, F, T, Rs)
+  rule ldm2Out(_, _, _, _) => .List [owise]
+  syntax KItem ::= #ldm2Rd(String, List, Int, List, List) | #ldm2Cont(String, List, Int, List, List) | #ldm2Fin(List, List)
+  rule <tk> exec(opc("ldmatrix", M, Ts), ops(Dv, [ A ], .Operands), C) =>
+            #coll("ldmatrix2", 4294967295, ListItem(#if "m16n16" in M #then 1 #else 0 #fi) ListItem(numOf(M)),
+                  ListItem(locOff(ea(A, spaceOf(M), C))), ldmScr(0, #if "m16n16" in M #then 4 *Int numOf(M) #else numOf(M) #fi))
+            ~> #ldm2Go(locSp(ea(A, spaceOf(M), C), spaceOf(M)), #if ldmFmt(M, Ts) ==Int 5 #then 8 #else 16 #fi, ListItem(#if "m16n16" in M #then 1 #else 0 #fi) ListItem(ldmFmt(M, Ts)) ListItem(numOf(M)) ListItem(Dv),
+                       #if "m16n16" in M #then 4 *Int numOf(M) #else numOf(M) #fi) ... </tk>
+    requires "m16n16" in M orBool "m8n16" in M
+  syntax KItem ::= #ldm2Go(String, Int, List, Int)
+  rule <tk> #ldm2Go(Sp, Sz, Info, N) => #ldm2Rd(Sp, ldmVals(R, 0, N), Sz, .List, Info) ... </tk>
+       <regs> R </regs>
+  rule <tk> #ldm2Rd(Sp, ListItem(A:Int) As, Sz, Acc, Info) => #mem(mkLoc(Sp, A), rdOp(Sz)) ~> #ldm2Cont(Sp, As, Sz, Acc, Info) ... </tk>
+  rule <tk> #res(V) ~> #ldm2Cont(Sp, As, Sz, Acc, Info) => #ldm2Rd(Sp, As, Sz, Acc ListItem(V), Info) ... </tk>
+  rule <tk> #ldm2Rd(_, .List, _, Acc, Info) => #ldm2Fin(Info, Acc) ... </tk>
+  rule <tk> #ldm2Fin(ListItem(K:Int) ListItem(F:Int) ListItem(N:Int) ListItem(Dv:Operand), Acc) => #wmWr(dlist(Dv), ldm2Out(K, F, TID %Int 32, Acc)) ... </tk>
+       <tid> TID </tid>
+
   // ---------------------------------------------------------------- stmatrix
   // contribution: the lane's N registers; result: the 128-bit row it must store
   rule <tk> exec(opc("stmatrix", M, ListItem(_)), ops([ A ], Vs, .Operands), C) =>
             #coll("stmatrix", 4294967295, ListItem(numOf(M)) ListItem("trans" in M), vecRegs(Vs, ty("b", 32), C), ListItem(stmTmp()))
             ~> #stmGo(ea(A, spaceOf(M), C), numOf(M)) ... </tk>
+    requires notBool "m16n8" in M
+  // stmatrix.m16n8 (8-bit): a 16 x 8 matrix X per register, stored transposed: memory row n (16 bytes, addressed by thread 8i + n) holds
+  // X[0..15][n].  Thread (g, t) holds X[g][2t], X[g][2t+1] in bytes 0, 1 and X[g+8][2t], X[g+8][2t+1] in bytes 2, 3 (accumulator-like layout; assumed,
+  // the ISA gives it as a figure).
+  rule <tk> exec(opc("stmatrix", M, ListItem(_)), ops([ A ], Vs, .Operands), C) =>
+            #coll("stmatrix2", 4294967295, ListItem(numOf(M)), vecRegs(Vs, ty("b", 32), C), ListItem(stmTmp()))
+            ~> #stmGo(ea(A, spaceOf(M), C), numOf(M)) ... </tk>
+    requires "m16n8" in M
+  syntax Int ::= stmX(Map, Int, Int, Int) [function, total]          // matrix i, row m, column n of X
+  rule stmX(Arr, I, Rm, Cn) => (at(listAt(Arr, 4 *Int (Rm %Int 8) +Int Cn /Int 2), I) >>Int (8 *Int (2 *Int (Rm /Int 8) +Int Cn %Int 2))) &Int 255
+  syntax Int ::= stmRow2(Map, Int, Int, Int) [function, total]       // matrix i, memory row n, byte m
+  rule stmRow2(Arr, I, Cn, Rm) => (stmX(Arr, I, Rm, Cn) <<Int (8 *Int Rm)) |Int stmRow2(Arr, I, Cn, Rm +Int 1) requires Rm <Int 16
+  rule stmRow2(_, _, _, _) => 0 [owise]
+  syntax Map ::= stmAll2(Map, List, Int) [function, total]
+  rule stmAll2(Arr, ListItem(L:Int) Ls, N) => (L |-> #if L <Int 8 *Int N #then ListItem(stmRow2(Arr, L /Int 8, L %Int 8, 0)) #else ListItem(0) #fi) stmAll2(Arr, Ls, N)
+  rule stmAll2(_, _, _) => .Map [owise]
+  rule collCompute("stmatrix2", ListItem(N:Int), Arr) => stmAll2(Arr, keys_list(Arr), N)
   syntax Reg ::= stmTmp() [function, total]
   rule stmTmp() => #token("%__stm", "Reg")
   rule <tk> #stmGo(L, N) => #mem(L, wrOp(16, V)) ~> #drop ... </tk>
