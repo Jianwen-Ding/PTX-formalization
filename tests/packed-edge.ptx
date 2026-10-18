@@ -1,0 +1,26 @@
+// packed conversions: saturation, NaN, relu, e5m2 (values from the ISA rules, checked by hand)
+.version 8.6
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %a, %b, %c, %d; .reg .b16 %h; .reg .f32 %x, %y, %n, %m;
+    ld.param.u64 %o, [po];
+    mov.f32 %x, 1000.0; mov.f32 %y, 0f7FC00000; mov.f32 %n, -1.0; mov.f32 %m, 2.0;
+    cvt.rn.satfinite.e4m3x2.f32 %h, %x, %y;       // 1000 -> 448 (0x7E), NaN -> 0x7F
+    cvt.u32.u16 %a, %h;
+    cvt.rn.relu.f16x2.f32 %b, %n, %m;              // relu(-1) = 0, 2.0 = 0x4000
+    mov.f32 %x, 1.5;
+    cvt.rn.satfinite.e5m2x2.f32 %h, %x, %m;        // 1.5 = 0x3E, 2.0 = 0x40
+    cvt.u32.u16 %c, %h;
+    cvt.rn.satfinite.e4m3x2.f32 %h, %n, %n;        // -1.0 = 0xB8 twice
+    cvt.u32.u16 %d, %h;
+    st.global.u32 [%o], %a;
+    st.global.u32 [%o+4], %b;
+    st.global.u32 [%o+8], %c;
+    st.global.u32 [%o+12], %d;
+    ret;
+}
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 32383, 16384, 15936, 47288 };

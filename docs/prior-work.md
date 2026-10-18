@@ -286,3 +286,6 @@ Not modelled: the conditional phase / payload report of `.layout::v1` mbarriers 
 ## .address_size 32
 * `.address_size 32` marks the module (a `%%asz` entry in the symbol table).  Every effective address computed from a register is then checked: the register must be at most 32 bits wide (a 64-bit register used as an address faults, as ptxas rejects it) and the address (register + offset) wraps modulo 2^32.  `.address_size 64` is the default.  Tests: `tests/addr32.ptx`, `tests/neg/addr32-wide.ptx`.
 * Not modelled: the 32-bit sizes of `.param .ptr`, function pointers and `cvta` result types beyond the register-width check, and the restriction of the generic window to 4 GiB (the interpreter's addresses are small anyway).
+
+## Packed and wide types (audit)
+* `tests/packed-types.ptx` and `tests/packed-edge.ptx` check, against hand-derived values from the ISA rules: `cvt` to f16x2 / bf16x2 / e4m3x2 / e5m2x2 / e2m1x2 (operand order: the first source goes to the upper half), `.relu`, `.satfinite` saturation and NaN encodings, packed `add`/`fma`, `mov.b128` pack/unpack and 128-bit stores.  No discrepancies were found.

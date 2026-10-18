@@ -1,0 +1,33 @@
+// packed types audit: f16x2/bf16x2/e4m3x2/e2m1x2 conversions and arithmetic, b128 moves and stores (values checked by hand against the ISA)
+.version 8.6
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %a, %b, %c, %d, %e, %f; .reg .b16 %h; .reg .f32 %x, %y; .reg .b128 %q;
+    .reg .b64 %lo, %hi;
+    ld.param.u64 %o, [po];
+    mov.f32 %x, 1.5; mov.f32 %y, -2.25;
+    cvt.rn.f16x2.f32 %a, %x, %y;
+    cvt.rn.bf16x2.f32 %b, %x, %y;
+    cvt.rn.satfinite.e4m3x2.f32 %h, %x, %y;
+    cvt.u32.u16 %c, %h;
+    cvt.rn.satfinite.e2m1x2.f32 %h, %x, %y;
+    cvt.u32.u16 %d, %h;
+    add.f16x2 %e, %a, %a;
+    fma.rn.bf16x2 %f, %b, %b, %b;
+    mov.b64 %lo, 0x1111111122222222; mov.b64 %hi, 0x3333333344444444;
+    mov.b128 %q, {%lo, %hi};
+    mov.b128 {%lo, %hi}, %q;
+    st.global.b128 [%o+32], %q;
+    st.global.u32 [%o], %a;
+    st.global.u32 [%o+4], %b;
+    st.global.u32 [%o+8], %c;
+    st.global.u32 [%o+12], %d;
+    st.global.u32 [%o+16], %e;
+    st.global.u32 [%o+20], %f;
+    ret;
+}
+.buffer OUT .u32 [12];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 1040236672, 1069596688, 15553, 60, 1107346560, 1081098292, 0, 0, 572662306, 286331153, 1145324612, 858993459 };
