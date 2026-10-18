@@ -22,6 +22,7 @@ module PTX-ISA-TABLE
   rule isaRows("cache_policy") => ListItem(isaRow("", 74, 80, false))
   rule isaRows("call") => ListItem(isaRow("", 10, 20, false))
   rule isaRows("clusterlaunchcontrol") => ListItem(isaRow("", 86, 100, false))
+  rule isaRows("clmad") => ListItem(isaRow("", 93, 80, false))
   rule isaRows("cnot") => ListItem(isaRow("", 10, 0, false))
   rule isaRows("cos") => ListItem(isaRow("", 10, 0, false))
   rule isaRows("cp") => ListItem(isaRow("", 70, 80, false))

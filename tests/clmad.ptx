@@ -1,0 +1,20 @@
+// clmad (PTX ISA 9.3): carry-less multiply-add, .lo and .hi halves
+.version 9.3
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %a, %b, %c, %lo, %hi, %z;
+    ld.param.u64 %o, [po];
+    mov.u64 %a, 0x8000000000000003;
+    mov.u64 %b, 0x8000000000000005;
+    mov.u64 %c, 0x00000000000000ff;
+    clmad.lo.u64 %lo, %a, %b, %c;
+    clmad.hi.u64 %hi, %a, %b, %z;
+    st.global.u64 [%o], %lo;
+    st.global.u64 [%o+8], %hi;
+    ret;
+}
+.buffer OUT .u64 [2];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u64 = { 240, 4611686018427387907 };

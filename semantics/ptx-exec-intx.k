@@ -26,6 +26,16 @@ module PTX-EXEC-INTX
   rule <tk> exec(opc("mad24", M, ListItem(T)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, mad24(M, T, rd(A, T, C), rd(B, T, C), rd(X, T, C))) </regs>
 
+  // ---------------------------------------------------------------- clmad (PTX ISA 9.3, sm_80)
+  // carry-less 64x64 -> 128-bit multiply, .lo / .hi half, then carry-less (xor) accumulate of c
+  syntax Int ::= clmul(Int, Int, Int) [function, total]
+  rule clmul(A, B, I) => (#if (A >>Int I) &Int 1 ==Int 1 #then B <<Int I #else 0 #fi) xorInt clmul(A, B, I +Int 1) requires I <Int 64
+  rule clmul(_, _, _) => 0 [owise]
+  rule <tk> exec(opc("clmad", M, _), ops(D, A, B, X, .Operands), C) => .K ... </tk>
+       <regs> R => wr(R, D, (#if "hi" in M #then clmul(rd(A, ty("u", 64), C), rd(B, ty("u", 64), C), 0) >>Int 64
+                             #else clmul(rd(A, ty("u", 64), C), rd(B, ty("u", 64), C), 0) &Int 18446744073709551615 #fi)
+                            xorInt rd(X, ty("u", 64), C)) </regs>
+
   // ---------------------------------------------------------------- sad
   // d = c + |a - b|
   syntax Int ::= sad(Ty, Int, Int, Int) [function, total]
