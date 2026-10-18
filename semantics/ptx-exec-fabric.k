@@ -160,6 +160,7 @@ module PTX-EXEC-FABRIC
   rule fbBlobs(_, _, _) => .List [owise]
   rule fbStores(ListItem(Bl:Int) Bls, M, Cs, S, C) => ListItem(#tmSt(M, Bl, Cs, S, C)) fbStores(Bls, M, Cs, S, C)
   rule fbStores(_, _, _, _, _) => .List [owise]
+  rule <tk> exec(opc("fabric", M, _), ops(.Operands), _) => .K ... </tk> requires "submit" in M orBool "wait" in M
   syntax Set ::= fbTM(Set) [function, total]
   rule fbTM(M) => M SetItem("bulk_group") SetItem("reduce") requires "try_red" in M
   rule fbTM(M) => M SetItem("bulk_group") [owise]

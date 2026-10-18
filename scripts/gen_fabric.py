@@ -125,6 +125,6 @@ ptx += f".fabric 1 .size {SZ} {{ BF1 }} ;\n.fabric 2 .size {SZ} {{ BG0, BG1, BG2
 ptx += f".buffer O .u32 [{len(exp)}];\n.launch k <<< 1, 1 >>> (O, TM);\n"
 ptx += f".expect O .u32 = {{ {', '.join(map(str, exp))} }};\n"
 ptx += ".expect BF1 .u8 = { " + ", ".join(map(str, F1)) + " };\n"
-for d in range(3): ptx += f".expect BG{d} .u8 = {{ " + ", ".join(map(str, G[d])) + " }};\n"
+for d in range(3): ptx += f".expect BG{d} .u8 = {{ " + ", ".join(map(str, G[d])) + " };\n"
 open('tests/fabric.ptx', 'w').write(ptx)
 print(len(exp), "values", len(ptx))
