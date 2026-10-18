@@ -263,10 +263,10 @@ module PTX-EXEC-TEX
 
   // tex[.base|.level|.grad].geom.v4.dtype.ctype d[|p], [tex, {coords}] | [tex, sampler, {coords}] {, lod | , dPdx, dPdy} {, offset} {, depth-ref}
   syntax KItem ::= #texOut(Operand, List)
-  rule <tk> exec(opc("tex", M, ListItem(DT) ListItem(CT)), ops(Dv, [ T , Cs ], Ex), C) =>
+  rule <tk> exec(opc("tex", M, ListItem(DT) ListItem(CT)), ops(Dv, [ T , Cs ], Ex:Operands), C) =>
             #texOut(Dv, texRun(GM, readBytes(GM, hAddr(T, C), 128), 0 -Int 1, M, DT, CT, Cs, opsList(Ex), C)) ... </tk>
        <gmem> GM </gmem>
-  rule <tk> exec(opc("tex", M, ListItem(DT) ListItem(CT)), ops(Dv, [ T , S , Cs ], Ex), C) =>
+  rule <tk> exec(opc("tex", M, ListItem(DT) ListItem(CT)), ops(Dv, [ T , S , Cs ], Ex:Operands), C) =>
             #texOut(Dv, texRun(GM, readBytes(GM, hAddr(T, C), 128), readBytes(GM, hAddr(S, C), 128), M, DT, CT, Cs, opsList(Ex), C)) ... </tk>
        <gmem> GM </gmem>
   // the destination vector, optionally followed by a residency predicate (always set: every level is resident)
@@ -343,10 +343,10 @@ module PTX-EXEC-TEX
 
   // tld4.{r,g,b,a}.{2d,a2d,cube,acube}.v4.dtype.f32 d[|p], [tex {, sampler}, {coords}] {, offset} {, depth-ref}
   // the component of the 2x2 footprint, counter-clockwise from the lower-left texel (level 0; sampler address mode)
-  rule <tk> exec(opc("tld4", M, ListItem(DT) ListItem(_)), ops(Dv, [ T , Cs ], Ex), C) =>
+  rule <tk> exec(opc("tld4", M, ListItem(DT) ListItem(_)), ops(Dv, [ T , Cs ], Ex:Operands), C) =>
             #texOut(Dv, outList(DT, gatherRun(GM, readBytes(GM, hAddr(T, C), 128), 0 -Int 1, M, Cs, opsList(Ex), C))) ... </tk>
        <gmem> GM </gmem>
-  rule <tk> exec(opc("tld4", M, ListItem(DT) ListItem(_)), ops(Dv, [ T , S , Cs ], Ex), C) =>
+  rule <tk> exec(opc("tld4", M, ListItem(DT) ListItem(_)), ops(Dv, [ T , S , Cs ], Ex:Operands), C) =>
             #texOut(Dv, outList(DT, gatherRun(GM, readBytes(GM, hAddr(T, C), 128), readBytes(GM, hAddr(S, C), 128), M, Cs, opsList(Ex), C))) ... </tk>
        <gmem> GM </gmem>
   syntax Int ::= gcomp(Set) [function, total]
