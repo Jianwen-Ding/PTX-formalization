@@ -423,10 +423,12 @@ module PTX-EXEC-TEX
   syntax Int ::= sfAcc(Set, Ty) [function, total]                                   // bytes accessed
   rule sfAcc(M, T) => sfVec(M) *Int bytes(T)
   syntax Int ::= sfA(Int, Set, Ty, List) [function, total]                          // blob -> resolved address (or -1) honouring clamp/zero/trap
-  rule sfA(B, M, T, Xs) => sfAddr(B, #if "clamp" in M #then sfClampX(B, nth(Xs, 0), sfAcc(M, T)) #else nth(Xs, 0) #fi,
+  rule sfA(B, M, T, Xs) => sfAN(B, M, sfAcc(M, T), Xs)
+  syntax Int ::= sfAN(Int, Set, Int, List) [function, total]
+  rule sfAN(B, M, N, Xs) => sfAddr(B, #if "clamp" in M #then sfClampX(B, nth(Xs, 0), N) #else nth(Xs, 0) #fi,
                                   #if "clamp" in M #then minInt(maxInt(nth(Xs, 1), 0), sfDim(B, 1) -Int 1) #else nth(Xs, 1) #fi,
                                   #if "clamp" in M #then minInt(maxInt(nth(Xs, 2), 0), sfDim(B, 2) -Int 1) #else nth(Xs, 2) #fi,
-                                  #if "clamp" in M #then minInt(maxInt(nth(Xs, 3), 0), sfLayers(B) -Int 1) #else nth(Xs, 3) #fi, sfAcc(M, T), rankOf(M))
+                                  #if "clamp" in M #then minInt(maxInt(nth(Xs, 3), 0), sfLayers(B) -Int 1) #else nth(Xs, 3) #fi, N, rankOf(M))
 
   syntax KItem ::= #sfLoad(Operand, Ty, Int, Int, Set) | #sfStore(Int, Ty, List, Set) | #sfUnpack(List, Ty, Int)
   // suld.b.geom.vN.btype.mode {d..}, [surf, {coords}]     (.trap faults out of bounds, .zero returns zeros, .clamp clamps)
@@ -456,10 +458,65 @@ module PTX-EXEC-TEX
   rule packList(ListItem(V:Int) Vs, T, I) => ((V &Int mask(8 *Int bytes(T))) <<Int (8 *Int bytes(T) *Int I)) |Int packList(Vs, T, I +Int 1)
   rule packList(_, _, _) => 0 [owise]
 
+  // ---- formatted (.p) accesses: the lowest coordinate is a sample offset
+  syntax Int ::= sfFmt(Int) [function, total] | sfCh(Int) [function, total] | sfChB(Int) [function, total]
+  rule sfFmt(B) => tdW(B, 7)    rule sfCh(B) => maxInt(1, tdW(B, 8))
+  rule sfChB(B) => chBytesOf(sfFmt(B))
+  syntax Int ::= chBytesOf(Int) [function, total]
+  rule chBytesOf(F) => 1 requires F <=Int 3
+  rule chBytesOf(F) => 2 requires F >=Int 4 andBool F <=Int 8
+  rule chBytesOf(_) => 4 [owise]
+  // unsigned / signed integer formats (for sured.p's reinterpretation of .b32 / .b64)
+  syntax Bool ::= fmtSigned(Int) [function, total]
+  rule fmtSigned(F) => F ==Int 3 orBool F ==Int 7 orBool F ==Int 10
+  // f32 / u32 / s32 source bits -> channel bits, saturating (UNORM / SNORM round to nearest even)
+  syntax Int ::= fmtConv(Int, Int) [function, total]
+  rule fmtConv(F, V) => rneI(clampF(decodeF(V, 32), zF(), oneF()) *Float Int2Float(maskPow(F), WP, WEXP)) requires F ==Int 0 orBool F ==Int 4
+  rule fmtConv(F, V) => trunc(rneI(clampF(decodeF(V, 32), Int2Float(0 -Int 1, WP, WEXP), oneF()) *Float Int2Float(maskPow(F), WP, WEXP)), 8 *Int chBytesOf(F)) requires F ==Int 1 orBool F ==Int 5
+  rule fmtConv(F, V) => minInt(V, (1 <<Int (8 *Int chBytesOf(F))) -Int 1) requires F ==Int 2 orBool F ==Int 6 orBool F ==Int 9
+  rule fmtConv(F, V) => trunc(minInt(maxInt(sext(V, 32), 0 -Int (1 <<Int (8 *Int chBytesOf(F) -Int 1))), (1 <<Int (8 *Int chBytesOf(F) -Int 1)) -Int 1), 8 *Int chBytesOf(F)) requires F ==Int 3 orBool F ==Int 7 orBool F ==Int 10
+  rule fmtConv(8, V) => fpFin(.Set, 16, roundFloat(decodeF(V, 32), WP, WEXP), 0)
+  rule fmtConv(_, V) => V [owise]
+  syntax Int ::= maskPow(Int) [function, total]          // largest positive code of a normalized format
+  rule maskPow(F) => (1 <<Int (8 *Int chBytesOf(F) -Int (#if F ==Int 1 orBool F ==Int 5 #then 1 #else 0 #fi))) -Int 1
+  syntax Float ::= clampF(Float, Float, Float) [function, total]
+  rule clampF(X, Lo, Hi) => #if isNaN(X) #then zF() #else #if X <Float Lo #then Lo #else #if X >Float Hi #then Hi #else X #fi #fi #fi
+  syntax Int ::= rneI(Float) [function, total]
+  rule rneI(X) => #if X -Float floorFloat(X) >Float half() orBool (X -Float floorFloat(X) ==Float half() andBool Float2Int(floorFloat(X)) %Int 2 ==Int 1)
+                  #then Float2Int(floorFloat(X)) +Int 1 #else Float2Int(floorFloat(X)) #fi
+  syntax List ::= fmtList(Int, List, Int) [function, total]          // format, source words, count
+  rule fmtList(F, ListItem(V:Int) Vs, N) => ListItem(fmtConv(F, V)) fmtList(F, Vs, N -Int 1) requires N >Int 0
+  rule fmtList(_, _, _) => .List [owise]
+  syntax Int ::= packCh(List, Int, Int) [function, total]
+  rule packCh(ListItem(V:Int) Vs, W, I) => ((V &Int mask(W)) <<Int (W *Int I)) |Int packCh(Vs, W, I +Int 1)
+  rule packCh(_, _, _) => 0 [owise]
+  syntax List ::= sfScaleX(List, Int) [function, total]
+  rule sfScaleX(ListItem(X:Int) Xs, N) => ListItem(X *Int N) Xs
+  rule sfScaleX(L, _) => L [owise]
+  // sust.p.geom.vec.b32.clamp [surf, {coords}], {r, g, b, a}
+  rule <tk> exec(opc("sust", M, ListItem(T)), ops([ S , Cs ], Vs, .Operands), C) =>
+            #sfStoreP(readBytes(GM, hAddr(S, C), 128), sfCoords(M, Cs, C), rdList(opsList(vecItems(Vs)), ty("b", 32), C), M) ... </tk>
+       <gmem> GM </gmem>
+    requires "p" in M
+  syntax KItem ::= #sfStoreP(Int, List, List, Set)
+  rule #sfStoreP(B, Xs, Vs, M) => #sfStore(sfAN(B, M, sfNP(B, Vs), sfScaleX(Xs, sfTb(B))),
+                                           ty("b", 8 *Int sfChB(B)), fmtList(sfFmt(B), Vs, sfCh(B)), M)
+  syntax Int ::= sfNP(Int, List) [function, total]
+  rule sfNP(B, Vs) => minInt(size(Vs), sfCh(B)) *Int sfChB(B)
+  // sured.p.op.geom.b32|b64.clamp: the sample offset scales by the data size, signedness follows the surface format
+  rule <tk> exec(opc("sured", M, ListItem(T)), ops([ S , Cs ], V, .Operands), C) =>
+            #sfRed(sfA(readBytes(GM, hAddr(S, C), 128), M, T, sfScaleX(sfCoords(M, Cs, C), bytes(T))), atomOp(M),
+                   ty(#if fmtSigned(sfFmt(readBytes(GM, hAddr(S, C), 128))) #then "s" #else "u" #fi, bitsOf(T)), rd(V, T, C), M) ... </tk>
+       <gmem> GM </gmem>
+    requires "p" in M
+  syntax Int ::= bitsOf(Ty) [function, total]
+  rule bitsOf(T) => 8 *Int bytes(T)
+
   // sured.b.op.geom.type [surf, {coords}], v
   rule <tk> exec(opc("sured", M, ListItem(T)), ops([ S , Cs ], V, .Operands), C) =>
             #sfRed(sfA(readBytes(GM, hAddr(S, C), 128), M, T, sfCoords(M, Cs, C)), atomOp(M), T, rd(V, T, C), M) ... </tk>
        <gmem> GM </gmem>
+    requires notBool ("p" in M)
   syntax KItem ::= #sfRed(Int, String, Ty, Int, Set)
   rule <tk> #sfRed(A, OP, T, V, _) => #mem(loc("global", A), atOp(OP, T, V, 0)) ~> #drop ... </tk> requires A >=Int 0
   rule <tk> #sfRed(A, _, _, _, M) => .K ... </tk> requires A <Int 0 andBool "zero" in M
@@ -472,7 +529,10 @@ module PTX-EXEC-TEX
   rule suqVal(M, B) => sfDim(B, 0) requires "width" in M
   rule suqVal(M, B) => sfDim(B, 1) requires "height" in M
   rule suqVal(M, B) => sfDim(B, 2) requires "depth" in M
-  rule suqVal(M, B) => tdW(B, 3) requires "array_size" in M
+  rule suqVal(M, B) => #if tdW(B, 12) =/=Int 0 #then tdW(B, 3) #else 0 #fi requires "array_size" in M
+  rule suqVal(M, B) => tdW(B, 9) requires "channel_data_type" in M
+  rule suqVal(M, B) => tdW(B, 10) requires "channel_order" in M
+  rule suqVal(M, B) => tdW(B, 11) requires "memory_layout" in M
   rule suqVal(_, _) => 0 [owise]
 
   rule isCollective("tex") => true   rule isCollective("tld4") => true   rule isCollective("txq") => true

@@ -131,7 +131,12 @@ module PTX-HARNESS
        ListItem(nth(As, 3)) ListItem(nth(As, 4)) ListItem(nth(As, 5)) ListItem(nth(Ds, 0)) ListItem(nth(Ds, 1)) ListItem(nth(Ds, 2))
        ListItem(nthD(As, 6, 1)) ListItem(nthD(As, 7, 0)) ListItem(0) ListItem(nthD(As, 8, 0))
   rule objBlob(_, T, A, As, Ds) =>
-       ListItem(1398035526) ListItem(A) ListItem(bytes(T)) ListItem(nth(As, 0)) ListItem(nth(Ds, 0)) ListItem(nth(Ds, 1)) ListItem(nth(Ds, 2)) [owise]
+       ListItem(1398035526) ListItem(A) ListItem(bytes(T)) ListItem(nth(As, 0)) ListItem(nth(Ds, 0)) ListItem(nth(Ds, 1)) ListItem(nth(Ds, 2))
+       ListItem(nthD(As, 1, 11)) ListItem(nthD(As, 2, 1)) ListItem(nthD(As, 3, 0)) ListItem(nthD(As, 4, 0)) ListItem(nthD(As, 5, 1))
+       ListItem(nthD(As, 6, b2i(nth(As, 0) >Int 1))) ListItem(0) ListItem(0) ListItem(0) ListItem(0) [owise]
+  // surface attrs { layers, sample format (0 UNORM8 1 SNORM8 2 UINT8 3 SINT8 4 UNORM16 5 SNORM16 6 UINT16 7 SINT16 8 FLOAT16 9 UINT32 10 SINT32 11 FLOAT32; default 11),
+  //                 channels (1), channel data type (0), channel order (0), linear memory layout (1), is-array (layers > 1) }
+  // surface words 7 format, 8 channels, 9 channel data type, 10 channel order, 11 memory layout, 12 array flag
   // 16 little-endian 64-bit words:  0 magic | 1 element type code | 2 rank | 3 global address | 4..8 dims |
   // 9..12 byte strides of dims 1..4 | 13 box dims 0..3 (16 bits each) | 14 box dim 4, swizzle<<16, fill<<24, interleave<<32 |
   // 15 element strides (8 bits each)
