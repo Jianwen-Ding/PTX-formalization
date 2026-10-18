@@ -22,4 +22,8 @@ check litmus-mp        0,1     # stores may be reordered
 check litmus-mp-relacq 1       # forbidden by release/acquire
 check litmus-lb        0,1     # load buffering: the load is performed after the later store
 check litmus-lb-relacq 1       # forbidden by acquire/release
+check litmus-cpasync     0,1     # the copy has not completed yet: stale value reachable
+check litmus-cpasync-wait 0       # wait_group: the new value is always seen (.expect = 7 holds in every run)
+check litmus-proxy-async  0,1    # no proxy fence: the bulk copy may read the stale value
+check litmus-proxy-async-fence 0 # fence.proxy.async: always the new value
 exit $fail

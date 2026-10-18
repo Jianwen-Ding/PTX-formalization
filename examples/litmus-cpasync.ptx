@@ -1,0 +1,27 @@
+// cp.async is an asynchronous agent: without commit_group/wait_group the copy may not have happened yet.
+// Thread 0: cp.async smem<-gmem(=7); r = smem   (no wait)    weak outcome: r == 0 (stale value) -> `.expect` encodes it
+.version 8.0
+.target sm_90
+.address_size 64
+
+.global .align 4 .u32 src = 7;
+.global .align 4 .u32 r0;
+
+.visible .entry k()
+{
+    .shared .align 4 .u32 buf;
+    .reg .b32 %v, %z;
+    .reg .b64 %a, %g;
+    mov.u32 %z, 0;
+    st.shared.u32 [buf], %z;
+    mov.u64 %g, src;
+    mov.u64 %a, buf;
+    cp.async.ca.shared.global [buf], [src], 4;
+    ld.shared.u32 %v, [buf];
+    st.global.u32 [r0], %v;
+    ret;
+}
+
+.memmodel relaxed ;
+.launch k <<< 1, 1 >>> ();
+.expect r0 .u32 = { 0 };
