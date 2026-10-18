@@ -113,7 +113,14 @@ module PTX-HARNESS
   syntax KItem ::= #objAlloc(String, String, Int, Ty, List, List)
   rule <k> .texture N T B .dims { Ds } .attrs { As } ; => #objAlloc(Name2String(N), Name2String(B), 0, typeOf(T), intsL(As), intsL(Ds)) ... </k>
   rule <k> .surface N T B .dims { Ds } .attrs { As } ; => #objAlloc(Name2String(N), Name2String(B), 1, typeOf(T), intsL(As), intsL(Ds)) ... </k>
-  rule <k> .sampler N .attrs { As } ; => #alloc(Name2String(N), ty("u", 64), 16, ListItem(1396920397) intsL(As)) ... </k>
+  rule <k> .sampler N .attrs { As } ; => #alloc(Name2String(N), ty("u", 64), 16, smBlob(intsL(As))) ... </k>
+  // sampler: 0 magic, 1 filter, 2 addrmode, 3 normalized, 4 mip filter, 5 minLOD, 6 maxLOD (1/256 units; defaults 0 / 0 / no limit), padded to 16 words
+  syntax List ::= smBlob(List) [function, total]
+  rule smBlob(As) => ListItem(1396920397) ListItem(nthD(As, 0, 0)) ListItem(nthD(As, 1, 0)) ListItem(nthD(As, 2, 0)) ListItem(nthD(As, 3, 0))
+                     ListItem(nthD(As, 4, 0)) ListItem(nthD(As, 5, 1048576)) ListItem(0) ListItem(0) ListItem(0) ListItem(0) ListItem(0) ListItem(0) ListItem(0) ListItem(0) ListItem(0)
+  syntax Int ::= nthD(List, Int, Int) [function, total]
+  rule nthD(L, I, D) => {L[I]}:>Int requires I >=Int 0 andBool I <Int size(L)
+  rule nthD(_, _, D) => D [owise]
   rule <k> #objAlloc(N, B, K, T, As, Ds) => #alloc(N, ty("u", 64), 16, objBlob(K, T, A, As, Ds)) ... </k>
        <syms> ... B |-> sym(_, A) ... </syms>
   // texture: 0 magic, 1 base, 2 type code, 3 channels, 4 filter, 5 addrmode, 6 normalized, 7 readnorm, 8 layers, 9 w, 10 h, 11 d
@@ -122,6 +129,7 @@ module PTX-HARNESS
   rule objBlob(0, T, A, As, Ds) =>
        ListItem(1415075924) ListItem(A) ListItem(tmCode(T)) ListItem(nth(As, 0)) ListItem(nth(As, 1)) ListItem(nth(As, 2))
        ListItem(nth(As, 3)) ListItem(nth(As, 4)) ListItem(nth(As, 5)) ListItem(nth(Ds, 0)) ListItem(nth(Ds, 1)) ListItem(nth(Ds, 2))
+       ListItem(nthD(As, 6, 1)) ListItem(nthD(As, 7, 0)) ListItem(0) ListItem(nthD(As, 8, 0))
   rule objBlob(_, T, A, As, Ds) =>
        ListItem(1398035526) ListItem(A) ListItem(bytes(T)) ListItem(nth(As, 0)) ListItem(nth(Ds, 0)) ListItem(nth(Ds, 1)) ListItem(nth(Ds, 2)) [owise]
   // 16 little-endian 64-bit words:  0 magic | 1 element type code | 2 rank | 3 global address | 4..8 dims |

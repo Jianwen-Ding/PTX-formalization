@@ -68,6 +68,8 @@ module PTX-SYNTAX
                    | "[" Addr "," Addr "," Operand "," Operand "," Operand "," Operand "]"           // [tmap, gAddr, {size}, {lower}, upper, {coords}]
                    | "{" Operands "}"          // vector operand
                    | "(" Operands ")"          // call argument / return list
+                   | "{" Operands "}" "|" Reg     // tex: vector destination with residency predicate
+                   | "{" Operands "}" "|" Name
                    | Reg "|" Reg               // setp dual destination
                    | Name "|" Name             // same, for registers declared without %
                    | "-" Reg                   // negated operand (vmad)

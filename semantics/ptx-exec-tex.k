@@ -7,8 +7,13 @@
 //
 // Texture and surface objects are the 64-bit handles of descriptor objects that the harness builds in
 // global memory (.texture / .sampler / .surface, see ptx-harness.k); module-scope .texref / .surfref
-// variables and the formatted surface accesses (.p) are not modelled, nor are cubemaps, mipmap
-// levels, depth compares, 2dms textures and the residency predicate.
+// variables and the formatted surface accesses (.p) are not modelled, nor are 2dms textures.
+// Mipmaps: levels are stored one after the other (each holds all layers, dims halve down to 1); lod comes from
+// .base (0), .level (operand) or .grad (log2 of the larger scaled gradient); the sampler's mip filter picks the
+// nearest level or blends two by a 1/256-quantised weight; lod is clamped to [minLOD, maxLOD, levels-1].
+// Cubemaps are 6 consecutive layers per cube (+X -X +Y -Y +Z -Z), the face follows the OpenGL rules, filtering is
+// clamped inside the face (no seam blending).  Depth compare (LEQUAL, ref <= texel) is applied per texel before
+// filtering; offsets are added to the texel indices; the residency predicate is always true.
 //
 // Filtering follows the CUDA programming guide: coordinates scale by the extent when normalized, linear
 // filtering uses weights quantised to 1/256 (the fixed-point format of the hardware, rounding to nearest),
@@ -34,6 +39,22 @@ module PTX-EXEC-TEX
   rule txBase(B) => tdW(B, 1)    rule txCode(B) => tdW(B, 2)    rule txCh(B) => tdW(B, 3)     rule txFilter(B) => tdW(B, 4)
   rule txAddr(B) => tdW(B, 5)    rule txNorm(B) => tdW(B, 6)    rule txReadNorm(B) => tdW(B, 7)    rule txLayers(B) => maxInt(1, tdW(B, 8))
   rule txDim(B, I) => maxInt(1, tdW(B, 9 +Int I))
+  // levels (word 12, default 1), flags (13: bit 0 depth, bit 1 cube), mip filter (15)
+  syntax Int ::= txLevels(Int) [function, total] | txFlags(Int) [function, total] | txMipF(Int) [function, total]
+               | lvD(Int, Int, Int) [function, total] | lvOff(Int, Int) [function, total] | lvTexels(Int, Int) [function, total]
+  rule txLevels(B) => maxInt(1, tdW(B, 12))   rule txFlags(B) => tdW(B, 13)   rule txMipF(B) => tdW(B, 15)
+  rule lvD(B, Lv, I) => maxInt(1, txDim(B, I) >>Int Lv)
+  rule lvTexels(B, Lv) => txLayers(B) *Int lvD(B, Lv, 0) *Int lvD(B, Lv, 1) *Int lvD(B, Lv, 2)
+  rule lvOff(B, Lv) => lvOff(B, Lv -Int 1) +Int lvTexels(B, Lv -Int 1) requires Lv >Int 0
+  rule lvOff(_, _) => 0 [owise]
+  // sampler words: 4 mip filter, 5 minLOD, 6 maxLOD (1/256 units, signed); a texture alone has no lod clamp
+  syntax Int ::= effMip(Int, Int) [function, total] | minLodW(Int) [function, total] | maxLodW(Int) [function, total]
+  rule effMip(B, S) => tdW(S, 4) requires S >=Int 0
+  rule effMip(B, _) => txMipF(B) [owise]
+  rule minLodW(S) => sext(tdW(S, 5), 64) requires S >=Int 0
+  rule minLodW(_) => 0 [owise]
+  rule maxLodW(S) => sext(tdW(S, 6), 64) requires S >=Int 0
+  rule maxLodW(_) => 1048576 [owise]
   syntax Int ::= txEb(Int) [function, total]                // element bytes from the type code
   rule txEb(B) => txEbOf(txCode(B))
   syntax Int ::= txEbOf(Int) [function, total]
@@ -82,16 +103,34 @@ module PTX-EXEC-TEX
   syntax Float ::= maxF(Float, Float) [function, total]
   rule maxF(A, B) => #if A >=Float B #then A #else B #fi
 
-  // the RGBA texel at resolved integer coordinates (a negative coordinate means border: zeros)
-  syntax List ::= texel(Bytes, Int, Int, Int, Int, Int) [function, total]   // gmem, blob, i, j, k, layer
-  rule texel(GM, B, I, J, K, L) => ListItem(zF()) ListItem(zF()) ListItem(zF()) ListItem(zF()) requires I <Int 0 orBool J <Int 0 orBool K <Int 0
-  rule texel(GM, B, I, J, K, L) => texelAt(GM, B, txBase(B) +Int (((L *Int txDim(B, 2) +Int K) *Int txDim(B, 1) +Int J) *Int txDim(B, 0) +Int I) *Int txCh(B) *Int txEb(B)) [owise]
+  // the RGBA texel at resolved integer coordinates of level Lv (a negative coordinate means border: zeros)
+  syntax List ::= texel0(Bytes, Int, Int, Int, Int, Int, Int) [function, total]   // gmem, blob, level, i, j, k, layer
+  rule texel0(GM, B, Lv, I, J, K, L) => ListItem(zF()) ListItem(zF()) ListItem(zF()) ListItem(zF()) requires I <Int 0 orBool J <Int 0 orBool K <Int 0
+  rule texel0(GM, B, Lv, I, J, K, L) =>
+       texelAt(GM, B, txBase(B) +Int (lvOff(B, Lv) +Int ((L *Int lvD(B, Lv, 2) +Int K) *Int lvD(B, Lv, 1) +Int J) *Int lvD(B, Lv, 0) +Int I) *Int txCh(B) *Int txEb(B)) [owise]
   syntax List ::= texelAt(Bytes, Int, Int) [function, total]
   rule texelAt(GM, B, A) => ListItem(texC(GM, B, A, 0)) ListItem(texC(GM, B, A, 1)) ListItem(texC(GM, B, A, 2)) ListItem(texC(GM, B, A, 3))
   syntax Float ::= texC(Bytes, Int, Int, Int) [function, total]
   rule texC(GM, B, A, C) => chanF(GM, B, A, C) requires C <Int txCh(B)
   rule texC(_, _, _, C) => oneF() requires C ==Int 3
   rule texC(_, _, _, _) => zF() [owise]
+
+  // sampling context Q = [level, offset x, y, z, has depth reference, reference (f32 bits)]
+  syntax Int ::= qi(List, Int) [function, total]
+  rule qi(Q, I) => {Q[I]}:>Int requires I >=Int 0 andBool I <Int size(Q)
+  rule qi(_, _) => 0 [owise]
+  syntax List ::= mkQ(Int, List, Bool, Int) [function, total]
+  rule mkQ(Lv, Of, H, Rf) => ListItem(Lv) ListItem(nth0(Of, 0)) ListItem(nth0(Of, 1)) ListItem(nth0(Of, 2)) ListItem(b2i(H)) ListItem(Rf)
+  syntax Int ::= nth0(List, Int) [function, total]
+  rule nth0(L, I) => {L[I]}:>Int requires I >=Int 0 andBool I <Int size(L)
+  rule nth0(_, _) => 0 [owise]
+  // depth compare (LEQUAL): the reference against the texel's first channel, 1.0 / 0.0
+  syntax List ::= texel(Bytes, Int, List, Int, Int, Int, Int) [function, total]
+  rule texel(GM, B, Q, I, J, K, L) => cmpTex(Q, texel0(GM, B, qi(Q, 0), I, J, K, L))
+  syntax List ::= cmpTex(List, List) [function, total]
+  rule cmpTex(Q, T) => T requires qi(Q, 4) ==Int 0
+  rule cmpTex(Q, T) => ListItem(#if roundFloat(decodeF(qi(Q, 5), 32), WP, WEXP) <=Float nthF(T, 0) #then oneF() #else zF() #fi) ListItem(zF()) ListItem(zF()) ListItem(oneF())
+    requires qi(Q, 4) =/=Int 0
 
   // weighted combination of two texels
   syntax List ::= lerp4(List, List, Float) [function, total]
@@ -115,32 +154,86 @@ module PTX-EXEC-TEX
   syntax Float ::= half() [function, total]
   rule half() => Int2Float(1, WP, WEXP) /Float Int2Float(2, WP, WEXP)
 
-  // sample at (x, y, z) floats with layer l
-  syntax List ::= sample(Bytes, Int, Int, Int, Int, Float, Float, Float, Int, Int) [function, total]   // gmem, blob, filter, addrmode, norm, x,y,z, layer, rank
-  rule sample(GM, B, 0, AM, NM, X, Y, Z, L, R) =>
-       texel(GM, B, adIdx(AM, flo(pos(X, txDim(B, 0), NM)), txDim(B, 0)),
-                    #if R >=Int 2 #then adIdx(AM, flo(pos(Y, txDim(B, 1), NM)), txDim(B, 1)) #else 0 #fi,
-                    #if R >=Int 3 #then adIdx(AM, flo(pos(Z, txDim(B, 2), NM)), txDim(B, 2)) #else 0 #fi, L)
-  rule sample(GM, B, 1, AM, NM, X, Y, Z, L, R) =>
-       lerp4(lerp4(lerp4(texel(GM, B, ix(B, AM, NM, X, 0), jy(B, AM, NM, Y, 0, R), kz(B, AM, NM, Z, 0, R), L),
-                         texel(GM, B, ix(B, AM, NM, X, 1), jy(B, AM, NM, Y, 0, R), kz(B, AM, NM, Z, 0, R), L), wx(B, NM, X)),
-                   lerp4(texel(GM, B, ix(B, AM, NM, X, 0), jy(B, AM, NM, Y, 1, R), kz(B, AM, NM, Z, 0, R), L),
-                         texel(GM, B, ix(B, AM, NM, X, 1), jy(B, AM, NM, Y, 1, R), kz(B, AM, NM, Z, 0, R), L), wx(B, NM, X)), wy(B, NM, Y, R)),
-             lerp4(lerp4(texel(GM, B, ix(B, AM, NM, X, 0), jy(B, AM, NM, Y, 0, R), kz(B, AM, NM, Z, 1, R), L),
-                         texel(GM, B, ix(B, AM, NM, X, 1), jy(B, AM, NM, Y, 0, R), kz(B, AM, NM, Z, 1, R), L), wx(B, NM, X)),
-                   lerp4(texel(GM, B, ix(B, AM, NM, X, 0), jy(B, AM, NM, Y, 1, R), kz(B, AM, NM, Z, 1, R), L),
-                         texel(GM, B, ix(B, AM, NM, X, 1), jy(B, AM, NM, Y, 1, R), kz(B, AM, NM, Z, 1, R), L), wx(B, NM, X)), wy(B, NM, Y, R)),
-             wz(B, NM, Z, R))
-  rule sample(GM, B, _, AM, NM, X, Y, Z, L, R) => sample(GM, B, 0, AM, NM, X, Y, Z, L, R) [owise]
-  // linear-filter helpers: lower/upper texel index, and weights
-  syntax Int ::= ix(Int, Int, Int, Float, Int) [function, total] | jy(Int, Int, Int, Float, Int, Int) [function, total] | kz(Int, Int, Int, Float, Int, Int) [function, total]
-  rule ix(B, AM, NM, X, D) => adIdx(AM, flo(pos(X, txDim(B, 0), NM) -Float half()) +Int D, txDim(B, 0))
-  rule jy(B, AM, NM, Y, D, R) => #if R >=Int 2 #then adIdx(AM, flo(pos(Y, txDim(B, 1), NM) -Float half()) +Int D, txDim(B, 1)) #else 0 #fi
-  rule kz(B, AM, NM, Z, D, R) => #if R >=Int 3 #then adIdx(AM, flo(pos(Z, txDim(B, 2), NM) -Float half()) +Int D, txDim(B, 2)) #else 0 #fi
-  syntax Float ::= wx(Int, Int, Float) [function, total] | wy(Int, Int, Float, Int) [function, total] | wz(Int, Int, Float, Int) [function, total]
-  rule wx(B, NM, X) => qw(pos(X, txDim(B, 0), NM) -Float half())
-  rule wy(B, NM, Y, R) => #if R >=Int 2 #then qw(pos(Y, txDim(B, 1), NM) -Float half()) #else zF() #fi
-  rule wz(B, NM, Z, R) => #if R >=Int 3 #then qw(pos(Z, txDim(B, 2), NM) -Float half()) #else zF() #fi
+  // sample at (x, y, z) floats with layer l in the level of Q
+  syntax List ::= sample(Bytes, Int, List, Int, Int, Int, Float, Float, Float, Int, Int) [function, total]   // gmem, blob, Q, filter, addrmode, norm, x,y,z, layer, rank
+  rule sample(GM, B, Q, 0, AM, NM, X, Y, Z, L, R) =>
+       texel(GM, B, Q, adIdx(AM, flo(pos(X, lvD(B, qi(Q, 0), 0), NM)) +Int qi(Q, 1), lvD(B, qi(Q, 0), 0)),
+                    #if R >=Int 2 #then adIdx(AM, flo(pos(Y, lvD(B, qi(Q, 0), 1), NM)) +Int qi(Q, 2), lvD(B, qi(Q, 0), 1)) #else 0 #fi,
+                    #if R >=Int 3 #then adIdx(AM, flo(pos(Z, lvD(B, qi(Q, 0), 2), NM)) +Int qi(Q, 3), lvD(B, qi(Q, 0), 2)) #else 0 #fi, L)
+  rule sample(GM, B, Q, 1, AM, NM, X, Y, Z, L, R) =>
+       lerp4(lerp4(lerp4(texel(GM, B, Q, ix(B, Q, AM, NM, X, 0), jy(B, Q, AM, NM, Y, 0, R), kz(B, Q, AM, NM, Z, 0, R), L),
+                         texel(GM, B, Q, ix(B, Q, AM, NM, X, 1), jy(B, Q, AM, NM, Y, 0, R), kz(B, Q, AM, NM, Z, 0, R), L), wx(B, Q, NM, X)),
+                   lerp4(texel(GM, B, Q, ix(B, Q, AM, NM, X, 0), jy(B, Q, AM, NM, Y, 1, R), kz(B, Q, AM, NM, Z, 0, R), L),
+                         texel(GM, B, Q, ix(B, Q, AM, NM, X, 1), jy(B, Q, AM, NM, Y, 1, R), kz(B, Q, AM, NM, Z, 0, R), L), wx(B, Q, NM, X)), wy(B, Q, NM, Y, R)),
+             lerp4(lerp4(texel(GM, B, Q, ix(B, Q, AM, NM, X, 0), jy(B, Q, AM, NM, Y, 0, R), kz(B, Q, AM, NM, Z, 1, R), L),
+                         texel(GM, B, Q, ix(B, Q, AM, NM, X, 1), jy(B, Q, AM, NM, Y, 0, R), kz(B, Q, AM, NM, Z, 1, R), L), wx(B, Q, NM, X)),
+                   lerp4(texel(GM, B, Q, ix(B, Q, AM, NM, X, 0), jy(B, Q, AM, NM, Y, 1, R), kz(B, Q, AM, NM, Z, 1, R), L),
+                         texel(GM, B, Q, ix(B, Q, AM, NM, X, 1), jy(B, Q, AM, NM, Y, 1, R), kz(B, Q, AM, NM, Z, 1, R), L), wx(B, Q, NM, X)), wy(B, Q, NM, Y, R)),
+             wz(B, Q, NM, Z, R))
+  rule sample(GM, B, Q, _, AM, NM, X, Y, Z, L, R) => sample(GM, B, Q, 0, AM, NM, X, Y, Z, L, R) [owise]
+  // linear-filter helpers: lower/upper texel index (with offset), and weights
+  syntax Int ::= ix(Int, List, Int, Int, Float, Int) [function, total] | jy(Int, List, Int, Int, Float, Int, Int) [function, total] | kz(Int, List, Int, Int, Float, Int, Int) [function, total]
+  rule ix(B, Q, AM, NM, X, D) => adIdx(AM, flo(pos(X, lvD(B, qi(Q, 0), 0), NM) -Float half()) +Int D +Int qi(Q, 1), lvD(B, qi(Q, 0), 0))
+  rule jy(B, Q, AM, NM, Y, D, R) => #if R >=Int 2 #then adIdx(AM, flo(pos(Y, lvD(B, qi(Q, 0), 1), NM) -Float half()) +Int D +Int qi(Q, 2), lvD(B, qi(Q, 0), 1)) #else 0 #fi
+  rule kz(B, Q, AM, NM, Z, D, R) => #if R >=Int 3 #then adIdx(AM, flo(pos(Z, lvD(B, qi(Q, 0), 2), NM) -Float half()) +Int D +Int qi(Q, 3), lvD(B, qi(Q, 0), 2)) #else 0 #fi
+  syntax Float ::= wx(Int, List, Int, Float) [function, total] | wy(Int, List, Int, Float, Int) [function, total] | wz(Int, List, Int, Float, Int) [function, total]
+  rule wx(B, Q, NM, X) => qw(pos(X, lvD(B, qi(Q, 0), 0), NM) -Float half())
+  rule wy(B, Q, NM, Y, R) => #if R >=Int 2 #then qw(pos(Y, lvD(B, qi(Q, 0), 1), NM) -Float half()) #else zF() #fi
+  rule wz(B, Q, NM, Z, R) => #if R >=Int 3 #then qw(pos(Z, lvD(B, qi(Q, 0), 2), NM) -Float half()) #else zF() #fi
+
+  // ---------------------------------------------------------------- mipmaps
+  // level of detail -> blend of levels.  `Lam` is the requested lod; levels are clamped by the sampler's [minLOD, maxLOD] and the texture's level count.
+  syntax Float ::= lamClamp(Int, Int, Float) [function, total]      // blob, sampler, lod
+  rule lamClamp(B, S, Lam) => minF(maxF(maxF(Lam, lodF(minLodW(S))), zF()), minF(lodF(maxLodW(S)), Int2Float(txLevels(B) -Int 1, WP, WEXP)))
+  syntax Float ::= lodF(Int) [function, total] | minF(Float, Float) [function, total]
+  rule lodF(V) => Int2Float(V, WP, WEXP) /Float Int2Float(256, WP, WEXP)
+  rule minF(A, B) => #if A <=Float B #then A #else B #fi
+  syntax List ::= mipSample(Bytes, Int, Int, Bool, Float, List, Int, Int, Int, Float, Float, Float, Int, Int) [function, total]
+       // gmem, blob, sampler, use-lod?, lod, Q, filter, addrmode, norm, x, y, z, layer, rank
+  rule mipSample(GM, B, S, false, _, Q, F, AM, NM, X, Y, Z, L, R) => sample(GM, B, Q, F, AM, NM, X, Y, Z, L, R)
+  rule mipSample(GM, B, S, true, Lam, Q, F, AM, NM, X, Y, Z, L, R) =>
+       mipSample2(GM, B, effMip(B, S), lamClamp(B, S, Lam), Q, F, AM, NM, X, Y, Z, L, R)
+  syntax List ::= mipSample2(Bytes, Int, Int, Float, List, Int, Int, Int, Float, Float, Float, Int, Int) [function, total]
+  rule mipSample2(GM, B, 1, Lc, Q, F, AM, NM, X, Y, Z, L, R) =>
+       lerp4(sample(GM, B, setLv(Q, flo(Lc)), F, AM, NM, X, Y, Z, L, R),
+             sample(GM, B, setLv(Q, minInt(flo(Lc) +Int 1, txLevels(B) -Int 1)), F, AM, NM, X, Y, Z, L, R), qw(Lc))
+  rule mipSample2(GM, B, _, Lc, Q, F, AM, NM, X, Y, Z, L, R) =>
+       sample(GM, B, setLv(Q, minInt(flo(Lc +Float half()), txLevels(B) -Int 1)), F, AM, NM, X, Y, Z, L, R) [owise]
+  syntax List ::= setLv(List, Int) [function, total]
+  rule setLv(Q, Lv) => ListItem(Lv) ListItem(qi(Q, 1)) ListItem(qi(Q, 2)) ListItem(qi(Q, 3)) ListItem(qi(Q, 4)) ListItem(qi(Q, 5))
+  // lod from gradients: log2 of the larger footprint axis (in texels of level 0)
+  syntax Float ::= gradLam(Int, Int, Int, List, List, Float) [function, total]    // blob, norm, rank, dPdx, dPdy, scale divisor
+  rule gradLam(B, NM, R, Dx, Dy, Sd) => lamLog(maxF(gLen2(B, NM, R, Dx, 0, Sd), gLen2(B, NM, R, Dy, 0, Sd)))
+  syntax Float ::= lamLog(Float) [function, total]
+  rule lamLog(S) => logFloat(S) /Float (Int2Float(2, WP, WEXP) *Float logFloat(Int2Float(2, WP, WEXP))) requires S >Float zF()
+  rule lamLog(_) => Int2Float(0 -Int 1000, WP, WEXP) [owise]
+  syntax Float ::= gLen2(Int, Int, Int, List, Int, Float) [function, total]
+  rule gLen2(B, NM, R, D, I, Sd) => gTerm(nthF(D, I) *Float gScale(B, NM, I, Sd)) +Float gLen2(B, NM, R, D, I +Int 1, Sd) requires I <Int R
+  rule gLen2(_, _, _, _, _, _) => zF() [owise]
+  syntax Float ::= gTerm(Float) [function, total] | gScale(Int, Int, Int, Float) [function, total]
+  rule gTerm(X) => X *Float X
+  rule gScale(B, 1, I, Sd) => Int2Float(txDim(B, I), WP, WEXP) /Float Sd
+  rule gScale(_, _, _, Sd) => Int2Float(1, WP, WEXP) /Float Sd [owise]
+  syntax Float ::= absF(Float) [function, total]
+  rule absF(X) => #if X <Float zF() #then zF() -Float X #else X #fi
+
+  // ---------------------------------------------------------------- cubemaps
+  // direction (x, y, z) -> face (+X -X +Y -Y +Z -Z) and normalized face coordinates (OpenGL convention)
+  syntax Int ::= cubeFace(Float, Float, Float) [function, total]
+  rule cubeFace(X, Y, Z) => #if X >=Float zF() #then 0 #else 1 #fi requires absF(X) >=Float absF(Y) andBool absF(X) >=Float absF(Z)
+  rule cubeFace(X, Y, Z) => #if Y >=Float zF() #then 2 #else 3 #fi requires absF(Y) >Float absF(X) andBool absF(Y) >=Float absF(Z)
+  rule cubeFace(X, Y, Z) => #if Z >=Float zF() #then 4 #else 5 #fi [owise]
+  syntax Float ::= cubeMa(Float, Float, Float) [function, total]
+  rule cubeMa(X, Y, Z) => #if cubeFace(X, Y, Z) <Int 2 #then absF(X) #else #if cubeFace(X, Y, Z) <Int 4 #then absF(Y) #else absF(Z) #fi #fi
+  syntax Float ::= cubeSC(Float, Float, Float) [function, total] | cubeTC(Float, Float, Float) [function, total] | cubeNorm(Float, Float) [function, total]
+  rule cubeSC(X, Y, Z) => cscSel(cubeFace(X, Y, Z), X, Z)
+  rule cubeTC(X, Y, Z) => ctcSel(cubeFace(X, Y, Z), Y, Z)
+  syntax Float ::= cscSel(Int, Float, Float) [function, total] | ctcSel(Int, Float, Float) [function, total] | negF(Float) [function, total]
+  rule negF(X) => zF() -Float X
+  rule cscSel(0, _, Z) => negF(Z)    rule cscSel(1, _, Z) => Z    rule cscSel(5, X, _) => negF(X)    rule cscSel(_, X, _) => X [owise]
+  rule ctcSel(2, _, Z) => Z          rule ctcSel(3, _, Z) => negF(Z)    rule ctcSel(_, Y, _) => negF(Y) [owise]
+  rule cubeNorm(S, Ma) => (S /Float Ma +Float oneF()) /Float Int2Float(2, WP, WEXP) requires Ma >Float zF()
+  rule cubeNorm(_, _) => half() [owise]
 
   // ---------------------------------------------------------------- result conversion and the instruction
   syntax Int ::= outBits(Ty, Float) [function, total]
@@ -156,8 +249,9 @@ module PTX-EXEC-TEX
   rule rankOf(M) => 1 requires "1d" in M orBool "a1d" in M
   rule rankOf(M) => 3 requires "3d" in M
   rule rankOf(_) => 2 [owise]
-  syntax Bool ::= isArr(Set) [function, total]
-  rule isArr(M) => "a1d" in M orBool "a2d" in M
+  syntax Bool ::= isArr(Set) [function, total] | isCube(Set) [function, total]
+  rule isArr(M) => "a1d" in M orBool "a2d" in M orBool "acube" in M
+  rule isCube(M) => "cube" in M orBool "acube" in M
 
   // coordinates as floats (ctype f32) or exact integers (ctype s32 -> point sampling of texel indices)
   syntax Float ::= coordF(Operand, Ty, Ctx) [function, total]
@@ -167,40 +261,121 @@ module PTX-EXEC-TEX
   rule vecAt(O, I) => {vecOps(O)[I]}:>Operand requires I >=Int 0 andBool I <Int size(vecOps(O))
   rule vecAt(_, _) => 0 [owise]
 
-  // tex.geom.v4.dtype.ctype {r,g,b,a}, [tex, {coords}]   or   [tex, sampler, {coords}]
+  // tex[.base|.level|.grad].geom.v4.dtype.ctype d[|p], [tex, {coords}] | [tex, sampler, {coords}] {, lod | , dPdx, dPdy} {, offset} {, depth-ref}
   syntax KItem ::= #texOut(Operand, List)
-  rule <tk> exec(opc("tex", M, ListItem(DT) ListItem(CT)), ops(Dv, [ T , Cs ], .Operands), C) =>
-            #texOut(Dv, texRun(GM, readBytes(GM, hAddr(T, C), 128), 0 -Int 1, M, DT, CT, Cs, C)) ... </tk>
+  rule <tk> exec(opc("tex", M, ListItem(DT) ListItem(CT)), ops(Dv, [ T , Cs ], Ex), C) =>
+            #texOut(Dv, texRun(GM, readBytes(GM, hAddr(T, C), 128), 0 -Int 1, M, DT, CT, Cs, opsList(Ex), C)) ... </tk>
        <gmem> GM </gmem>
-  rule <tk> exec(opc("tex", M, ListItem(DT) ListItem(CT)), ops(Dv, [ T , S , Cs ], .Operands), C) =>
-            #texOut(Dv, texRun(GM, readBytes(GM, hAddr(T, C), 128), readBytes(GM, hAddr(S, C), 128), M, DT, CT, Cs, C)) ... </tk>
+  rule <tk> exec(opc("tex", M, ListItem(DT) ListItem(CT)), ops(Dv, [ T , S , Cs ], Ex), C) =>
+            #texOut(Dv, texRun(GM, readBytes(GM, hAddr(T, C), 128), readBytes(GM, hAddr(S, C), 128), M, DT, CT, Cs, opsList(Ex), C)) ... </tk>
        <gmem> GM </gmem>
-  rule <tk> #texOut(Dv, Vs) => #wmWr(vecOps(Dv), Vs) ... </tk>
-  syntax List ::= texRun(Bytes, Int, Int, Set, Ty, Ty, Operand, Ctx) [function, total]
-  rule texRun(GM, B, S, M, DT, CT, Cs, C) =>
-       outList(DT, sample(GM, B,
-                          #if CT ==K ty("f", 32) #then effFilter(B, S) #else 0 #fi, effAddr(B, S), effNorm(B, S),
-                          coordF(vecAt(Cs, #if isArr(M) #then 1 #else 0 #fi), CT, C),
-                          coordF(vecAt(Cs, #if isArr(M) #then 2 #else 1 #fi), CT, C),
-                          coordF(vecAt(Cs, #if isArr(M) #then 3 #else 2 #fi), CT, C),
-                          #if isArr(M) #then minInt(rd(vecAt(Cs, 0), ty("u", 32), C), txLayers(B) -Int 1) #else 0 #fi, rankOf(M)))
+  // the destination vector, optionally followed by a residency predicate (always set: every level is resident)
+  rule <tk> #texOut({ Os:Operands } | P:Reg, Vs) => #wmWr(opsList(Os), Vs) ... </tk> <regs> R => wr(R, P, 1) </regs>
+  rule <tk> #texOut({ Os:Operands } | P:Name, Vs) => #wmWr(opsList(Os), Vs) ... </tk> <regs> R => wr(R, P, 1) </regs>
+  rule <tk> #texOut(Dv, Vs) => #wmWr(vecOps(Dv), Vs) ... </tk> [owise]
 
-  // tld4.{r,g,b,a}.2d.v4.dtype.f32 d, [tex, {x, y}] : the component of the 2x2 footprint, clockwise from the lower-left texel
-  rule <tk> exec(opc("tld4", M, ListItem(DT) ListItem(_)), ops(Dv, [ T , Cs ], .Operands), C) =>
-            #texOut(Dv, outList(DT, gather4(GM, readBytes(GM, hAddr(T, C), 128), gcomp(M),
-                                            coordF(vecAt(Cs, 0), ty("f", 32), C), coordF(vecAt(Cs, 1), ty("f", 32), C)))) ... </tk>
+  // the operands after the coordinates: how many are the lod / gradients
+  syntax Int ::= nLod(Set) [function, total]
+  rule nLod(M) => 1 requires "level" in M
+  rule nLod(M) => 2 requires "grad" in M
+  rule nLod(_) => 0 [owise]
+  syntax List ::= dropL(List, Int) [function, total]
+  rule dropL(ListItem(_) L, N) => dropL(L, N -Int 1) requires N >Int 0
+  rule dropL(L, _) => L [owise]
+  // offset: the first remaining operand when it is a vector (or a lone scalar for 1d), depth reference: the scalar one
+  syntax List ::= txOffs(List, Ctx) [function, total]
+  rule txOffs(ListItem(O:Operand) _, C) => offList(O, C) requires vecOps(O) =/=K .List
+  rule txOffs(_, _) => .List [owise]
+  syntax List ::= offList(Operand, Ctx) [function, total]
+  rule offList(O, C) => ListItem(offAt(O, 0, C)) ListItem(offAt(O, 1, C)) ListItem(offAt(O, 2, C))
+  syntax Int ::= offAt(Operand, Int, Ctx) [function, total]
+  rule offAt(O, I, C) => ival(rd(vecAt(O, I), ty("s", 32), C), ty("s", 32)) requires I <Int size(vecOps(O))
+  rule offAt(_, _, _) => 0 [owise]
+  syntax List ::= txRest(List) [function, total]           // drop the offset vector, if any
+  rule txRest(ListItem(O:Operand) L) => L requires vecOps(O) =/=K .List
+  rule txRest(L) => L [owise]
+  syntax Bool ::= txHasRef(List) [function, total]
+  rule txHasRef(ListItem(_) _) => true
+  rule txHasRef(_) => false [owise]
+  syntax Int ::= txRef(List, Ctx) [function, total]
+  rule txRef(ListItem(O:Operand) _, C) => rd(O, ty("b", 32), C)
+  rule txRef(_, _) => 0 [owise]
+  syntax Float ::= lodArg(List, Ctx) [function, total]
+  rule lodArg(ListItem(O:Operand) _, C) => coordF(O, ty("f", 32), C)
+  rule lodArg(_, _) => zF() [owise]
+  syntax List ::= gradVec(List, Int, Ctx) [function, total]
+  rule gradVec(Ex, I, C) => floatsOf(vecOps(nthOp(Ex, I)), C)
+  syntax Operand ::= nthOp(List, Int) [function, total]
+  rule nthOp(L, I) => {L[I]}:>Operand requires I >=Int 0 andBool I <Int size(L)
+  rule nthOp(_, _) => 0 [owise]
+  syntax List ::= floatsOf(List, Ctx) [function, total]
+  rule floatsOf(ListItem(O:Operand) L, C) => ListItem(coordF(O, ty("f", 32), C)) floatsOf(L, C)
+  rule floatsOf(_, _) => .List [owise]
+
+  syntax List ::= texRun(Bytes, Int, Int, Set, Ty, Ty, Operand, List, Ctx) [function, total]
+  rule texRun(GM, B, S, M, DT, CT, Cs, Ex, C) =>
+       outList(DT, texRun2(GM, B, S, M, CT, Cs, Ex, dropL(Ex, nLod(M)), C))
+  syntax List ::= texRun2(Bytes, Int, Int, Set, Ty, Operand, List, List, Ctx) [function, total]       // Rest = operands after lod / gradients
+  rule texRun2(GM, B, S, M, CT, Cs, Ex, Rest, C) =>
+       texRun3(GM, B, S, M, CT, Cs, Ex, mkQ(0, txOffs(Rest, C), txHasRef(txRest(Rest)), txRef(txRest(Rest), C)), C)
+  syntax List ::= texRun3(Bytes, Int, Int, Set, Ty, Operand, List, List, Ctx) [function, total]
+  // cubemaps: pick the face, then sample the face as a clamped 2D layer
+  rule texRun3(GM, B, S, M, CT, Cs, Ex, Q, C) =>
+       mipSample(GM, B, S, nLod(M) >Int 0,
+                 #if "level" in M #then lodArg(Ex, C) #else gradLam(B, 1, 3, gradVec(Ex, 0, C), gradVec(Ex, 1, C), cubeMa(cx(Cs, M, C), cy(Cs, M, C), cz(Cs, M, C)) *Float Int2Float(2, WP, WEXP)) #fi,
+                 Q, effFilter(B, S), 1, 1,
+                 cubeNorm(cubeSC(cx(Cs, M, C), cy(Cs, M, C), cz(Cs, M, C)), cubeMa(cx(Cs, M, C), cy(Cs, M, C), cz(Cs, M, C))),
+                 cubeNorm(cubeTC(cx(Cs, M, C), cy(Cs, M, C), cz(Cs, M, C)), cubeMa(cx(Cs, M, C), cy(Cs, M, C), cz(Cs, M, C))),
+                 zF(), 6 *Int minInt(#if "acube" in M #then rd(vecAt(Cs, 0), ty("u", 32), C) #else 0 #fi, maxInt(txLayers(B) /Int 6 -Int 1, 0)) +Int cubeFace(cx(Cs, M, C), cy(Cs, M, C), cz(Cs, M, C)), 2)
+    requires isCube(M)
+  rule texRun3(GM, B, S, M, CT, Cs, Ex, Q, C) =>
+       mipSample(GM, B, S, nLod(M) >Int 0,
+                 #if "level" in M #then lodArg(Ex, C) #else gradLam(B, effNorm(B, S), rankOf(M), gradVec(Ex, 0, C), gradVec(Ex, 1, C), oneF()) #fi,
+                 Q, #if CT ==K ty("f", 32) #then effFilter(B, S) #else 0 #fi, effAddr(B, S), effNorm(B, S),
+                 coordF(vecAt(Cs, #if isArr(M) #then 1 #else 0 #fi), CT, C),
+                 coordF(vecAt(Cs, #if isArr(M) #then 2 #else 1 #fi), CT, C),
+                 coordF(vecAt(Cs, #if isArr(M) #then 3 #else 2 #fi), CT, C),
+                 #if isArr(M) #then minInt(rd(vecAt(Cs, 0), ty("u", 32), C), txLayers(B) -Int 1) #else 0 #fi, rankOf(M)) [owise]
+  syntax Float ::= cx(Operand, Set, Ctx) [function, total] | cy(Operand, Set, Ctx) [function, total] | cz(Operand, Set, Ctx) [function, total]
+  rule cx(Cs, M, C) => coordF(vecAt(Cs, #if "acube" in M #then 1 #else 0 #fi), ty("f", 32), C)
+  rule cy(Cs, M, C) => coordF(vecAt(Cs, #if "acube" in M #then 2 #else 1 #fi), ty("f", 32), C)
+  rule cz(Cs, M, C) => coordF(vecAt(Cs, #if "acube" in M #then 3 #else 2 #fi), ty("f", 32), C)
+
+  // tld4.{r,g,b,a}.{2d,a2d,cube,acube}.v4.dtype.f32 d[|p], [tex {, sampler}, {coords}] {, offset} {, depth-ref}
+  // the component of the 2x2 footprint, counter-clockwise from the lower-left texel (level 0; sampler address mode)
+  rule <tk> exec(opc("tld4", M, ListItem(DT) ListItem(_)), ops(Dv, [ T , Cs ], Ex), C) =>
+            #texOut(Dv, outList(DT, gatherRun(GM, readBytes(GM, hAddr(T, C), 128), 0 -Int 1, M, Cs, opsList(Ex), C))) ... </tk>
+       <gmem> GM </gmem>
+  rule <tk> exec(opc("tld4", M, ListItem(DT) ListItem(_)), ops(Dv, [ T , S , Cs ], Ex), C) =>
+            #texOut(Dv, outList(DT, gatherRun(GM, readBytes(GM, hAddr(T, C), 128), readBytes(GM, hAddr(S, C), 128), M, Cs, opsList(Ex), C))) ... </tk>
        <gmem> GM </gmem>
   syntax Int ::= gcomp(Set) [function, total]
   rule gcomp(M) => 1 requires "g" in M
   rule gcomp(M) => 2 requires "b" in M
   rule gcomp(M) => 3 requires "a" in M
   rule gcomp(_) => 0 [owise]
-  syntax List ::= gather4(Bytes, Int, Int, Float, Float) [function, total]
-  rule gather4(GM, B, Cc, X, Y) =>
-       ListItem(nthF(texel(GM, B, ix(B, txAddr(B), txNorm(B), X, 0), jy(B, txAddr(B), txNorm(B), Y, 1, 2), 0, 0), Cc))
-       ListItem(nthF(texel(GM, B, ix(B, txAddr(B), txNorm(B), X, 1), jy(B, txAddr(B), txNorm(B), Y, 1, 2), 0, 0), Cc))
-       ListItem(nthF(texel(GM, B, ix(B, txAddr(B), txNorm(B), X, 1), jy(B, txAddr(B), txNorm(B), Y, 0, 2), 0, 0), Cc))
-       ListItem(nthF(texel(GM, B, ix(B, txAddr(B), txNorm(B), X, 0), jy(B, txAddr(B), txNorm(B), Y, 0, 2), 0, 0), Cc))
+  syntax List ::= gatherRun(Bytes, Int, Int, Set, Operand, List, Ctx) [function, total]
+  rule gatherRun(GM, B, S, M, Cs, Ex, C) =>
+       gather4(GM, B, mkQ(0, txOffs(Ex, C), txHasRef(txRest(Ex)), txRef(txRest(Ex), C)), effAddr(B, S), gcomp(M), 
+               gX(M, Cs, C), gY(M, Cs, C), gLayer(B, M, Cs, C), effNormG(B, S, M))
+  syntax Int ::= effNormG(Int, Int, Set) [function, total]
+  rule effNormG(_, _, M) => 1 requires isCube(M)
+  rule effNormG(B, S, _) => effNorm(B, S) [owise]
+  syntax Float ::= gX(Set, Operand, Ctx) [function, total] | gY(Set, Operand, Ctx) [function, total]
+  rule gX(M, Cs, C) => cubeNorm(cubeSC(cx(Cs, M, C), cy(Cs, M, C), cz(Cs, M, C)), cubeMa(cx(Cs, M, C), cy(Cs, M, C), cz(Cs, M, C))) requires isCube(M)
+  rule gY(M, Cs, C) => cubeNorm(cubeTC(cx(Cs, M, C), cy(Cs, M, C), cz(Cs, M, C)), cubeMa(cx(Cs, M, C), cy(Cs, M, C), cz(Cs, M, C))) requires isCube(M)
+  rule gX(M, Cs, C) => coordF(vecAt(Cs, #if isArr(M) #then 1 #else 0 #fi), ty("f", 32), C) [owise]
+  rule gY(M, Cs, C) => coordF(vecAt(Cs, #if isArr(M) #then 2 #else 1 #fi), ty("f", 32), C) [owise]
+  syntax Int ::= gLayer(Int, Set, Operand, Ctx) [function, total]
+  rule gLayer(B, M, Cs, C) => 6 *Int minInt(#if "acube" in M #then rd(vecAt(Cs, 0), ty("u", 32), C) #else 0 #fi, maxInt(txLayers(B) /Int 6 -Int 1, 0)) +Int cubeFace(cx(Cs, M, C), cy(Cs, M, C), cz(Cs, M, C)) requires isCube(M)
+  rule gLayer(B, M, Cs, C) => #if isArr(M) #then minInt(rd(vecAt(Cs, 0), ty("u", 32), C), txLayers(B) -Int 1) #else 0 #fi [owise]
+  // mode, address mode, component, x, y, layer, normalized
+  syntax List ::= gather4(Bytes, Int, List, Int, Int, Float, Float, Int, Int) [function, total]
+  rule gather4(GM, B, Q, AM, Cc, X, Y, L, NM) =>
+       ListItem(nthF(texel(GM, B, Q, ix(B, Q, AM, NM, X, 0), jy(B, Q, AM, NM, Y, 1, 2), 0, L), Cc))
+       ListItem(nthF(texel(GM, B, Q, ix(B, Q, AM, NM, X, 1), jy(B, Q, AM, NM, Y, 1, 2), 0, L), Cc))
+       ListItem(nthF(texel(GM, B, Q, ix(B, Q, AM, NM, X, 1), jy(B, Q, AM, NM, Y, 0, 2), 0, L), Cc))
+       ListItem(nthF(texel(GM, B, Q, ix(B, Q, AM, NM, X, 0), jy(B, Q, AM, NM, Y, 0, 2), 0, L), Cc))
 
   // txq.<field>.b32 d, [tex]
   rule <tk> exec(opc("txq", M, _), ops(D, [ T ], .Operands), C) => .K ... </tk>
@@ -209,11 +384,11 @@ module PTX-EXEC-TEX
   rule txqVal(M, B) => txDim(B, 0) requires "width" in M
   rule txqVal(M, B) => txDim(B, 1) requires "height" in M
   rule txqVal(M, B) => txDim(B, 2) requires "depth" in M
-  rule txqVal(M, B) => tdW(B, 8) requires "array_size" in M
+  rule txqVal(M, B) => #if (txFlags(B) &Int 2) =/=Int 0 #then tdW(B, 8) /Int 6 #else tdW(B, 8) #fi requires "array_size" in M
   rule txqVal(M, B) => txNorm(B) requires "normalized_coords" in M
   rule txqVal(M, B) => txFilter(B) requires "filter_mode" in M
   rule txqVal(M, B) => txAddr(B) requires "addr_mode_0" in M orBool "addr_mode_1" in M orBool "addr_mode_2" in M
-  rule txqVal(M, B) => 1 requires "num_mipmap_levels" in M
+  rule txqVal(M, B) => txLevels(B) requires "num_mipmap_levels" in M
   rule txqVal(_, _) => 0 [owise]
 
   // ---------------------------------------------------------------- surfaces
