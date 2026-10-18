@@ -44,6 +44,7 @@ class Lower:
         self.regions = []       # label stack of open if-regions
         self.uni = {}
         self.pending_wait = False
+        self.labels = set()
 
     @staticmethod
     def clean(text):
@@ -102,6 +103,8 @@ class Lower:
             if self.regions and self.regions[-1] == lab:
                 self.regions.pop(); self.emit("pop_exec 1")
             elif lab in self.regions: raise Reject("improperly nested control flow at " + lab)
+            else:
+                self.labels.add(lab); self.emit(self.agx_label(lab) + ":")
             return
         guard = None
         m = re.match(r"@(!?)(%\w+)\s+(.*)", st)
@@ -110,6 +113,9 @@ class Lower:
         mb = re.fullmatch(r"bra(?:\.uni)?\s+(\$?\w+)", st)
         if mb:
             if guard is None: raise Reject("unconditional branch")
+            if mb.group(1) in self.labels:                       # backward branch: do-while loop on the execution-mask stack
+                if self.regions: raise Reject("loop inside a conditional region")
+                self.loop_back(guard, mb.group(1)); return
             self.open_region(guard, mb.group(1)); return
         if st == "ret":
             return
@@ -120,6 +126,22 @@ class Lower:
             self.emit("pop_exec 1")
             return
         self.instr(st)
+
+    @staticmethod
+    def agx_label(lab): return "L" + re.sub(r"[^A-Za-z0-9_]", "_", lab)
+
+    def loop_back(self, guard, label):
+        neg, p = guard
+        if p not in self.cond: raise Reject("predicate not produced by setp: " + p)
+        kind, cc, a, b, vers = self.cond[p]
+        for r, v in vers.items():
+            if self.ver.get(r, 0) != v: raise Reject("predicate operand redefined: " + p)
+        if neg:
+            if kind == "f": raise Reject("negated float predicate")
+            cc = INV[cc]
+        self.emit(("while_icmp " if kind == "i" else "while_fcmp ") + f"{cc} {a}, {b}")
+        self.emit(f"jmp_exec_any {self.agx_label(label)}")
+        self.emit("pop_exec 1")
 
     def open_region(self, guard, label):
         """@p bra L : skip to L when p holds, i.e. run the code between only when p does not hold."""
@@ -166,6 +188,36 @@ class Lower:
             raise Reject("64-bit arithmetic: " + st)
         if base in ("ld", "st") and parts[1] == "global":
             return self.memop(base, ty, rest)
+        if base == "bar" or base == "barrier": self.emit("threadgroup_barrier"); return
+        if base == "activemask":
+            self.emit(f"icmp_ballot eq r{self.reg(rest[0])}, 0, 0"); self.define(rest[0]); return
+        if base == "shfl" and parts[1] == "sync":
+            mode = parts[2]
+            if "|" in rest[0]: raise Reject("shfl with predicate output")
+            if rest[-1] not in ("0xffffffff", "-1", "4294967295"): raise Reject("partial membermask")
+            a = self.operand(rest[1], "b32"); b = self.operand(rest[2], "b32")
+            c = rest[3]
+            want = {"bfly": "31", "up": "0", "down": "31", "idx": "31"}[mode]
+            if c not in (want, "0x1f", "0x0") and not (mode == "up" and c == "0"):
+                raise Reject(f"shfl clamp operand {c}")
+            ins = {"bfly": "simd_shuffle_xor", "up": "simd_shuffle_up", "down": "simd_shuffle_down", "idx": "simd_shuffle"}[mode]
+            self.emit(f"{ins} r{self.reg(rest[0])}, {a}, {b}"); self.define(rest[0]); return
+        if base == "vote" and parts[1] == "sync":
+            mode = parts[2]
+            if rest[-1] not in ("0xffffffff", "-1", "4294967295"): raise Reject("partial membermask")
+            srcp = rest[1].lstrip("!")
+            if srcp not in self.cond: raise Reject("vote predicate not produced by setp")
+            kind, cc, a, b, vers = self.cond[srcp]
+            if rest[1].startswith("!"):
+                if kind == "f": raise Reject("negated float predicate")
+                cc = INV[cc]
+            t = self.next_tmp()
+            self.emit(("icmp_ballot " if kind == "i" else "fcmp_ballot ") + f"{cc} r{t}, {a}, {b}")
+            if mode == "ballot": self.emit(f"mov r{self.reg(rest[0])}, r{t}"); self.define(rest[0])
+            elif mode == "any": self.cond[rest[0]] = ("i", "ne", f"r{t}", "0", {})
+            elif mode == "all": self.cond[rest[0]] = ("i", "eq", f"r{t}", "4294967295", {})
+            else: raise Reject("vote." + mode)
+            return
         if base == "setp":
             cmp_, t = parts[1], parts[2]
             a, b = self.operand(rest[1], t), self.operand(rest[2], t)

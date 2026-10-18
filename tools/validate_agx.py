@@ -101,6 +101,68 @@ test("float_denormal", """
   st.global.f32 [%rd5], %f2; ret; }""",
      [("in", "f32", [0.0] * 30 + [b2f(1), b2f(0x00400000)], False), ("out", "f32", [0.0] * 32, True)])
 
+test("warp_sum_shfl", """
+.visible .entry k(.param .u64 pin, .param .u64 pout)
+{ .reg .b32 %r<8>; .reg .b64 %rd<8>;
+  ld.param.u64 %rd1, [pin]; ld.param.u64 %rd2, [pout];
+  mov.u32 %r1, %tid.x; mul.wide.u32 %rd3, %r1, 4;
+  add.u64 %rd4, %rd1, %rd3; add.u64 %rd5, %rd2, %rd3;
+  ld.global.u32 %r2, [%rd4];
+  shfl.sync.down.b32 %r3, %r2, 16, 31, 0xffffffff; add.u32 %r2, %r2, %r3;
+  shfl.sync.down.b32 %r3, %r2, 8, 31, 0xffffffff; add.u32 %r2, %r2, %r3;
+  shfl.sync.down.b32 %r3, %r2, 4, 31, 0xffffffff; add.u32 %r2, %r2, %r3;
+  shfl.sync.down.b32 %r3, %r2, 2, 31, 0xffffffff; add.u32 %r2, %r2, %r3;
+  shfl.sync.down.b32 %r3, %r2, 1, 31, 0xffffffff; add.u32 %r2, %r2, %r3;
+  st.global.u32 [%rd5], %r2; ret; }""",
+     [("in", "u32", rnd_i(32, 0, 1000), False), ("out", "u32", [0] * 32, True)])
+
+test("scan_shfl_up", """
+.visible .entry k(.param .u64 pin, .param .u64 pout)
+{ .reg .b32 %r<8>; .reg .b64 %rd<8>; .reg .pred %p<2>;
+  ld.param.u64 %rd1, [pin]; ld.param.u64 %rd2, [pout];
+  mov.u32 %r1, %tid.x; mul.wide.u32 %rd3, %r1, 4;
+  add.u64 %rd4, %rd1, %rd3; add.u64 %rd5, %rd2, %rd3;
+  ld.global.u32 %r2, [%rd4];
+  shfl.sync.up.b32 %r3, %r2, 1, 0, 0xffffffff; setp.ge.u32 %p1, %r1, 1; selp.b32 %r3, %r3, 0, %p1; add.u32 %r2, %r2, %r3;
+  shfl.sync.up.b32 %r3, %r2, 2, 0, 0xffffffff; setp.ge.u32 %p1, %r1, 2; selp.b32 %r3, %r3, 0, %p1; add.u32 %r2, %r2, %r3;
+  shfl.sync.up.b32 %r3, %r2, 4, 0, 0xffffffff; setp.ge.u32 %p1, %r1, 4; selp.b32 %r3, %r3, 0, %p1; add.u32 %r2, %r2, %r3;
+  shfl.sync.up.b32 %r3, %r2, 8, 0, 0xffffffff; setp.ge.u32 %p1, %r1, 8; selp.b32 %r3, %r3, 0, %p1; add.u32 %r2, %r2, %r3;
+  shfl.sync.up.b32 %r3, %r2, 16, 0, 0xffffffff; setp.ge.u32 %p1, %r1, 16; selp.b32 %r3, %r3, 0, %p1; add.u32 %r2, %r2, %r3;
+  st.global.u32 [%rd5], %r2; ret; }""",
+     [("in", "u32", rnd_i(32, 0, 1000), False), ("out", "u32", [0] * 32, True)])
+
+test("ballot_popc", """
+.visible .entry k(.param .u64 pin, .param .u64 pout)
+{ .reg .b32 %r<8>; .reg .b64 %rd<8>; .reg .pred %p<3>;
+  ld.param.u64 %rd1, [pin]; ld.param.u64 %rd2, [pout];
+  mov.u32 %r1, %tid.x; mul.wide.u32 %rd3, %r1, 4;
+  add.u64 %rd4, %rd1, %rd3; add.u64 %rd5, %rd2, %rd3;
+  ld.global.s32 %r2, [%rd4];
+  setp.gt.s32 %p1, %r2, 0;
+  vote.sync.ballot.b32 %r3, %p1, 0xffffffff;
+  vote.sync.any.pred %p2, %p1, 0xffffffff;
+  selp.b32 %r4, %r3, 1234, %p2;
+  st.global.u32 [%rd5], %r4; ret; }""",
+     [("in", "s32", rnd_i(32), False), ("out", "u32", [0] * 32, True)])
+
+test("loop_sum", """
+.visible .entry k(.param .u64 pin, .param .u64 pout)
+{ .reg .b32 %r<8>; .reg .b64 %rd<8>; .reg .pred %p<2>;
+  ld.param.u64 %rd1, [pin]; ld.param.u64 %rd2, [pout];
+  mov.u32 %r1, %tid.x; mul.wide.u32 %rd3, %r1, 4;
+  add.u64 %rd4, %rd1, %rd3; add.u64 %rd5, %rd2, %rd3;
+  ld.global.u32 %r2, [%rd4];
+  and.b32 %r3, %r2, 7;
+  add.u32 %r3, %r3, 1;
+  mov.u32 %r4, 0; mov.u32 %r5, 0;
+$LOOP:
+  add.u32 %r4, %r4, %r2;
+  add.u32 %r5, %r5, 1;
+  setp.lt.u32 %p1, %r5, %r3;
+  @%p1 bra $LOOP;
+  st.global.u32 [%rd5], %r4; ret; }""",
+     [("in", "u32", rnd_i(32, 0, 1000), False), ("out", "u32", [0] * 32, True)])
+
 KNOWN_DIFF = {"float_denormal": "AGX flushes f32 subnormal results to zero (G13 RoundToFloat32Wrapper flush_to_zero=True); PTX keeps them"}
 
 def run(cmd):
