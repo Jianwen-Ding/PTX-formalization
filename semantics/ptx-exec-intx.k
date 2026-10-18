@@ -65,6 +65,8 @@ module PTX-EXEC-INTX
   syntax Ty ::= laneTy(Ty) [function, total]
   rule laneTy(ty("s16x2", _)) => ty("s", 16)
   rule laneTy(ty("u16x2", _)) => ty("u", 16)
+  rule laneTy(ty("s8x4", _)) => ty("s", 8)
+  rule laneTy(ty("u8x4", _)) => ty("u", 8)
   rule laneTy(T) => T [owise]
   syntax Int ::= lane16(Int, Int) [function, total]
   rule lane16(V, I) => (V >>Int (16 *Int I)) &Int 65535
@@ -80,4 +82,21 @@ module PTX-EXEC-INTX
        <regs> R => wr(R, D, pack16(un(OP, M, laneTy(T), lane16(rd(A, T, C), 0)),
                                    un(OP, M, laneTy(T), lane16(rd(A, T, C), 1)))) </regs>
     requires OP in (SetItem("neg") SetItem("abs")) andBool (T ==K ty("s16x2", 32) orBool T ==K ty("u16x2", 32))
+
+  // ---------------------------------------------------------------- packed 8x4 (PTX ISA 9.2): four byte lanes, .sat / .relu per lane
+  syntax Int ::= lane8(Int, Int) [function, total] | pack8(Int, Int, Int, Int) [function, total]
+  rule lane8(V, I) => (V >>Int (8 *Int I)) &Int 255
+  rule pack8(L0, L1, L2, L3) => (L0 &Int 255) |Int ((L1 &Int 255) <<Int 8) |Int ((L2 &Int 255) <<Int 16) |Int ((L3 &Int 255) <<Int 24)
+  syntax Bool ::= isPk8(Ty) [function, total]
+  rule isPk8(T) => T ==K ty("s8x4", 32) orBool T ==K ty("u8x4", 32)
+  rule <tk> #gx(opc(OP, M, ListItem(T)), ops(D, A, B, .Operands), C) => .K ... </tk>
+       <regs> R => wr(R, D, pack8(bin(OP, M, laneTy(T), lane8(rd(A, T, C), 0), lane8(rd(B, T, C), 0)),
+                                  bin(OP, M, laneTy(T), lane8(rd(A, T, C), 1), lane8(rd(B, T, C), 1)),
+                                  bin(OP, M, laneTy(T), lane8(rd(A, T, C), 2), lane8(rd(B, T, C), 2)),
+                                  bin(OP, M, laneTy(T), lane8(rd(A, T, C), 3), lane8(rd(B, T, C), 3)))) </regs>
+    requires isPk8(T) andBool OP in (SetItem("add") SetItem("sub") SetItem("min") SetItem("max"))
+  rule <tk> #gx(opc(OP, M, ListItem(T)), ops(D, A, .Operands), C) => .K ... </tk>
+       <regs> R => wr(R, D, pack8(un(OP, M, laneTy(T), lane8(rd(A, T, C), 0)), un(OP, M, laneTy(T), lane8(rd(A, T, C), 1)),
+                                  un(OP, M, laneTy(T), lane8(rd(A, T, C), 2)), un(OP, M, laneTy(T), lane8(rd(A, T, C), 3)))) </regs>
+    requires OP in (SetItem("neg") SetItem("abs")) andBool isPk8(T)
 endmodule

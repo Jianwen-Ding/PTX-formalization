@@ -38,7 +38,11 @@ module PTX-EXEC-ISA
   syntax Set ::= insNames(Set, List) [function, total]
   rule insNames(M, ListItem(T:Ty) Ts) => SetItem(tyName(T)) insNames(M, Ts)
   rule insNames(M, ListItem(_) Ts) => insNames(M, Ts) [owise]
-  rule insNames(M, .List) => M
+  rule insNames(M, .List) => modNames(M)
+  // `fence::before_thread_sync` also counts as `fence`
+  syntax Set ::= modNames(Set) [function, total]
+  rule modNames(SetItem(S:String) Rest) => SetItem(S) #if findString(S, "::", 0) >=Int 0 #then SetItem(substrString(S, 0, findString(S, "::", 0))) #else .Set #fi modNames(Rest)
+  rule modNames(.Set) => .Set
   // row qualifiers "a+b" all present
   syntax Bool ::= qualsHold(String, Set) [function, total]
   rule qualsHold("", _) => true

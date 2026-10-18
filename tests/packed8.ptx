@@ -1,0 +1,28 @@
+// add / sub / min / max / neg on .u8x4 / .s8x4 (PTX ISA 9.2) with .sat
+.version 9.2
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %a, %b, %r<8>;
+    ld.param.u64 %o, [po];
+    mov.b32 %a, 0xfe7f0102; mov.b32 %b, 0x03010180;
+    add.u8x4 %r0, %a, %b;          // 0x01 0x80 0x02 0x82 wrapping: fe+03=01, 7f+01=80, 01+01=02, 02+80=82
+    add.sat.u8x4 %r1, %a, %b;      // unsigned saturation: ff 80 02 82
+    add.sat.s8x4 %r2, %a, %b;      // signed: fe+03=01, 7f+01=7f(sat), 01+01=02, 02+(-128)=82
+    sub.u8x4 %r3, %a, %b;          // fb 7e 00 82
+    min.u8x4 %r4, %a, %b;          // 03 01 01 02
+    max.s8x4 %r5, %a, %b;          // 03 7f 01 02
+    neg.s8x4 %r6, %b;              // fd ff ff 80  (-128 wraps to -128)
+    st.global.u32 [%o], %r0;
+    st.global.u32 [%o+4], %r1;
+    st.global.u32 [%o+8], %r2;
+    st.global.u32 [%o+12], %r3;
+    st.global.u32 [%o+16], %r4;
+    st.global.u32 [%o+20], %r5;
+    st.global.u32 [%o+24], %r6;
+    ret;
+}
+.buffer OUT .u32 [7];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 25166466, 4286579330, 25100930, 4219338882, 50397442, 58654978, 4261412736 };

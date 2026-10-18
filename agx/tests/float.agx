@@ -1,0 +1,24 @@
+// floating point: f32 (flush to zero), f16, fused multiply-add, reciprocal, compare/select
+.all r2 = 1069547520;            // 1.5
+fadd r3, r2, 2.0;                // 3.5
+fmul r4, r2, 4.0;                // 6.0
+fmadd r5, r2, 2.0, 0.5;          // 3.5
+.laneid r20;
+mov r6l, 15872;                  // 1.5 in f16
+fadd16 r7l, r6l, 1.0;            // 2.5 = 0x4100
+mov r8, 1;                       // smallest subnormal
+fadd r9, r8, 0.0;                // f32 results flush to zero
+rcp r10, 2.0;                    // 0.5
+icmpsel ult r11, r20, 16, 100, 200;
+fcmpsel flt r12, r2, 2.0, 7, 9;  // 1.5 < 2.0
+stop;
+.run;
+.expectall r3 = 1080033280;
+.expectall r4 = 1086324736;
+.expectall r5 = 1080033280;
+.expectall r7l = 16640;
+.expectall r9 = 0;
+.expectall r10 = 1056964608;
+.expectlane 3 r11 = 100;
+.expectlane 20 r11 = 200;
+.expectall r12 = 7
