@@ -1,0 +1,11 @@
+// expect: without .sync was removed
+.version 7.0
+.target sm_80
+.address_size 64
+.isacheck ;.visible .entry k()
+{
+    .reg .b32 %r<8>; .reg .b64 %d<4>; .reg .b16 %h<2>; .reg .f32 %f<4>; .reg .pred %p;
+    shfl.up.b32 %r0, %r1, 1, 0;
+    ret;
+}
+.launch k <<< 1, 1 >>> ();

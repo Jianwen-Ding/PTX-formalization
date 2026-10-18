@@ -3,7 +3,7 @@
 // `.version` and `.target` (task 37).  Enabled by the harness directive
 // `.isacheck ;`.  The minimum version / sm / arch-specific requirement of each
 // base instruction comes from the generated ptx-isa-table.k (mined from the PTX
-// ISA document); qualifier-level requirements are not checked.
+// ISA document); qualifier-level requirements are checked from the sentences of the document that name them (scripts/gen_isa_table.py).
 // =============================================================================
 requires "ptx-exec-core.k"
 requires "ptx-isa-table.k"
@@ -28,17 +28,49 @@ module PTX-EXEC-ISA
   syntax Bool ::= isDigitCh(String) [function, total]
   rule isDigitCh(C) => C >=String "0" andBool C <=String "9"
 
-  syntax String ::= isaBad(List, Int, Int, String) [function, total]
-  rule isaBad(ListItem(isaRow(_, V, S, A)) _, Ver, Sm, Arch) =>
+  // names an instruction carries: its modifiers and the names of its types
+  syntax String ::= tyName(Ty) [function, total]
+  rule tyName(ty("p", _)) => "pred"
+  rule tyName(ty("bf", 16)) => "bf16"
+  rule tyName(ty("tf", 32)) => "tf32"
+  rule tyName(ty(K, W)) => K requires lengthString(K) >Int 1 andBool K =/=String "bf" andBool K =/=String "tf"
+  rule tyName(ty(K, W)) => K +String Int2String(W) [owise]
+  syntax Set ::= insNames(Set, List) [function, total]
+  rule insNames(M, ListItem(T:Ty) Ts) => SetItem(tyName(T)) insNames(M, Ts)
+  rule insNames(M, ListItem(_) Ts) => insNames(M, Ts) [owise]
+  rule insNames(M, .List) => M
+  // row qualifiers "a+b" all present
+  syntax Bool ::= qualsHold(String, Set) [function, total]
+  rule qualsHold("", _) => true
+  rule qualsHold(Q, N) => Q in N requires findString(Q, "+", 0) <Int 0
+  rule qualsHold(Q, N) => substrString(Q, 0, findString(Q, "+", 0)) in N andBool qualsHold(substrString(Q, findString(Q, "+", 0) +Int 1, lengthString(Q)), N)
+    requires findString(Q, "+", 0) >=Int 0
+
+  syntax String ::= isaBad(List, Set, Int, Int, String) [function, total]
+  rule isaBad(ListItem(isaRow(Q, V, S, A)) Rest, N, Ver, Sm, Arch) =>
          "instruction needs PTX ISA " +String Int2String(V /Int 10) +String "." +String Int2String(V %Int 10)
-    requires Ver >Int 0 andBool V >Int Ver
-  rule isaBad(ListItem(isaRow(_, V, S, A)) _, Ver, Sm, Arch) =>
+    requires qualsHold(Q, N) andBool Ver >Int 0 andBool V >Int Ver
+  rule isaBad(ListItem(isaRow(Q, V, S, A)) Rest, N, Ver, Sm, Arch) =>
          "instruction needs target sm_" +String Int2String(S)
-    requires notBool (Ver >Int 0 andBool V >Int Ver) andBool Sm >Int 0 andBool S >Int Sm
-  rule isaBad(ListItem(isaRow(_, V, S, A)) _, Ver, Sm, Arch) =>
+    requires qualsHold(Q, N) andBool notBool (Ver >Int 0 andBool V >Int Ver) andBool Sm >Int 0 andBool S >Int Sm
+  rule isaBad(ListItem(isaRow(Q, V, S, A)) Rest, N, Ver, Sm, Arch) =>
          "instruction needs an architecture-specific target (sm_" +String Int2String(S) +String "a)"
-    requires notBool (Ver >Int 0 andBool V >Int Ver) andBool notBool (Sm >Int 0 andBool S >Int Sm) andBool A andBool Sm >Int 0 andBool Arch ==String ""
-  rule isaBad(_, _, _, _) => "" [owise]
+    requires qualsHold(Q, N) andBool notBool (Ver >Int 0 andBool V >Int Ver) andBool notBool (Sm >Int 0 andBool S >Int Sm) andBool A andBool Sm >Int 0 andBool Arch ==String ""
+  rule isaBad(ListItem(_) Rest, N, Ver, Sm, Arch) => isaBad(Rest, N, Ver, Sm, Arch) [owise]
+  rule isaBad(.List, _, _, _, _) => ""
+
+  // features the specification deprecated and later removed (Release Notes: Deprecated / Removed Features)
+  syntax String ::= isaRemoved(String, Set, Set, Int, Int) [function, total]     // opcode, modifiers, names, .version, sm
+  rule isaRemoved(OP, M, N, Ver, Sm) => OP +String " without .sync was removed for sm_70 and higher (PTX ISA 6.4)"
+    requires (OP ==String "shfl" orBool OP ==String "vote") andBool notBool "sync" in M andBool Sm >=Int 70 andBool Ver >=Int 64
+  rule isaRemoved(OP, M, N, Ver, Sm) => OP +String ".satfinite on floating-point wmma.mma was removed in PTX ISA 6.5"
+    requires OP ==String "wmma" andBool "mma" in M andBool "satfinite" in M andBool ("f16" in N orBool "f32" in N) andBool Ver >=Int 65
+  rule isaRemoved(OP, M, N, Ver, Sm) => OP +String ".min/.max on f32 does not exist (removed from the specification)"
+    requires (OP ==String "atom" orBool OP ==String "red") andBool ("min" in M orBool "max" in M) andBool "f32" in N
+  rule isaRemoved(OP, M, N, Ver, Sm) => "suld.p does not exist (removed from the specification)" requires OP ==String "suld" andBool "p" in M
+  rule isaRemoved(OP, M, N, Ver, Sm) => "sust.p with a 32-bit type does not exist (removed from the specification)"
+    requires OP ==String "sust" andBool "p" in M andBool ("u32" in N orBool "s32" in N orBool "f32" in N)
+  rule isaRemoved(_, _, _, _, _) => "" [owise]
 
   // static check at launch: every instruction of every function against the declared .version / .target
   syntax KItem ::= "#isaChk"
@@ -51,7 +83,7 @@ module PTX-EXEC-ISA
   rule isaScanC(ListItem(K) Ks, CM, V, Sm, Ar) => #if isaIns({CM[K]}:>KItem, V, Sm, Ar) ==String ""
                                                   #then isaScanC(Ks, CM, V, Sm, Ar) #else isaIns({CM[K]}:>KItem, V, Sm, Ar) #fi
   syntax String ::= isaIns(KItem, Int, Int, String) [function, total]
-  rule isaIns(ins(_, opc(OP, _, _), _), V, Sm, Ar) => isaBad(isaRows(OP), V, Sm, Ar)
+  rule isaIns(ins(_, opc(OP, M, Ts), _), V, Sm, Ar) => #if isaRemoved(OP, M, insNames(M, Ts), V, Sm) ==String "" #then isaBad(isaRows(OP), insNames(M, Ts), V, Sm, Ar) #else isaRemoved(OP, M, insNames(M, Ts), V, Sm) #fi
   rule isaIns(_, _, _, _) => "" [owise]
   syntax Map ::= codeOf(Map, String) [function, total]
   rule codeOf(FM, F) => code({FM[F]}:>FDef) requires F in_keys(FM) andBool isFDef(FM[F])
