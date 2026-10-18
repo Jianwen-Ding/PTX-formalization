@@ -104,9 +104,10 @@ Items are numbered in task order (44 onward).  Sources: `docs/coverage.md`, `doc
 ## Memory model and execution model
 - [ ] 67 scopes (.cta/.cluster/.gpu/.sys), morally-strong, scope-aware fences and release/acquire
 - [ ] 68 load-buffering and other load/store reorderings, causality order (PTX model)
-- [ ] 69 proxies (generic/async/texture/surface/tensormap) and fence.proxy.*
-- [ ] 70 asynchronous operations as concurrent agents (cp.async, bulk, TMA, wgmma, tcgen05) instead of atomic at issue
-- [ ] 71 validate against the official PTX memory model (Alloy/herd litmus catalogue), data-race UB check
+- [x] 69 proxies (generic/async/texture/surface/tensormap) and fence.proxy.*
+- [x] 70 asynchronous operations as concurrent agents (cp.async, bulk, TMA, wgmma, tcgen05) instead of atomic at issue
+- [x] 71 load buffering (relaxed mode)
+- [ ] 74 validate against the official PTX memory model (Alloy/herd litmus catalogue), data-race UB check
 - [ ] 72 UB detection: out-of-bounds, misalignment, uninitialised reads, `.aligned` violations, bad masks
 - [ ] 73 independent thread scheduling: convergence, activemask under divergence, bar.warp.sync, reconvergence
 - [ ] 74 grid level: CTA scheduling fairness, cooperative launch grid sync, streams/multiple kernels, griddepcontrol (PDL), device-side launch
