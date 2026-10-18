@@ -17,15 +17,15 @@ module PTX-EXEC-HALF
   rule laneTy(ty("f16x2", _)) => ty("f", 16)
   rule laneTy(ty("bf16x2", _)) => ty("bf", 16)
 
-  rule <tk> exec(opc(OP, M, ListItem(T)), ops(D, A, B, .Operands), C) => .K ... </tk>
+  rule <tk> #gx(opc(OP, M, ListItem(T)), ops(D, A, B, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, pack16(bin(OP, M, laneTy(T), lane16(rd(A, T, C), 0), lane16(rd(B, T, C), 0)),
                                    bin(OP, M, laneTy(T), lane16(rd(A, T, C), 1), lane16(rd(B, T, C), 1)))) </regs>
     requires isHalfPair(T) andBool OP in (SetItem("add") SetItem("sub") SetItem("mul") SetItem("min") SetItem("max"))
-  rule <tk> exec(opc(OP, M, ListItem(T)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
+  rule <tk> #gx(opc(OP, M, ListItem(T)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, pack16(tern(OP, M, laneTy(T), lane16(rd(A, T, C), 0), lane16(rd(B, T, C), 0), lane16(rd(X, T, C), 0)),
                                    tern(OP, M, laneTy(T), lane16(rd(A, T, C), 1), lane16(rd(B, T, C), 1), lane16(rd(X, T, C), 1)))) </regs>
     requires isHalfPair(T) andBool OP in (SetItem("fma") SetItem("mad"))
-  rule <tk> exec(opc(OP, M, ListItem(T)), ops(D, A, .Operands), C) => .K ... </tk>
+  rule <tk> #gx(opc(OP, M, ListItem(T)), ops(D, A, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, pack16(un(OP, M, laneTy(T), lane16(rd(A, T, C), 0)),
                                    un(OP, M, laneTy(T), lane16(rd(A, T, C), 1)))) </regs>
     requires isHalfPair(T) andBool OP in (SetItem("neg") SetItem("abs") SetItem("ex2") SetItem("tanh"))

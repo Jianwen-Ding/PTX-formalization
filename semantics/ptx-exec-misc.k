@@ -13,7 +13,7 @@ requires "ptx-exec-bulk.k"
 module PTX-EXEC-MISC
   imports PTX-EXEC-BULK
 
-  rule <tk> exec(opc(OP, _, _), ops(_), _) => .K ... </tk>
+  rule <tk> #gx(opc(OP, _, _), ops(_), _) => .K ... </tk>
     requires OP in (SetItem("griddepcontrol") SetItem("setmaxnreg"))
 
   // st.async{.weak}{.shared::cluster}.mbarrier::complete_tx::bytes{.vN}.type [addr], b, [remote_bar]

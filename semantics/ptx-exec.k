@@ -80,5 +80,9 @@ module PTX-EXEC
   imports PTX-EXEC-ISA
 
   // anything else is outside the modelled subset
-  rule <tk> exec(O, _, _) => #unsupported(O) ... </tk> [owise]
+  // Instructions with a variable opcode (the arithmetic, half, integer, video, ... families) are handled by `#gx` rules.  They are reached
+  // through this single dispatcher, tried only when no opcode-specific rule applies: keeping the many variable-opcode rows out of the
+  // `exec` pattern-matching matrix shrinks the LLVM backend's decision tree (and kompile's memory) by a large factor.
+  rule <tk> exec(O, Os, C) => #gx(O, Os, C) ... </tk> [priority(100)]
+  rule <tk> #gx(O, _, _) => #unsupported(O) ... </tk> [owise]
 endmodule

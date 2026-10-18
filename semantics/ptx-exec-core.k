@@ -11,7 +11,7 @@ module PTX-EXEC-CORE
 
   syntax Ctx ::= ctx(Map, Map, Map, Map, Map)   // regs, env, syms, labels, declared register widths
   syntax Ops ::= ops(Operands)
-  syntax KItem ::= exec(Opc, Ops, Ctx)
+  syntax KItem ::= exec(Opc, Ops, Ctx) | #gx(Opc, Ops, Ctx)
                  | #fault(String, Int)            // stuck: run-time error
                  | #unsupported(Opc)              // stuck: not modelled
 

@@ -61,12 +61,12 @@ module PTX-EXEC-INTX
   syntax Int ::= pack16(Int, Int) [function, total]
   rule pack16(L0, L1) => (L0 &Int 65535) |Int ((L1 &Int 65535) <<Int 16)
 
-  rule <tk> exec(opc(OP, M, ListItem(T)), ops(D, A, B, .Operands), C) => .K ... </tk>
+  rule <tk> #gx(opc(OP, M, ListItem(T)), ops(D, A, B, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, pack16(bin(OP, M, laneTy(T), lane16(rd(A, T, C), 0), lane16(rd(B, T, C), 0)),
                                    bin(OP, M, laneTy(T), lane16(rd(A, T, C), 1), lane16(rd(B, T, C), 1)))) </regs>
     requires isPacked(T) andBool notBool isF(T) andBool OP in (SetItem("add") SetItem("sub") SetItem("min") SetItem("max"))
      andBool (T ==K ty("s16x2", 32) orBool T ==K ty("u16x2", 32))
-  rule <tk> exec(opc(OP, M, ListItem(T)), ops(D, A, .Operands), C) => .K ... </tk>
+  rule <tk> #gx(opc(OP, M, ListItem(T)), ops(D, A, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, pack16(un(OP, M, laneTy(T), lane16(rd(A, T, C), 0)),
                                    un(OP, M, laneTy(T), lane16(rd(A, T, C), 1)))) </regs>
     requires OP in (SetItem("neg") SetItem("abs")) andBool (T ==K ty("s16x2", 32) orBool T ==K ty("u16x2", 32))

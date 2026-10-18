@@ -53,10 +53,10 @@ module PTX-EXEC-INT
     requires OP in (SetItem("addc") SetItem("subc") SetItem("madc"))
   rule cinOf(_, _) => 0 [owise]
 
-  rule <tk> exec(opc(OP, M, ListItem(T)), ops(D, A, B, .Operands), C) => .K ... </tk>
+  rule <tk> #gx(opc(OP, M, ListItem(T)), ops(D, A, B, .Operands), C) => .K ... </tk>
        <regs> R => ccWrite(R, D, ccOp(OP, M, T, cinOf(OP, R), rd(A, T, C), rd(B, T, C), 0), "cc" in M) </regs>
     requires isCCOp(OP, M) andBool OP =/=String "mad" andBool OP =/=String "madc"
-  rule <tk> exec(opc(OP, M, ListItem(T)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
+  rule <tk> #gx(opc(OP, M, ListItem(T)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
        <regs> R => ccWrite(R, D, ccOp(OP, M, T, cinOf(OP, R), rd(A, T, C), rd(B, T, C), rd(X, T, C)), "cc" in M) </regs>
     requires isCCOp(OP, M) andBool (OP ==String "mad" orBool OP ==String "madc")
 endmodule

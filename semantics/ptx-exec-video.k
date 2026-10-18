@@ -68,10 +68,10 @@ module PTX-EXEC-VIDEO
   rule vcore("vmax", A, B) => maxInt(A, B)
   rule vcore(_, A, _) => A [owise]
 
-  rule <tk> exec(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, .Operands), C) => .K ... </tk>
+  rule <tk> #gx(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, vfinish(M, DT, vcore(OP, vrd(A, AT, C), vrd(B, BT, C)), 0)) </regs>
     requires OP in (SetItem("vadd") SetItem("vsub") SetItem("vabsdiff") SetItem("vmin") SetItem("vmax"))
-  rule <tk> exec(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
+  rule <tk> #gx(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, vfinish(M, DT, vcore(OP, vrd(A, AT, C), vrd(B, BT, C)), rd(X, DT, C))) </regs>
     requires OP in (SetItem("vadd") SetItem("vsub") SetItem("vabsdiff") SetItem("vmin") SetItem("vmax")) andBool selSfx(opName(D)) ==String ""
 
@@ -80,10 +80,10 @@ module PTX-EXEC-VIDEO
   rule vshift(Left, Clamp, A, B) =>
        #if Left #then A <<Int #if Clamp #then minInt(B &Int 255, 32) #else B &Int 31 #fi
        #else A >>Int #if Clamp #then minInt(B &Int 255, 32) #else B &Int 31 #fi #fi
-  rule <tk> exec(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, .Operands), C) => .K ... </tk>
+  rule <tk> #gx(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, vfinish(M, DT, vshift(OP ==String "vshl", notBool "wrap" in M, vrd(A, AT, C), vrd(B, BT, C)), 0)) </regs>
     requires OP in (SetItem("vshl") SetItem("vshr"))
-  rule <tk> exec(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
+  rule <tk> #gx(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, vfinish(M, DT, vshift(OP ==String "vshl", notBool "wrap" in M, vrd(A, AT, C), vrd(B, BT, C)), rd(X, DT, C))) </regs>
     requires OP in (SetItem("vshl") SetItem("vshr")) andBool selSfx(opName(D)) ==String ""
 
@@ -130,7 +130,7 @@ module PTX-EXEC-VIDEO
   rule vmerge(DT, Sat, Sel, V, Cr) =>
        ((Cr &Int mask(32)) &Int (~Int (mask(vmergeW(Sel)) <<Int vmergePos(Sel))))
        |Int ((satLane(Sat, DT, vmergeW(Sel), V) &Int mask(vmergeW(Sel))) <<Int vmergePos(Sel))
-  rule <tk> exec(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
+  rule <tk> #gx(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
        <regs> R => R[baseStr(opName(D)) <- vmerge(DT, "sat" in M, selSfx(opName(D)),
                        #if OP ==String "vshl" orBool OP ==String "vshr"
                        #then vshift(OP ==String "vshl", notBool "wrap" in M, vrd(A, AT, C), vrd(B, BT, C))
@@ -195,13 +195,13 @@ module PTX-EXEC-VIDEO
        #if "add" in M
        #then trunc(Cv +Int simdAcc(substrString(OP, 0, lengthString(OP) -Int 1), M, DT, AT, BT, A, B, AS, BS, Mk, lanes(OP) -Int 1, lanes(OP)), 32)
        #else simdMrg(substrString(OP, 0, lengthString(OP) -Int 1), M, DT, AT, BT, A, B, Cv, AS, BS, Mk, lanes(OP) -Int 1, lanes(OP)) #fi
-  rule <tk> exec(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
+  rule <tk> #gx(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
        <regs> R => R[baseStr(opName(D)) <- simdRes(OP, M, DT, AT, BT, rawV(A, C), rawV(B, C), rd(X, ty("u", 32), C),
                                                    selOr(A, defSel("a", lanes(OP))), selOr(B, defSel("b", lanes(OP))),
                                                    selOr(D, defSel("m", lanes(OP))))] </regs>
     requires isSimd(OP) andBool OP =/=String "vset2" andBool OP =/=String "vset4"
   // vset2 / vset4 have no destination type suffix (d is .u32)
-  rule <tk> exec(opc(OP, M, ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
+  rule <tk> #gx(opc(OP, M, ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
        <regs> R => R[baseStr(opName(D)) <- simdRes(OP, M, ty("u", 32), AT, BT, rawV(A, C), rawV(B, C), rd(X, ty("u", 32), C),
                                                    selOr(A, defSel("a", lanes(OP))), selOr(B, defSel("b", lanes(OP))),
                                                    selOr(D, defSel("m", lanes(OP))))] </regs>

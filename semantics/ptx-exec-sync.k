@@ -17,9 +17,9 @@ module PTX-EXEC-SYNC
   syntax KItem ::= #bar(Int, Int, Bool)            // id, expected (-1: all), wait?
                  | #barCheck(Int) | #barCheckAll(List)
 
-  rule <tk> exec(opc(OP, M, _), ops(A, .Operands), C) => #bar(rd(A, ty("u", 32), C), -1, notBool "arrive" in M) ... </tk>
+  rule <tk> #gx(opc(OP, M, _), ops(A, .Operands), C) => #bar(rd(A, ty("u", 32), C), -1, notBool "arrive" in M) ... </tk>
     requires isBar(OP, M)
-  rule <tk> exec(opc(OP, M, _), ops(A, N, .Operands), C) =>
+  rule <tk> #gx(opc(OP, M, _), ops(A, N, .Operands), C) =>
             #bar(rd(A, ty("u", 32), C), rd(N, ty("u", 32), C), notBool "arrive" in M) ... </tk>
     requires isBar(OP, M)
   // bar.warp.sync is a warp collective with no data (ptx-exec-warp.k)
@@ -38,10 +38,10 @@ module PTX-EXEC-SYNC
   rule redStep("or", -1, V) => V
   rule redStep("or", A, V) => A |Int V requires A >=Int 0
   rule redStep(_, _, V) => V [owise]
-  rule <tk> exec(opc(OP, M, _), ops(D, A, Pc, .Operands), C) =>
+  rule <tk> #gx(opc(OP, M, _), ops(D, A, Pc, .Operands), C) =>
             #barRed(rd(A, ty("u", 32), C), -1, redKind(M), b2i(rd(Pc, ty("p", 1), C) =/=Int 0), D) ... </tk>
     requires isBarRed(OP, M)
-  rule <tk> exec(opc(OP, M, _), ops(D, A, N, Pc, .Operands), C) =>
+  rule <tk> #gx(opc(OP, M, _), ops(D, A, N, Pc, .Operands), C) =>
             #barRed(rd(A, ty("u", 32), C), rd(N, ty("u", 32), C), redKind(M), b2i(rd(Pc, ty("p", 1), C) =/=Int 0), D) ... </tk>
     requires isBarRed(OP, M)
   rule <tk> #barRed(B, X, K, V, D) => #barCheck(B) ~> #yield ~> #barWaitRed(B, {BG[B] orDefault 0}:>Int, D) ... </tk>

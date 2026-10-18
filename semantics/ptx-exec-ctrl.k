@@ -15,7 +15,7 @@ module PTX-EXEC-CTRL
   rule <tk> exec(opc("exit", _, _), ops(.Operands), _) => #exit ... </tk>
   rule <tk> exec(opc("trap", _, _), _, _) => #fault("trap", 0) ... </tk>
   // memory ordering is sequentially consistent here, so fences are no-ops
-  rule <tk> exec(opc(OP, _, _), _, _) => .K ... </tk>
+  rule <tk> #gx(opc(OP, _, _), _, _) => .K ... </tk>
     requires OP in (SetItem("membar") SetItem("fence") SetItem("nanosleep") SetItem("brkpt")
                     SetItem("pmevent") SetItem("prefetch") SetItem("prefetchu"))
 
