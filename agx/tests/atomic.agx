@@ -1,0 +1,18 @@
+// device and threadgroup atomics: lane-order serialisation, old values returned at the wait
+.uni u2 = 8192;
+.uni u3 = 0;
+.laneid r4;
+mov r5, 0;
+device_atomic add r6, u2_u3, r5, 1;      // every lane adds 1 to word 0
+wait 0;
+device_atomic max r7, u2_u3, 1, r4;      // word 1 = max lane id
+wait 0;
+threadgroup_atomic xor r8, 2, r4;        // threadgroup word 2 = xor of lane ids
+wait 0;
+stop;
+.run;
+.expectdev 8192 = 32;
+.expectdev 8196 = 31;
+.expectlane 0 r6 = 0;
+.expectlane 7 r6 = 7;
+.expectlane 31 r6 = 31

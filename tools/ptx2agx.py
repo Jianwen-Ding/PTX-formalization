@@ -45,6 +45,8 @@ class Lower:
         self.uni = {}
         self.pending_wait = False
         self.labels = set()
+        self.shared, self.local, self.tops = {}, {}, {"shared": 0, "local": 0}
+        self.lane_reg = None
 
     @staticmethod
     def clean(text):
@@ -94,8 +96,20 @@ class Lower:
         self.emit("stop")
         return self.out
 
+    def decl(self, st):
+        m = re.match(r"\.(shared|local)\s+(?:\.align\s+(\d+)\s+)?\.(\w+)\s+(\w+)(?:\[(\d+)\])?", st)
+        if not m: return
+        space, al, ty, name, n = m.groups()
+        size = {"b8": 1, "u8": 1, "s8": 1, "b16": 2, "u16": 2, "s16": 2, "b32": 4, "u32": 4, "s32": 4, "f32": 4, "b64": 8, "u64": 8, "f64": 8}[ty] * int(n or 1)
+        al = max(int(al or 4), 4)
+        d = self.shared if space == "shared" else self.local
+        top = self.tops[space]
+        top = (top + al - 1) // al * al
+        d[name] = top; self.tops[space] = top + size
+        self.sizes = getattr(self, "sizes", {}); self.sizes[space] = self.tops[space]
+
     def stmt(self, st):
-        if st.startswith("."): return                         # .reg / .shared declarations
+        if st.startswith("."): self.decl(st); return          # .reg / .shared / .local declarations
         if st == "ret": return
         m = re.fullmatch(r"(\$?\w+):", st)
         if m:
@@ -172,6 +186,12 @@ class Lower:
             return
         if base == "mov" and rest[1] in SR:
             self.emit(f"get_sr r{self.reg(rest[0])}, {SR[rest[1]]}"); self.define(rest[0]); return
+        if base == "mov" and rest[1] in self.shared:
+            self.emit(f"mov r{self.reg(rest[0])}, {self.shared[rest[1]]}"); self.define(rest[0]); return
+        if base in ("atom", "red") and parts[1] in ("global", "shared"):
+            return self.atomic(base, parts, rest)
+        if base in ("ld", "st") and parts[1] in ("shared", "local"):
+            return self.shmem(base, parts[1], ty, rest)
         if base == "mov" and ty == "u64":
             self.sym[rest[0]] = self.sym[rest[1]]; return
         if base == "cvt" and parts[-2:] == ["u64", "u32"] or (base == "cvt" and parts[1:3] == ["u64", "u32"]):
@@ -304,6 +324,73 @@ class Lower:
             self.emit(f"device_load u32 1 r{self.reg(rest[0])}, {pair}, {tmp}, {shift}"); self.emit("wait 0"); self.define(rest[0])
         else:
             self.emit(f"device_store u32 1 {self.operand(rest[1], ty)}, {pair}, {tmp}, {shift}") if rest[1].startswith("%") else self.imm_store(rest[1], pair, tmp, shift)
+
+    def lane(self):
+        if self.lane_reg is None:
+            self.lane_reg = self.next_tmp(); self.emit(f"get_sr r{self.lane_reg}, 80")
+        return f"r{self.lane_reg}"
+
+    def tg_index(self, space, addr):
+        """AGX threadgroup element index (a register or an immediate string) of a shared/local PTX address"""
+        m = re.fullmatch(r"\[\s*(%?\w+)\s*(?:\+\s*(\d+))?\s*\]", addr)
+        if not m: raise Reject("address " + addr)
+        name, disp = m.group(1), int(m.group(2) or 0)
+        if space == "shared":
+            if name in self.shared:
+                return str((self.shared[name] + disp) // 4) if (self.shared[name] + disp) % 4 == 0 else self._rej("unaligned shared access")
+            t = self.next_tmp(); self.emit(f"bfeil 0 r{t}, 0, r{self.reg(name)}, 2")
+            if disp:
+                if disp % 4: raise Reject("unaligned shared displacement")
+                self.emit(f"iadd r{t}, r{t}, {disp // 4}")
+            return f"r{t}"
+        # local: per-lane frame inside threadgroup memory, after the shared variables
+        if name not in self.local: raise Reject("local address must be a declared variable")
+        off = self.local[name] + disp
+        if off % 4: raise Reject("unaligned local access")
+        frame = (self.local_size() + 3) // 4
+        base = 4096 + (self.shared_size() + 3) // 4          # elements: leave the shared area below
+        t = self.next_tmp(); self.emit(f"imadd r{t}, {self.lane()}, {frame}, {base + off // 4}")
+        return f"r{t}"
+
+    def _rej(self, m): raise Reject(m)
+    def shared_size(self): return self.sizes.get("shared", 0) if hasattr(self, "sizes") else 0
+    def local_size(self): return self.sizes.get("local", 0) if hasattr(self, "sizes") else 0
+
+    def shmem(self, base, space, ty, rest):
+        if ty not in ("u32", "s32", "b32", "f32"): raise Reject("memory type " + ty)
+        idx = self.tg_index(space, rest[1] if base == "ld" else rest[0])
+        if base == "ld":
+            self.emit(f"threadgroup_load u32 1 r{self.reg(rest[0])}, {idx}, 0"); self.emit("wait 0"); self.define(rest[0])
+        else:
+            v = self.operand(rest[1], ty)
+            if not v.startswith("r"): t = self.next_tmp(); self.emit(f"mov r{t}, {v}"); v = f"r{t}"
+            self.emit(f"threadgroup_store u32 1 {v}, {idx}, 0")
+
+    def atomic(self, base, parts, rest):
+        space = parts[1]; op = {"add": "add", "min": "min", "max": "max", "and": "and", "or": "or", "xor": "xor", "exch": "xchg"}.get(parts[2])
+        ty = parts[-1]
+        if op is None or ty != "u32": raise Reject("atomic " + ".".join(parts))
+        if base == "atom": d, addr, val = rest[0], rest[1], rest[2]
+        else: d, addr, val = None, rest[0], rest[1]
+        v = self.operand(val, ty)
+        dst = f"r{self.reg(d)}" if d else f"r{self.next_tmp()}"
+        if space == "shared":
+            idx = self.tg_index("shared", addr)
+            self.emit(f"threadgroup_atomic {op} {dst}, {idx}, {v}")
+        else:
+            m = re.fullmatch(r"\[\s*(%\w+)\s*(?:\+\s*(\d+))?\s*\]", addr)
+            s0 = self.sym.get(m.group(1)) if m else None
+            if s0 is None: raise Reject("atomic address")
+            if s0[0] == "ptr": s0 = ("addr", s0[1], None, 4, 0)
+            _, pidx, idxr, scale, d0 = s0
+            disp = int(m.group(2) or 0) + d0
+            if scale != 4 or disp % 4: raise Reject("atomic index scale")
+            if idxr is None: idx = str(disp // 4)
+            elif disp: t = self.next_tmp(); self.emit(f"iadd r{t}, r{self.reg(idxr)}, {disp // 4}"); idx = f"r{t}"
+            else: idx = f"r{self.reg(idxr)}"
+            self.emit(f"device_atomic {op} {dst}, u{2 * pidx}_u{2 * pidx + 1}, {idx}, {v}")
+        self.emit("wait 0")
+        if d: self.define(d)
 
     def imm_store(self, imm, pair, tmp, shift):
         t = f"r{self.next_tmp()}"; self.emit(f"mov {t}, {imm}"); self.emit(f"device_store u32 1 {t}, {pair}, {tmp}, {shift}")

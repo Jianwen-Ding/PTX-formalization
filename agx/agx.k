@@ -27,6 +27,7 @@ module AGX-SYNTAX
   syntax ACc    ::= "eq" | "ne" | "ult" | "ule" | "ugt" | "uge" | "slt" | "sle" | "sgt" | "sge"
                  | "feq" | "fne" | "flt" | "fle" | "fgt" | "fge"
   syntax AFmt   ::= "u8" | "u16" | "u32"
+  syntax AAop   ::= "add" | "min" | "max" | "and" | "or" | "xor" | "xchg"
   syntax AOperand ::= AReg | Int | Float
 
   syntax AInstr ::= "mov" AReg "," AOperand
@@ -69,6 +70,8 @@ module AGX-SYNTAX
                  | "device_store" AFmt Int AReg "," AUPair "," AOperand "," Int
                  | "threadgroup_load" AFmt Int AReg "," AOperand "," Int
                  | "threadgroup_store" AFmt Int AReg "," AOperand "," Int
+                 | "device_atomic" AAop AReg "," AUPair "," AOperand "," AOperand
+                 | "threadgroup_atomic" AAop AReg "," AOperand "," AOperand
                  | "wait" Int
                  | "threadgroup_barrier"
                  | "stop"
@@ -427,6 +430,37 @@ module AGX
   syntax Map ::= stLane(Map, Map, Int, AFmt, Int, AReg, Int, Int) [function, total]
   rule stLane(G, M, T, F, N, D, A, K) => stLane(G, wrBytes(M, A +Int K *Int fsize(F), {G[T *Int 256 +Int regNum(D) +Int K] orDefault 0}:>Int, fsize(F)), T, F, N, D, A, K +Int 1) requires K <Int N
   rule stLane(_, M, _, _, _, _, _, _) => M [owise]
+  // atomics (abstract: the reverse-engineered documents do not describe the atomic instructions; Metal exposes relaxed 32-bit
+  // atomics).  Active lanes perform their read-modify-write one after the other in lane order (one valid serialisation); the old
+  // value is returned like a load, visible at the next `wait`.
+  syntax AtomRes ::= atomRes(Map, List)
+  syntax Int ::= aop(AAop, Int, Int) [function, total]
+  rule aop(add, O, V) => (O +Int V) &Int m32()
+  rule aop(min, O, V) => #if O <Int V #then O #else V #fi
+  rule aop(max, O, V) => #if O >Int V #then O #else V #fi
+  rule aop(and, O, V) => O &Int V
+  rule aop(or, O, V) => O |Int V
+  rule aop(xor, O, V) => O xorInt V
+  rule aop(xchg, _, V) => V
+  syntax AtomRes ::= atomLoop(Map, Map, Int, Int, Map, AAop, AReg, Int, AOperand, AOperand, List) [function, total]
+  rule atomLoop(G, U, EM, T, M, OP, D, B, I, V, L) =>
+       #if ((EM >>Int T) &Int 1) ==Int 1
+       #then atomLoop(G, U, EM, T +Int 1, wrBytes(M, ea(G, U, T, u32, I, 0, B), aop(OP, rdBytes(M, ea(G, U, T, u32, I, 0, B), 4), opv(G, U, T, V, 32)), 4), OP, D, B, I, V,
+                      L ListItem(ld(T, regNum(D), rdBytes(M, ea(G, U, T, u32, I, 0, B), 4))))
+       #else atomLoop(G, U, EM, T +Int 1, M, OP, D, B, I, V, L) #fi
+    requires T <Int 32
+  rule atomLoop(_, _, _, _, M, _, _, _, _, _, L) => atomRes(M, L) [owise]
+  rule <k> #exec(device_atomic OP D, P, I, V) => .K ... </k> <gpr> G </gpr> <upr> U </upr> <em> EM </em>
+       <dmem> M => memOf(atomLoop(G, U, EM, 0, M, OP, D, ubase(U, P), I, V, .List)) </dmem>
+       <pend> L => L pendOf(atomLoop(G, U, EM, 0, M, OP, D, ubase(U, P), I, V, .List)) </pend>
+  rule <k> #exec(threadgroup_atomic OP D, I, V) => .K ... </k> <gpr> G </gpr> <upr> U </upr> <em> EM </em>
+       <tmem> M => memOf(atomLoop(G, U, EM, 0, M, OP, D, 0, I, V, .List)) </tmem>
+       <pend> L => L pendOf(atomLoop(G, U, EM, 0, M, OP, D, 0, I, V, .List)) </pend>
+  syntax Map ::= memOf(AtomRes) [function, total]
+  rule memOf(atomRes(M, _)) => M
+  syntax List ::= pendOf(AtomRes) [function, total]
+  rule pendOf(atomRes(_, L)) => L
+
   // wait: apply the pending loads
   rule <k> #exec(wait _) => .K ... </k> <gpr> G => applyLd(G, P) </gpr> <pend> P => .List </pend>
   syntax APendLd ::= ld(Int, Int, Int)

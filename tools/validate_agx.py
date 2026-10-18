@@ -163,6 +163,52 @@ $LOOP:
   st.global.u32 [%rd5], %r4; ret; }""",
      [("in", "u32", rnd_i(32, 0, 1000), False), ("out", "u32", [0] * 32, True)])
 
+test("histogram_atomics", """
+.visible .entry k(.param .u64 pin, .param .u64 pbins)
+{ .reg .b32 %r<8>; .reg .b64 %rd<8>;
+  ld.param.u64 %rd1, [pin]; ld.param.u64 %rd2, [pbins];
+  mov.u32 %r1, %tid.x; mul.wide.u32 %rd3, %r1, 4;
+  add.u64 %rd4, %rd1, %rd3;
+  ld.global.u32 %r2, [%rd4];
+  and.b32 %r3, %r2, 7;
+  mul.wide.u32 %rd5, %r3, 4; add.u64 %rd6, %rd2, %rd5;
+  atom.global.add.u32 %r4, [%rd6], 1;
+  red.global.max.u32 [%rd2+40], %r2;
+  ret; }""",
+     [("in", "u32", rnd_i(32, 0, 1000), False), ("bins", "u32", [0] * 16, True)])
+
+test("shared_reverse", """
+.visible .entry k(.param .u64 pin, .param .u64 pout)
+{ .shared .align 4 .b32 buf[32]; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+  ld.param.u64 %rd1, [pin]; ld.param.u64 %rd2, [pout];
+  mov.u32 %r1, %tid.x; mul.wide.u32 %rd3, %r1, 4;
+  add.u64 %rd4, %rd1, %rd3; add.u64 %rd5, %rd2, %rd3;
+  ld.global.u32 %r2, [%rd4];
+  mov.u32 %r3, buf; shl.b32 %r4, %r1, 2; add.u32 %r4, %r3, %r4;
+  st.shared.u32 [%r4], %r2;
+  bar.sync 0;
+  sub.u32 %r5, 31, %r1; shl.b32 %r5, %r5, 2; add.u32 %r5, %r3, %r5;
+  ld.shared.u32 %r6, [%r5];
+  atom.shared.add.u32 %r7, [buf+8], %r6;
+  bar.sync 0;
+  ld.shared.u32 %r6, [buf+8];
+  add.u32 %r6, %r6, %r1;
+  st.global.u32 [%rd5], %r6; ret; }""",
+     [("in", "u32", rnd_i(32, 0, 1000), False), ("out", "u32", [0] * 32, True)])
+
+test("local_array", """
+.visible .entry k(.param .u64 pin, .param .u64 pout)
+{ .local .align 4 .b32 tmp[4]; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+  ld.param.u64 %rd1, [pin]; ld.param.u64 %rd2, [pout];
+  mov.u32 %r1, %tid.x; mul.wide.u32 %rd3, %r1, 4;
+  add.u64 %rd4, %rd1, %rd3; add.u64 %rd5, %rd2, %rd3;
+  ld.global.u32 %r2, [%rd4];
+  st.local.u32 [tmp], %r2; add.u32 %r3, %r2, 7; st.local.u32 [tmp+4], %r3;
+  ld.local.u32 %r4, [tmp+4]; ld.local.u32 %r5, [tmp];
+  mul.lo.u32 %r6, %r4, %r5;
+  st.global.u32 [%rd5], %r6; ret; }""",
+     [("in", "u32", rnd_i(32, 0, 1000), False), ("out", "u32", [0] * 32, True)])
+
 KNOWN_DIFF = {"float_denormal": "AGX flushes f32 subnormal results to zero (G13 RoundToFloat32Wrapper flush_to_zero=True); PTX keeps them"}
 
 def run(cmd):
