@@ -164,15 +164,14 @@ module PTX-EXEC-TEX
                     #if R >=Int 2 #then adIdx(AM, flo(pos(Y, lvD(B, qi(Q, 0), 1), NM)) +Int qi(Q, 2), lvD(B, qi(Q, 0), 1)) #else 0 #fi,
                     #if R >=Int 3 #then adIdx(AM, flo(pos(Z, lvD(B, qi(Q, 0), 2), NM)) +Int qi(Q, 3), lvD(B, qi(Q, 0), 2)) #else 0 #fi, L)
   rule sample(GM, B, Q, 1, AM, NM, X, Y, Z, L, R) =>
-       lerp4(lerp4(lerp4(texel(GM, B, Q, ix(B, Q, AM, NM, X, 0), jy(B, Q, AM, NM, Y, 0, R), kz(B, Q, AM, NM, Z, 0, R), L),
-                         texel(GM, B, Q, ix(B, Q, AM, NM, X, 1), jy(B, Q, AM, NM, Y, 0, R), kz(B, Q, AM, NM, Z, 0, R), L), wx(B, Q, NM, X)),
-                   lerp4(texel(GM, B, Q, ix(B, Q, AM, NM, X, 0), jy(B, Q, AM, NM, Y, 1, R), kz(B, Q, AM, NM, Z, 0, R), L),
-                         texel(GM, B, Q, ix(B, Q, AM, NM, X, 1), jy(B, Q, AM, NM, Y, 1, R), kz(B, Q, AM, NM, Z, 0, R), L), wx(B, Q, NM, X)), wy(B, Q, NM, Y, R)),
-             lerp4(lerp4(texel(GM, B, Q, ix(B, Q, AM, NM, X, 0), jy(B, Q, AM, NM, Y, 0, R), kz(B, Q, AM, NM, Z, 1, R), L),
-                         texel(GM, B, Q, ix(B, Q, AM, NM, X, 1), jy(B, Q, AM, NM, Y, 0, R), kz(B, Q, AM, NM, Z, 1, R), L), wx(B, Q, NM, X)),
-                   lerp4(texel(GM, B, Q, ix(B, Q, AM, NM, X, 0), jy(B, Q, AM, NM, Y, 1, R), kz(B, Q, AM, NM, Z, 1, R), L),
-                         texel(GM, B, Q, ix(B, Q, AM, NM, X, 1), jy(B, Q, AM, NM, Y, 1, R), kz(B, Q, AM, NM, Z, 1, R), L), wx(B, Q, NM, X)), wy(B, Q, NM, Y, R)),
+       lerp4(lerp4(lerp4(tl(GM, B, Q, AM, NM, X, Y, Z, L, R, 0, 0, 0), tl(GM, B, Q, AM, NM, X, Y, Z, L, R, 1, 0, 0), wx(B, Q, NM, X)),
+                   lerp4(tl(GM, B, Q, AM, NM, X, Y, Z, L, R, 0, 1, 0), tl(GM, B, Q, AM, NM, X, Y, Z, L, R, 1, 1, 0), wx(B, Q, NM, X)), wy(B, Q, NM, Y, R)),
+             lerp4(lerp4(tl(GM, B, Q, AM, NM, X, Y, Z, L, R, 0, 0, 1), tl(GM, B, Q, AM, NM, X, Y, Z, L, R, 1, 0, 1), wx(B, Q, NM, X)),
+                   lerp4(tl(GM, B, Q, AM, NM, X, Y, Z, L, R, 0, 1, 1), tl(GM, B, Q, AM, NM, X, Y, Z, L, R, 1, 1, 1), wx(B, Q, NM, X)), wy(B, Q, NM, Y, R)),
              wz(B, Q, NM, Z, R))
+  syntax List ::= tl(Bytes, Int, List, Int, Int, Float, Float, Float, Int, Int, Int, Int, Int) [function, total]    // one footprint texel
+  rule tl(GM, B, Q, AM, NM, X, Y, Z, L, R, DX, DY, DZ) =>
+       texel(GM, B, Q, ix(B, Q, AM, NM, X, DX), jy(B, Q, AM, NM, Y, DY, R), kz(B, Q, AM, NM, Z, DZ, R), L)
   rule sample(GM, B, Q, _, AM, NM, X, Y, Z, L, R) => sample(GM, B, Q, 0, AM, NM, X, Y, Z, L, R) [owise]
   // linear-filter helpers: lower/upper texel index (with offset), and weights
   syntax Int ::= ix(Int, List, Int, Int, Float, Int) [function, total] | jy(Int, List, Int, Int, Float, Int, Int) [function, total] | kz(Int, List, Int, Int, Float, Int, Int) [function, total]
