@@ -107,7 +107,7 @@ module AGX
       <srs> .Map </srs>               // special register * 32 + lane |-> value
       <pend> .List </pend>            // loads not yet waited for: ld(lane, register, value)
       <status> "loading" </status>
-      <exit> 0 </exit>
+      <exit-code exit=""> 0 </exit-code>
       <msg> "" </msg>
     </agx>
 
@@ -179,7 +179,7 @@ module AGX
   rule <k> #run => .K ... </k> <status> "stopped" </status>
   rule <k> #run => #fatal("fell off the end of the program") ... </k> <code> C </code> <pc> PC </pc> <status> "running" </status> requires notBool PC in_keys(C)
   syntax KItem ::= #fatal(String)
-  rule <k> #fatal(S) ~> _ => .K </k> <msg> _ => S </msg> <exit> _ => 1 </exit> <status> _ => "fault" </status>
+  rule <k> #fatal(S) ~> _ => .K </k> <msg> _ => S </msg> <exit-code> _ => 1 </exit-code> <status> _ => "fault" </status>
 
   rule <k> .expectall R = V => .K ... </k> <gpr> G </gpr> <upr> U </upr>
     requires allEq(G, U, 0, R, V)
