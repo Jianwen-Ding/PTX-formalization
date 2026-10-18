@@ -150,9 +150,12 @@ module PTX-EXEC-TEX
   rule flo(X) => Float2Int(floorFloat(X))
   // weight of the upper texel quantised to 1/256
   syntax Float ::= qw(Float) [function, total]
-  rule qw(Xb) => Int2Float(flo((Xb -Float floorFloat(Xb)) *Float Int2Float(256, WP, WEXP) +Float Int2Float(1, WP, WEXP) /Float Int2Float(2, WP, WEXP)), WP, WEXP) /Float Int2Float(256, WP, WEXP)
+  rule qw(Xb) => Int2Float(flo((Xb -Float floorFloat(Xb)) *Float Int2Float(256, WP, WEXP) +Float Int2Float(1, WP, WEXP) /Float Int2Float(2, WP, WEXP)), WP, WEXP) *Float inv256()
   syntax Float ::= half() [function, total]
   rule half() => Int2Float(1, WP, WEXP) /Float Int2Float(2, WP, WEXP)
+  // 1/256 by multiplication: mpfr_div has crashed (SIGFPE in mpfr_divhigh_n) on some 4400-bit operands
+  syntax Float ::= inv256() [function, total]
+  rule inv256() => half() *Float half() *Float half() *Float half() *Float half() *Float half() *Float half() *Float half()
 
   // sample at (x, y, z) floats with layer l in the level of Q
   syntax List ::= sample(Bytes, Int, List, Int, Int, Int, Float, Float, Float, Int, Int) [function, total]   // gmem, blob, Q, filter, addrmode, norm, x,y,z, layer, rank
@@ -186,7 +189,7 @@ module PTX-EXEC-TEX
   syntax Float ::= lamClamp(Int, Int, Float) [function, total]      // blob, sampler, lod
   rule lamClamp(B, S, Lam) => minF(maxF(maxF(Lam, lodF(minLodW(S))), zF()), minF(lodF(maxLodW(S)), Int2Float(txLevels(B) -Int 1, WP, WEXP)))
   syntax Float ::= lodF(Int) [function, total] | minF(Float, Float) [function, total]
-  rule lodF(V) => Int2Float(V, WP, WEXP) /Float Int2Float(256, WP, WEXP)
+  rule lodF(V) => Int2Float(V, WP, WEXP) *Float inv256()
   rule minF(A, B) => #if A <=Float B #then A #else B #fi
   syntax List ::= mipSample(Bytes, Int, Int, Bool, Float, List, Int, Int, Int, Float, Float, Float, Int, Int) [function, total]
        // gmem, blob, sampler, use-lod?, lod, Q, filter, addrmode, norm, x, y, z, layer, rank
