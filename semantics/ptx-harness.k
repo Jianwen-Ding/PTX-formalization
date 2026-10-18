@@ -76,6 +76,21 @@ module PTX-HARNESS
        <bufs> B => B[N <- buf(alignUp(G, 256), T, C)] </bufs>
        <gmem> M => initMem(M, alignUp(G, 256), T, Vs) </gmem>
 
+  // .multimem MM .size N { BUF0, BUF1, ... } ;   a multimem window of N bytes over the buffers (see ptx-exec-mm.k)
+  syntax KItem ::= #mmReg(String, Int, List)
+  rule <k> .multimem N .size S { Bs } ; => #alloc(Name2String(N), ty("b", 8), S, .List) ~> #mmReg(Name2String(N), S, namesL(Bs)) ... </k>
+  rule <k> #mmReg(N, S, Bs) => .K ... </k>
+       <syms> Sy </syms>
+       <mmtab> T => T[symA(Sy, N) <- mm(S, symAs(Sy, Bs))] </mmtab>
+  syntax List ::= symAs(Map, List) [function, total]
+  syntax Int ::= symA(Map, String) [function, total]
+  rule symA(Sy, N) => addrOfSym({Sy[N]}:>Sym) requires N in_keys(Sy)
+  rule symA(_, _) => 0 [owise]
+  syntax Int ::= addrOfSym(Sym) [function, total]
+  rule addrOfSym(sym(_, A)) => A
+  rule symAs(Sy, ListItem(N:String) Ns) => ListItem(symA(Sy, N)) symAs(Sy, Ns)
+  rule symAs(_, _) => .List [owise]
+
   syntax KItem ::= #patch(String, Ty, Int, List) | #appendTo(String, Ty, List)
   // .tensormap TM .f16 BUF .dims { d0, d1, ... } .strides { s1, ... } .box { b0, b1, ... } .swizzle 0 ;
   // builds a 128-byte tensor-map object (our own encoding, see ptx-exec-tma.k) in global memory

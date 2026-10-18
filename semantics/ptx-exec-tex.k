@@ -436,10 +436,16 @@ module PTX-EXEC-TEX
             #sfLoad(Dv, T, sfVec(M), sfA(readBytes(GM, hAddr(S, C), 128), M, T, sfCoords(M, Cs, C)), M) ... </tk>
        <gmem> GM </gmem>
     requires "b" in M
-  rule <tk> #sfLoad(Dv, T, N, A, _) => #mem(loc("global", A), rdOp(N *Int bytes(T))) ~> #sfUnpack(vecOps(Dv), T, N) ... </tk> requires A >=Int 0
-  rule <tk> #sfLoad(Dv, _, N, A, M) => #wmWr(vecOps(Dv), zeros(N)) ... </tk> requires A <Int 0 andBool "zero" in M
+  rule <tk> #sfLoad(Dv, T, N, A, _) => #mem(loc("global", A), rdOp(N *Int bytes(T))) ~> #sfUnpack(dstList(Dv), T, N) ... </tk> requires A >=Int 0
+  rule <tk> #sfLoad(Dv, _, N, A, M) => #wmWr(dstList(Dv), zeros(N)) ... </tk> requires A <Int 0 andBool "zero" in M
   rule <tk> #sfLoad(_, _, _, A, _) => #fault("surface access out of bounds", A) ... </tk> [owise]
   rule <tk> #res(V) ~> #sfUnpack(Ds, T, N) => #wmWr(Ds, split(V, T, N, 0)) ... </tk>
+  // destination / source operand of a vector-or-scalar form
+  syntax List ::= dstList(Operand) [function, total] | srcList(Operand) [function, total]
+  rule dstList(O) => vecOps(O) requires vecOps(O) =/=K .List
+  rule dstList(O) => ListItem(O) [owise]
+  rule srcList(O) => opsList(vecItems(O)) requires vecOps(O) =/=K .List
+  rule srcList(O) => ListItem(O) [owise]
   syntax List ::= split(Int, Ty, Int, Int) [function, total] | zeros(Int) [function, total]
   rule split(V, T, N, I) => ListItem((V >>Int (8 *Int bytes(T) *Int I)) &Int mask(8 *Int bytes(T))) split(V, T, N, I +Int 1) requires I <Int N
   rule split(_, _, _, _) => .List [owise]
@@ -448,7 +454,7 @@ module PTX-EXEC-TEX
 
   // sust.b.geom.vN.btype.mode [surf, {coords}], {r..}
   rule <tk> exec(opc("sust", M, ListItem(T)), ops([ S , Cs ], Vs, .Operands), C) =>
-            #sfStore(sfA(readBytes(GM, hAddr(S, C), 128), M, T, sfCoords(M, Cs, C)), T, rdList(opsList(vecItems(Vs)), T, C), M) ... </tk>
+            #sfStore(sfA(readBytes(GM, hAddr(S, C), 128), M, T, sfCoords(M, Cs, C)), T, rdList(srcList(Vs), T, C), M) ... </tk>
        <gmem> GM </gmem>
     requires "b" in M
   rule <tk> #sfStore(A, T, Vs, _) => #mem(loc("global", A), wrOp(size(Vs) *Int bytes(T), packList(Vs, T, 0))) ~> #drop ... </tk> requires A >=Int 0
@@ -495,7 +501,7 @@ module PTX-EXEC-TEX
   rule sfScaleX(L, _) => L [owise]
   // sust.p.geom.vec.b32.clamp [surf, {coords}], {r, g, b, a}
   rule <tk> exec(opc("sust", M, ListItem(T)), ops([ S , Cs ], Vs, .Operands), C) =>
-            #sfStoreP(readBytes(GM, hAddr(S, C), 128), sfCoords(M, Cs, C), rdList(opsList(vecItems(Vs)), ty("b", 32), C), M) ... </tk>
+            #sfStoreP(readBytes(GM, hAddr(S, C), 128), sfCoords(M, Cs, C), rdList(srcList(Vs), ty("b", 32), C), M) ... </tk>
        <gmem> GM </gmem>
     requires "p" in M
   syntax KItem ::= #sfStoreP(Int, List, List, Set)

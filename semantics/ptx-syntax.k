@@ -173,6 +173,7 @@ module PTX-SYNTAX
                       | ".texture" Name Type Name ".dims" "{" Ints "}" ".attrs" "{" Ints "}" ";"
                       | ".sampler" Name ".attrs" "{" Ints "}" ";"
                       | ".surface" Name Type Name ".dims" "{" Ints "}" ".attrs" "{" Ints "}" ";"
+                      | ".multimem" Name ".size" Int "{" Names "}" ";"
                       | ".memmodel" Name ";"
                       | ".isacheck" ";"
                       | ".append" Name Type "=" "{" InitVals "}" ";"            // extend the most recent buffer (keeps text small)

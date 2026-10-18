@@ -93,7 +93,7 @@ module PTX-EXEC-CORE
 
   syntax Bool ::= isVisible(KItem) [function, total]
   rule isVisible(ins(_, opc(OP, M, _), _)) =>
-       ((OP in (SetItem("ld") SetItem("st") SetItem("atom") SetItem("red")))
+       ((OP in (SetItem("ld") SetItem("st") SetItem("atom") SetItem("red") SetItem("multimem")))
          andBool notBool spaceOf(M) in (SetItem("param") SetItem("local")))
        orBool isBar(OP, M) orBool isBarRed(OP, M) orBool isBarWarp(OP, M) orBool isBarCluster(OP, M) orBool OP ==String "exit" orBool isCollective(OP)
   rule isVisible(_) => false [owise]
