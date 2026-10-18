@@ -39,8 +39,13 @@ if __name__ == "__main__":
     jobs = int(os.environ.get("JOBS", "3"))
     with ThreadPoolExecutor(jobs) as pool:
         res = list(pool.map(check, enumerate(exs)))
-    bad = [r for r in res if not r[2]]
+    known = json.load(open(os.path.join(os.path.dirname(__file__), "isa_examples_known.json")))["known_rejects"]
+    bad = [r for r in res if not r[2] and str(r[0]) not in known]
+    fixed = [r for r in res if r[2] and str(r[0]) in known]
     for i, sec, ok, msg in bad:
         print(f"FAIL  #{i} {sec}: {msg}")
-    print(f"---- {len(res) - len(bad)} parsed, {len(bad)} rejected of {len(res)}")
+    for i, sec, ok, msg in fixed:
+        print(f"NOTE  #{i} {sec} now parses; remove it from isa_examples_known.json")
+    nk = sum(1 for r in res if not r[2] and str(r[0]) in known)
+    print(f"---- {len(res) - len(bad) - nk} parsed, {nk} known rejects (document typos, fragments, unsupported), {len(bad)} unexpected of {len(res)}")
     sys.exit(1 if bad else 0)

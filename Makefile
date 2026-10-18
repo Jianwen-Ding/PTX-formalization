@@ -19,7 +19,7 @@ SOURCES  := $(wildcard semantics/*.k)
 SEEDS    ?= 1 2 3 4 5 6 7 8
 FUZZ_N   ?= 256
 
-.PHONY: approx all build build-search build-mm memmodel litmus negative test fuzz examples zluda run clean
+.PHONY: isa-examples approx all build build-search build-mm memmodel litmus negative test fuzz examples zluda run clean
 
 all: build
 
@@ -85,3 +85,8 @@ clean:
 # the approximate instructions (rcp/sqrt/rsqrt/sin/cos/ex2/lg2/tanh .approx) against the error bounds of the ISA
 approx: build
 	python3 scripts/check_approx.py
+
+# parse every example of the PTX ISA document (fetch the HTML first: scripts/extract_isa_examples.py explains)
+isa-examples: build
+	python3 scripts/extract_isa_examples.py $(ISA_HTML) /tmp/isa_examples.json
+	python3 scripts/isa_examples.py /tmp/isa_examples.json

@@ -94,6 +94,7 @@ module PTX-SYNTAX
                   | ".attribute" "(" ".managed" ")"
                   | ".attribute" "(" ".unified" ")"
                   | ".attribute" "(" ".unified" "(" Int "," Int ")" ")"
+                  | ".attribute" "(" ".unified" "(" HexLit "," HexLit ")" ")"
   syntax DAttrs ::= List{DAttr, ""}
   syntax TexKind ::= ".texref" | ".samplerref" | ".surfref"
 
@@ -151,7 +152,7 @@ module PTX-SYNTAX
                     | ".explicitcluster" | ".blocksareclusters"
                     | ".abi_preserve" Int | ".abi_preserve_control" Int
                     | ".pragma" String
-                    | ".minperctamemory" Int | ".language" String
+                    | ".minperctamemory" Int | ".language" String | ".language" String "," String
   syntax PerfDirs ::= List{PerfDir, ""}
 
   syntax FuncHead ::= ".entry" Name "(" ParamDecls ")"

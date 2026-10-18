@@ -305,3 +305,7 @@ Source: the PTX ISA 9.4 HTML (release notes 1.3 and the cvt / set / add / fma se
 * `clmad` (carry-less multiply-add, 9.3), `set` with `.u8x4/.s8x4/.u16x2/.s16x2`, `add/sub/mul/fma` with `.f32x2` (8.6) and the mixed-precision forms (`.f32` from `.f16/.bf16`, `.f32x2` from `.f16x2/.bf16x2`, `.f16x2/.bf16x2` from `.f32x2` with rz, `mul` of `.bf16x2` by `.f16x2`), new types `.u8x4 .s8x4 .f32x2 .ue5m3x2 .s2f6x2`.
 * `cvt`: `.rz` on the narrow formats, `.pzo`, `.scaled::n1/n2::ue8m0`, `.ue5m3x2` (unsigned e5m3, bias 15, NaN 0xFF), `.s2f6x2` (signed Q2.6, saturating); the earlier implementation ignored the rounding modifier on fp8/fp6/fp4 and always rounded to nearest.
 * Remaining items of the 9.4 list are tracked in docs/isa94.md.
+
+## ISA document examples
+* `make isa-examples ISA_HTML=ptx-isa.html` extracts the 314 example snippets of the PTX ISA 9.4 document and parse-checks each (`scripts/isa_examples.py`): 262 parse, the other 52 are listed with a reason in `scripts/isa_examples_known.json` (typos or garbled text in the document, fragments that are not self-contained, and a few unsupported exotic constructs: deprecated texture declarations, the address mask operator `0xff(sym)`, `A[5]` element addresses, `.abi_preserve` on array returns, `.code_block`).  Any other rejection fails the check.
+* The snippets are fragments (undeclared registers), so only syntactic acceptance is checked; execution is covered by the per-instruction tests.
