@@ -46,7 +46,36 @@ requires "ptx-exec-fabric.k"
 requires "ptx-exec-weak.k"
 requires "ptx-exec-isa.k"
 
+module PTX-EXEC-LITE
+  imports PTX-EXEC-CORE
+  imports PTX-EXEC-ALU
+  imports PTX-EXEC-MEM
+  imports PTX-EXEC-CTRL
+  imports PTX-EXEC-SYNC
+  imports PTX-EXEC-COLL
+  imports PTX-EXEC-INT
+  imports PTX-EXEC-BITS
+  imports PTX-EXEC-INTX
+  imports PTX-EXEC-PRED
+  imports PTX-EXEC-WARP
+  imports PTX-EXEC-MEMQ
+  imports PTX-EXEC-CLUSTER
+  imports PTX-EXEC-MBAR
+  imports PTX-EXEC-WEAK
+  imports PTX-EXEC-ISA
+  imports PTX-EXEC-ASYNC
+  imports PTX-EXEC-BULK
+
+  // Instructions with a variable opcode (the arithmetic, half, integer, video, ... families) are handled by `#gx` rules.  They are reached
+  // through this single dispatcher, tried only when no opcode-specific rule applies: keeping the many variable-opcode rows out of the
+  // `exec` pattern-matching matrix shrinks the LLVM backend's decision tree (and kompile's memory) by a large factor.
+  rule <tk> exec(O, Os, C) => #gx(O, Os, C) ... </tk> [priority(100)]
+  // anything else is outside the modelled subset
+  rule <tk> #gx(O, _, _) => #unsupported(O) ... </tk> [owise]
+endmodule
+
 module PTX-EXEC
+  imports PTX-EXEC-LITE
   imports PTX-EXEC-CORE
   imports PTX-EXEC-ALU
   imports PTX-EXEC-MEM
@@ -79,10 +108,4 @@ module PTX-EXEC
   imports PTX-EXEC-WEAK
   imports PTX-EXEC-ISA
 
-  // anything else is outside the modelled subset
-  // Instructions with a variable opcode (the arithmetic, half, integer, video, ... families) are handled by `#gx` rules.  They are reached
-  // through this single dispatcher, tried only when no opcode-specific rule applies: keeping the many variable-opcode rows out of the
-  // `exec` pattern-matching matrix shrinks the LLVM backend's decision tree (and kompile's memory) by a large factor.
-  rule <tk> exec(O, Os, C) => #gx(O, Os, C) ... </tk> [priority(100)]
-  rule <tk> #gx(O, _, _) => #unsupported(O) ... </tk> [owise]
 endmodule

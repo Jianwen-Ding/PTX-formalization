@@ -20,4 +20,6 @@ check litmus-sb-fence  1       # forbidden by fence.sc
 check litmus-sb-sc     1       # default mode is sequentially consistent
 check litmus-mp        0,1     # stores may be reordered
 check litmus-mp-relacq 1       # forbidden by release/acquire
+check litmus-lb        0,1     # load buffering: the load is performed after the later store
+check litmus-lb-relacq 1       # forbidden by acquire/release
 exit $fail

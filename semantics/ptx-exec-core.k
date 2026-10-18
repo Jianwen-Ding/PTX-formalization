@@ -73,7 +73,7 @@ module PTX-EXEC-CORE
   // ------------------------------------------------------------ pending loads (relaxed memory model, ptx-exec-weak.k)
   // `pl(D, T, S, A, N)` is a load that has been issued but not yet performed: register D is not yet written.  An
   // instruction that mentions a pending destination, or orders memory, waits until the loads are performed.
-  syntax PendLoad ::= pl(Operand, Ty, String, Int, Int)
+  syntax PendLoad ::= pl(Operand, Ty, String, Int, Int, Bool)      // destination, type, space, address, bytes, strong (relaxed)?
   syntax Set ::= opRegs(Operand) [function, total] | oprsRegs(Operands) [function, total] | addrRegs(Addr) [function, total]
   rule opRegs(R:Reg) => SetItem(Reg2String(R))
   rule opRegs(N:Name) => SetItem(Name2String(N))
@@ -103,7 +103,7 @@ module PTX-EXEC-CORE
   rule addrRegs(R:Reg + _:Int) => SetItem(Reg2String(R))
   rule addrRegs(N:Name + _:Int) => SetItem(Name2String(N))
   syntax Set ::= plDests(List) [function, total]
-  rule plDests(ListItem(pl(D, _, _, _, _)) L) => opRegs(D) |Set plDests(L)
+  rule plDests(ListItem(pl(D, _, _, _, _, _)) L) => opRegs(D) |Set plDests(L)
   rule plDests(_) => .Set [owise]
   syntax Set ::= insRegs(KItem) [function, total]
   rule insRegs(ins(noG, _, Os)) => oprsRegs(Os)

@@ -6,8 +6,8 @@
 // =============================================================================
 requires "ptx-exec.k"
 
-module PTX-HARNESS
-  imports PTX-EXEC
+module PTX-HARNESS-BASE
+  imports PTX-EXEC-LITE
 
   rule <k> T:TopDecl Ts:Module => T ~> Ts ... </k>
   rule <k> .Module => .K ... </k> <fails> 0 </fails> <exit-code> _ => 0 </exit-code>
@@ -76,117 +76,7 @@ module PTX-HARNESS
        <bufs> B => B[N <- buf(alignUp(G, 256), T, C)] </bufs>
        <gmem> M => initMem(M, alignUp(G, 256), T, Vs) </gmem>
 
-  // .multimem MM .size N { BUF0, BUF1, ... } ;   a multimem window of N bytes over the buffers (see ptx-exec-mm.k)
-  syntax KItem ::= #mmReg(String, Int, List)
-  rule <k> .multimem N .size S { Bs } ; => #alloc(Name2String(N), ty("b", 8), S, .List) ~> #mmReg(Name2String(N), S, namesL(Bs)) ... </k>
-  rule <k> #mmReg(N, S, Bs) => .K ... </k>
-       <syms> Sy </syms>
-       <mmtab> T => T[symA(Sy, N) <- mm(S, symAs(Sy, Bs))] </mmtab>
-  syntax List ::= symAs(Map, List) [function, total]
-  syntax Int ::= symA(Map, String) [function, total]
-  rule symA(Sy, N) => addrOfSym({Sy[N]}:>Sym) requires N in_keys(Sy)
-  rule symA(_, _) => 0 [owise]
-  syntax Int ::= addrOfSym(Sym) [function, total]
-  rule addrOfSym(sym(_, A)) => A
-  rule symAs(Sy, ListItem(N:String) Ns) => ListItem(symA(Sy, N)) symAs(Sy, Ns)
-  rule symAs(_, _) => .List [owise]
-
-  // .fabric ID .size N { BUF0, BUF1, ... } ;   logical endpoint ID over per-device buffers (see ptx-exec-fabric.k)
-  rule <k> .fabric I .size S { Bs } ; => .K ... </k>
-       <syms> Sy </syms>
-       <fabtab> T => T[I <- mm(S, symAs(Sy, namesL(Bs)))] </fabtab>
-
   syntax KItem ::= #patch(String, Ty, Int, List) | #appendTo(String, Ty, List)
-  // .tensormap TM .f16 BUF .dims { d0, d1, ... } .strides { s1, ... } .box { b0, b1, ... } .swizzle 0 ;
-  // builds a 128-byte tensor-map object (our own encoding, see ptx-exec-tma.k) in global memory
-  syntax KItem ::= #tensormap(String, Ty, String, List, List, List, Int) | #tensormapI(String, Ty, String, List, List, List, Int, List, List, List)
-  // ... .swizzle Z .im2col { lower corners (W, H, D) } { upper corners } .estrides { traversal strides of dims 0.. } ;  (im2col tensor map; box = {channels per pixel, pixels per column})
-  rule <k> .tensormap N T B .dims { Ds } .strides { Ss } .box { Bs } .swizzle Z .im2col { Ls } { Us } .estrides { Es } ; =>
-           #tensormapI(Name2String(N), typeOf(T), Name2String(B), intsL(Ds), intsL(Ss), intsL(Bs), Z, intsL(Ls), intsL(Us), intsL(Es)) ... </k>
-  rule <k> #tensormapI(N, T, B, Ds, Ss, Bs, Z, Ls, Us, Es) => #alloc(N, ty("u", 64), 16, tmBlobI(tmBlob(T, A, Ds, Ss, Bs, Z), Ls, Us, Es)) ... </k>
-       <syms> ... B |-> sym(_, A) ... </syms>
-  // corners are stored offset-binary (+32768) in bits 8.. of words 1 (lower) and 2 (upper); bit 40 of word 14 flags an im2col map; word 15 = traversal strides
-  syntax List ::= tmBlobI(List, List, List, List) [function, total]
-  rule tmBlobI(ListItem(W0) ListItem(W1) ListItem(W2) ListItem(W3) Ws, Ls, Us, Es) =>
-       ListItem(W0) ListItem(W1:Int |Int (cornerPack(Ls, 0) <<Int 8)) ListItem(W2:Int |Int (cornerPack(Us, 0) <<Int 8)) ListItem(W3) tmBlobI2(Ws, Es)
-  rule tmBlobI(L, _, _, _) => L [owise]
-  syntax List ::= tmBlobI2(List, List) [function, total]
-  // words 4..13 unchanged, word 14 gets the flag, word 15 the traversal strides
-  rule tmBlobI2(ListItem(W4) ListItem(W5) ListItem(W6) ListItem(W7) ListItem(W8) ListItem(W9) ListItem(W10) ListItem(W11) ListItem(W12) ListItem(W13) ListItem(W14:Int) ListItem(_), Es) =>
-       ListItem(W4) ListItem(W5) ListItem(W6) ListItem(W7) ListItem(W8) ListItem(W9) ListItem(W10) ListItem(W11) ListItem(W12) ListItem(W13)
-       ListItem(W14 |Int (1 <<Int 40)) ListItem(strideWord(Es, 0))
-  rule tmBlobI2(L, _) => L [owise]
-  syntax Int ::= cornerPack(List, Int) [function, total] | strideWord(List, Int) [function, total]
-  rule cornerPack(ListItem(V:Int) Vs, I) => ((V +Int 32768) <<Int (16 *Int I)) |Int cornerPack(Vs, I +Int 1)
-  rule cornerPack(_, _) => 0 [owise]
-  rule strideWord(ListItem(V:Int) Vs, I) => (V <<Int (8 *Int I)) |Int strideWord(Vs, I +Int 1)
-  rule strideWord(_, _) => 0 [owise]
-  rule <k> .tensormap N T B .dims { Ds } .strides { Ss } .box { Bs } .swizzle Z ; =>
-           #tensormap(Name2String(N), typeOf(T), Name2String(B), intsL(Ds), intsL(Ss), intsL(Bs), Z) ... </k>
-  rule <k> #tensormap(N, T, B, Ds, Ss, Bs, Z) => #alloc(N, ty("u", 64), 16, tmBlob(T, A, Ds, Ss, Bs, Z)) ... </k>
-       <syms> ... B |-> sym(_, A) ... </syms>
-  // .texture TX .f32 BUF .dims { w, h, d } .attrs { channels, filter (0 point / 1 linear), addrmode (0 wrap / 1 clamp / 2 border / 3 mirror),
-  //                                                normalized-coords, read-normalized, layers } ;
-  // .sampler SM .attrs { filter, addrmode, normalized } ;       .surface SF .b32 BUF .dims { w, h, d } .attrs { layers } ;
-  // Each builds a small descriptor object in global memory (our encoding, see ptx-exec-tex.k); the object's
-  // address is the 64-bit handle that kernels take as an argument.
-  syntax KItem ::= #objAlloc(String, String, Int, Ty, List, List)
-  rule <k> .texture N T B .dims { Ds } .attrs { As } ; => #objAlloc(Name2String(N), Name2String(B), 0, typeOf(T), intsL(As), intsL(Ds)) ... </k>
-  rule <k> .surface N T B .dims { Ds } .attrs { As } ; => #objAlloc(Name2String(N), Name2String(B), 1, typeOf(T), intsL(As), intsL(Ds)) ... </k>
-  rule <k> .sampler N .attrs { As } ; => #alloc(Name2String(N), ty("u", 64), 16, smBlob(intsL(As))) ... </k>
-  // sampler: 0 magic, 1 filter, 2 addrmode, 3 normalized, 4 mip filter, 5 minLOD, 6 maxLOD (1/256 units; defaults 0 / 0 / no limit), padded to 16 words
-  syntax List ::= smBlob(List) [function, total]
-  rule smBlob(As) => ListItem(1396920397) ListItem(nthD(As, 0, 0)) ListItem(nthD(As, 1, 0)) ListItem(nthD(As, 2, 0)) ListItem(nthD(As, 3, 0))
-                     ListItem(nthD(As, 4, 0)) ListItem(nthD(As, 5, 1048576)) ListItem(0) ListItem(0) ListItem(0) ListItem(0) ListItem(0) ListItem(0) ListItem(0) ListItem(0) ListItem(0)
-  syntax Int ::= nthD(List, Int, Int) [function, total]
-  rule nthD(L, I, D) => {L[I]}:>Int requires I >=Int 0 andBool I <Int size(L)
-  rule nthD(_, _, D) => D [owise]
-  rule <k> #objAlloc(N, B, K, T, As, Ds) => #alloc(N, ty("u", 64), 16, objBlob(K, T, A, As, Ds)) ... </k>
-       <syms> ... B |-> sym(_, A) ... </syms>
-  // texture: 0 magic, 1 base, 2 type code, 3 channels, 4 filter, 5 addrmode, 6 normalized, 7 readnorm, 8 layers, 9 w, 10 h, 11 d
-  // surface: 0 magic, 1 base, 2 texel bytes, 3 layers, 4 w, 5 h, 6 d
-  syntax List ::= objBlob(Int, Ty, Int, List, List) [function, total]
-  rule objBlob(0, T, A, As, Ds) =>
-       ListItem(1415075924) ListItem(A) ListItem(tmCode(T)) ListItem(nth(As, 0)) ListItem(nth(As, 1)) ListItem(nth(As, 2))
-       ListItem(nth(As, 3)) ListItem(nth(As, 4)) ListItem(nth(As, 5)) ListItem(nth(Ds, 0)) ListItem(nth(Ds, 1)) ListItem(nth(Ds, 2))
-       ListItem(nthD(As, 6, 1)) ListItem(nthD(As, 7, 0)) ListItem(0) ListItem(nthD(As, 8, 0))
-  rule objBlob(_, T, A, As, Ds) =>
-       ListItem(1398035526) ListItem(A) ListItem(bytes(T)) ListItem(nth(As, 0)) ListItem(nth(Ds, 0)) ListItem(nth(Ds, 1)) ListItem(nth(Ds, 2))
-       ListItem(nthD(As, 1, 11)) ListItem(nthD(As, 2, 1)) ListItem(nthD(As, 3, 0)) ListItem(nthD(As, 4, 0)) ListItem(nthD(As, 5, 1))
-       ListItem(nthD(As, 6, b2i(nth(As, 0) >Int 1))) ListItem(0) ListItem(0) ListItem(0) ListItem(0) [owise]
-  // surface attrs { layers, sample format (0 UNORM8 1 SNORM8 2 UINT8 3 SINT8 4 UNORM16 5 SNORM16 6 UINT16 7 SINT16 8 FLOAT16 9 UINT32 10 SINT32 11 FLOAT32; default 11),
-  //                 channels (1), channel data type (0), channel order (0), linear memory layout (1), is-array (layers > 1) }
-  // surface words 7 format, 8 channels, 9 channel data type, 10 channel order, 11 memory layout, 12 array flag
-  // 16 little-endian 64-bit words:  0 magic | 1 element type code | 2 rank | 3 global address | 4..8 dims |
-  // 9..12 byte strides of dims 1..4 | 13 box dims 0..3 (16 bits each) | 14 box dim 4, swizzle<<16, fill<<24, interleave<<32 |
-  // 15 element strides (8 bits each)
-  syntax List ::= tmBlob(Ty, Int, List, List, List, Int) [function, total]
-  rule tmBlob(T, A, Ds, Ss, Bs, Z) =>
-       ListItem(1414021456) ListItem(tmEt(T)) ListItem(size(Ds)) ListItem(A)
-       ListItem(nth(Ds, 0)) ListItem(nth(Ds, 1)) ListItem(nth(Ds, 2)) ListItem(nth(Ds, 3)) ListItem(nth(Ds, 4))
-       ListItem(nth(Ss, 0)) ListItem(nth(Ss, 1)) ListItem(nth(Ss, 2)) ListItem(nth(Ss, 3))
-       ListItem(nth(Bs, 0) |Int (nth(Bs, 1) <<Int 16) |Int (nth(Bs, 2) <<Int 32) |Int (nth(Bs, 3) <<Int 48))
-       ListItem(nth(Bs, 4) |Int (swzMode(Z &Int 255) <<Int 16) |Int ((Z >>Int 8) <<Int 24) |Int (swzAtom(Z &Int 255) <<Int 48))
-       ListItem(72340172838076673)
-  // tensor-map element type: the value of tensormap.replace.elemtype (not the driver's CUtensorMapDataType)
-  syntax Int ::= tmEt(Ty) [function, total]
-  rule tmEt(ty("u", 8)) => 0    rule tmEt(ty("u", 16)) => 1   rule tmEt(ty("u", 32)) => 2   rule tmEt(ty("s", 32)) => 3
-  rule tmEt(ty("u", 64)) => 4   rule tmEt(ty("s", 64)) => 5   rule tmEt(ty("f", 16)) => 6   rule tmEt(ty("f", 32)) => 7
-  rule tmEt(ty("f", 64)) => 9   rule tmEt(ty("bf", 16)) => 10 rule tmEt(ty("tf", 32)) => 11
-  rule tmEt(_) => 0 [owise]
-  // `.swizzle Z`: the driver's swizzle enum (0 none, 1 32B, 2 64B, 3 128B, 4 / 5 / 6 = 128B with 32B atomicity / + 8B flip / 64B atomicity), fill mode in bits 8..;
-  // stored as tensormap.replace's swizzle_mode (0 none, 1 32B, 2 64B, 3 128B, 4 96B) and swizzle_atomicity (0 16B, 1 32B, 2 32B+8B flip, 3 64B)
-  syntax Int ::= swzMode(Int) [function, total] | swzAtom(Int) [function, total]
-  rule swzMode(Z) => 3 requires Z >=Int 3 andBool Z <=Int 6
-  rule swzMode(Z) => Z [owise]
-  rule swzAtom(Z) => Z -Int 3 requires Z >=Int 4 andBool Z <=Int 6
-  rule swzAtom(_) => 0 [owise]
-  syntax Int ::= tmCode(Ty) [function, total]
-  rule tmCode(ty("u", 8)) => 0   rule tmCode(ty("u", 16)) => 1   rule tmCode(ty("u", 32)) => 2   rule tmCode(ty("s", 32)) => 3
-  rule tmCode(ty("u", 64)) => 4  rule tmCode(ty("s", 64)) => 5   rule tmCode(ty("f", 16)) => 6   rule tmCode(ty("f", 32)) => 7
-  rule tmCode(ty("s", 8)) => 20  rule tmCode(ty("s", 16)) => 21      // texture-only codes (not CUtensorMapDataType values)
-  rule tmCode(ty("f", 64)) => 8  rule tmCode(ty("bf", 16)) => 9  rule tmCode(ty("tf", 32)) => 11
-  rule tmCode(_) => 0 [owise]
   syntax List ::= intsL(Ints) [function, total]
   rule intsL(X:Int , Xs:Ints) => ListItem(X) intsL(Xs)
   rule intsL(X:Int) => ListItem(X)
@@ -384,4 +274,125 @@ module PTX-HARNESS
        #else "  [" +String Int2String(I) +String "] expected " +String fmtVal(initBits(V, T), T)
              +String ", got " +String fmtVal(readBytes(M, A, bytes(T)), T) +String "\n"
        #fi +String mismatches(M, A +Int bytes(T), T, Vs, I +Int 1)
+endmodule
+
+// harness directives of the heavy subsystems: tensor maps, textures / surfaces, multimem windows and fabric endpoints
+module PTX-HARNESS-EXT
+  imports PTX-HARNESS-BASE
+  imports PTX-EXEC
+
+  // .multimem MM .size N { BUF0, BUF1, ... } ;   a multimem window of N bytes over the buffers (see ptx-exec-mm.k)
+  syntax KItem ::= #mmReg(String, Int, List)
+  rule <k> .multimem N .size S { Bs } ; => #alloc(Name2String(N), ty("b", 8), S, .List) ~> #mmReg(Name2String(N), S, namesL(Bs)) ... </k>
+  rule <k> #mmReg(N, S, Bs) => .K ... </k>
+       <syms> Sy </syms>
+       <mmtab> T => T[symA(Sy, N) <- mm(S, symAs(Sy, Bs))] </mmtab>
+  syntax List ::= symAs(Map, List) [function, total]
+  syntax Int ::= symA(Map, String) [function, total]
+  rule symA(Sy, N) => addrOfSym({Sy[N]}:>Sym) requires N in_keys(Sy)
+  rule symA(_, _) => 0 [owise]
+  syntax Int ::= addrOfSym(Sym) [function, total]
+  rule addrOfSym(sym(_, A)) => A
+  rule symAs(Sy, ListItem(N:String) Ns) => ListItem(symA(Sy, N)) symAs(Sy, Ns)
+  rule symAs(_, _) => .List [owise]
+
+  // .fabric ID .size N { BUF0, BUF1, ... } ;   logical endpoint ID over per-device buffers (see ptx-exec-fabric.k)
+  rule <k> .fabric I .size S { Bs } ; => .K ... </k>
+       <syms> Sy </syms>
+       <fabtab> T => T[I <- mm(S, symAs(Sy, namesL(Bs)))] </fabtab>
+
+  // .tensormap TM .f16 BUF .dims { d0, d1, ... } .strides { s1, ... } .box { b0, b1, ... } .swizzle 0 ;
+  // builds a 128-byte tensor-map object (our own encoding, see ptx-exec-tma.k) in global memory
+  syntax KItem ::= #tensormap(String, Ty, String, List, List, List, Int) | #tensormapI(String, Ty, String, List, List, List, Int, List, List, List)
+  // ... .swizzle Z .im2col { lower corners (W, H, D) } { upper corners } .estrides { traversal strides of dims 0.. } ;  (im2col tensor map; box = {channels per pixel, pixels per column})
+  rule <k> .tensormap N T B .dims { Ds } .strides { Ss } .box { Bs } .swizzle Z .im2col { Ls } { Us } .estrides { Es } ; =>
+           #tensormapI(Name2String(N), typeOf(T), Name2String(B), intsL(Ds), intsL(Ss), intsL(Bs), Z, intsL(Ls), intsL(Us), intsL(Es)) ... </k>
+  rule <k> #tensormapI(N, T, B, Ds, Ss, Bs, Z, Ls, Us, Es) => #alloc(N, ty("u", 64), 16, tmBlobI(tmBlob(T, A, Ds, Ss, Bs, Z), Ls, Us, Es)) ... </k>
+       <syms> ... B |-> sym(_, A) ... </syms>
+  // corners are stored offset-binary (+32768) in bits 8.. of words 1 (lower) and 2 (upper); bit 40 of word 14 flags an im2col map; word 15 = traversal strides
+  syntax List ::= tmBlobI(List, List, List, List) [function, total]
+  rule tmBlobI(ListItem(W0) ListItem(W1) ListItem(W2) ListItem(W3) Ws, Ls, Us, Es) =>
+       ListItem(W0) ListItem(W1:Int |Int (cornerPack(Ls, 0) <<Int 8)) ListItem(W2:Int |Int (cornerPack(Us, 0) <<Int 8)) ListItem(W3) tmBlobI2(Ws, Es)
+  rule tmBlobI(L, _, _, _) => L [owise]
+  syntax List ::= tmBlobI2(List, List) [function, total]
+  // words 4..13 unchanged, word 14 gets the flag, word 15 the traversal strides
+  rule tmBlobI2(ListItem(W4) ListItem(W5) ListItem(W6) ListItem(W7) ListItem(W8) ListItem(W9) ListItem(W10) ListItem(W11) ListItem(W12) ListItem(W13) ListItem(W14:Int) ListItem(_), Es) =>
+       ListItem(W4) ListItem(W5) ListItem(W6) ListItem(W7) ListItem(W8) ListItem(W9) ListItem(W10) ListItem(W11) ListItem(W12) ListItem(W13)
+       ListItem(W14 |Int (1 <<Int 40)) ListItem(strideWord(Es, 0))
+  rule tmBlobI2(L, _) => L [owise]
+  syntax Int ::= cornerPack(List, Int) [function, total] | strideWord(List, Int) [function, total]
+  rule cornerPack(ListItem(V:Int) Vs, I) => ((V +Int 32768) <<Int (16 *Int I)) |Int cornerPack(Vs, I +Int 1)
+  rule cornerPack(_, _) => 0 [owise]
+  rule strideWord(ListItem(V:Int) Vs, I) => (V <<Int (8 *Int I)) |Int strideWord(Vs, I +Int 1)
+  rule strideWord(_, _) => 0 [owise]
+  rule <k> .tensormap N T B .dims { Ds } .strides { Ss } .box { Bs } .swizzle Z ; =>
+           #tensormap(Name2String(N), typeOf(T), Name2String(B), intsL(Ds), intsL(Ss), intsL(Bs), Z) ... </k>
+  rule <k> #tensormap(N, T, B, Ds, Ss, Bs, Z) => #alloc(N, ty("u", 64), 16, tmBlob(T, A, Ds, Ss, Bs, Z)) ... </k>
+       <syms> ... B |-> sym(_, A) ... </syms>
+  // .texture TX .f32 BUF .dims { w, h, d } .attrs { channels, filter (0 point / 1 linear), addrmode (0 wrap / 1 clamp / 2 border / 3 mirror),
+  //                                                normalized-coords, read-normalized, layers } ;
+  // .sampler SM .attrs { filter, addrmode, normalized } ;       .surface SF .b32 BUF .dims { w, h, d } .attrs { layers } ;
+  // Each builds a small descriptor object in global memory (our encoding, see ptx-exec-tex.k); the object's
+  // address is the 64-bit handle that kernels take as an argument.
+  syntax KItem ::= #objAlloc(String, String, Int, Ty, List, List)
+  rule <k> .texture N T B .dims { Ds } .attrs { As } ; => #objAlloc(Name2String(N), Name2String(B), 0, typeOf(T), intsL(As), intsL(Ds)) ... </k>
+  rule <k> .surface N T B .dims { Ds } .attrs { As } ; => #objAlloc(Name2String(N), Name2String(B), 1, typeOf(T), intsL(As), intsL(Ds)) ... </k>
+  rule <k> .sampler N .attrs { As } ; => #alloc(Name2String(N), ty("u", 64), 16, smBlob(intsL(As))) ... </k>
+  // sampler: 0 magic, 1 filter, 2 addrmode, 3 normalized, 4 mip filter, 5 minLOD, 6 maxLOD (1/256 units; defaults 0 / 0 / no limit), padded to 16 words
+  syntax List ::= smBlob(List) [function, total]
+  rule smBlob(As) => ListItem(1396920397) ListItem(nthD(As, 0, 0)) ListItem(nthD(As, 1, 0)) ListItem(nthD(As, 2, 0)) ListItem(nthD(As, 3, 0))
+                     ListItem(nthD(As, 4, 0)) ListItem(nthD(As, 5, 1048576)) ListItem(0) ListItem(0) ListItem(0) ListItem(0) ListItem(0) ListItem(0) ListItem(0) ListItem(0) ListItem(0)
+  syntax Int ::= nthD(List, Int, Int) [function, total]
+  rule nthD(L, I, D) => {L[I]}:>Int requires I >=Int 0 andBool I <Int size(L)
+  rule nthD(_, _, D) => D [owise]
+  rule <k> #objAlloc(N, B, K, T, As, Ds) => #alloc(N, ty("u", 64), 16, objBlob(K, T, A, As, Ds)) ... </k>
+       <syms> ... B |-> sym(_, A) ... </syms>
+  // texture: 0 magic, 1 base, 2 type code, 3 channels, 4 filter, 5 addrmode, 6 normalized, 7 readnorm, 8 layers, 9 w, 10 h, 11 d
+  // surface: 0 magic, 1 base, 2 texel bytes, 3 layers, 4 w, 5 h, 6 d
+  syntax List ::= objBlob(Int, Ty, Int, List, List) [function, total]
+  rule objBlob(0, T, A, As, Ds) =>
+       ListItem(1415075924) ListItem(A) ListItem(tmCode(T)) ListItem(nth(As, 0)) ListItem(nth(As, 1)) ListItem(nth(As, 2))
+       ListItem(nth(As, 3)) ListItem(nth(As, 4)) ListItem(nth(As, 5)) ListItem(nth(Ds, 0)) ListItem(nth(Ds, 1)) ListItem(nth(Ds, 2))
+       ListItem(nthD(As, 6, 1)) ListItem(nthD(As, 7, 0)) ListItem(0) ListItem(nthD(As, 8, 0))
+  rule objBlob(_, T, A, As, Ds) =>
+       ListItem(1398035526) ListItem(A) ListItem(bytes(T)) ListItem(nth(As, 0)) ListItem(nth(Ds, 0)) ListItem(nth(Ds, 1)) ListItem(nth(Ds, 2))
+       ListItem(nthD(As, 1, 11)) ListItem(nthD(As, 2, 1)) ListItem(nthD(As, 3, 0)) ListItem(nthD(As, 4, 0)) ListItem(nthD(As, 5, 1))
+       ListItem(nthD(As, 6, b2i(nth(As, 0) >Int 1))) ListItem(0) ListItem(0) ListItem(0) ListItem(0) [owise]
+  // surface attrs { layers, sample format (0 UNORM8 1 SNORM8 2 UINT8 3 SINT8 4 UNORM16 5 SNORM16 6 UINT16 7 SINT16 8 FLOAT16 9 UINT32 10 SINT32 11 FLOAT32; default 11),
+  //                 channels (1), channel data type (0), channel order (0), linear memory layout (1), is-array (layers > 1) }
+  // surface words 7 format, 8 channels, 9 channel data type, 10 channel order, 11 memory layout, 12 array flag
+  // 16 little-endian 64-bit words:  0 magic | 1 element type code | 2 rank | 3 global address | 4..8 dims |
+  // 9..12 byte strides of dims 1..4 | 13 box dims 0..3 (16 bits each) | 14 box dim 4, swizzle<<16, fill<<24, interleave<<32 |
+  // 15 element strides (8 bits each)
+  syntax List ::= tmBlob(Ty, Int, List, List, List, Int) [function, total]
+  rule tmBlob(T, A, Ds, Ss, Bs, Z) =>
+       ListItem(1414021456) ListItem(tmEt(T)) ListItem(size(Ds)) ListItem(A)
+       ListItem(nth(Ds, 0)) ListItem(nth(Ds, 1)) ListItem(nth(Ds, 2)) ListItem(nth(Ds, 3)) ListItem(nth(Ds, 4))
+       ListItem(nth(Ss, 0)) ListItem(nth(Ss, 1)) ListItem(nth(Ss, 2)) ListItem(nth(Ss, 3))
+       ListItem(nth(Bs, 0) |Int (nth(Bs, 1) <<Int 16) |Int (nth(Bs, 2) <<Int 32) |Int (nth(Bs, 3) <<Int 48))
+       ListItem(nth(Bs, 4) |Int (swzMode(Z &Int 255) <<Int 16) |Int ((Z >>Int 8) <<Int 24) |Int (swzAtom(Z &Int 255) <<Int 48))
+       ListItem(72340172838076673)
+  // tensor-map element type: the value of tensormap.replace.elemtype (not the driver's CUtensorMapDataType)
+  syntax Int ::= tmEt(Ty) [function, total]
+  rule tmEt(ty("u", 8)) => 0    rule tmEt(ty("u", 16)) => 1   rule tmEt(ty("u", 32)) => 2   rule tmEt(ty("s", 32)) => 3
+  rule tmEt(ty("u", 64)) => 4   rule tmEt(ty("s", 64)) => 5   rule tmEt(ty("f", 16)) => 6   rule tmEt(ty("f", 32)) => 7
+  rule tmEt(ty("f", 64)) => 9   rule tmEt(ty("bf", 16)) => 10 rule tmEt(ty("tf", 32)) => 11
+  rule tmEt(_) => 0 [owise]
+  // `.swizzle Z`: the driver's swizzle enum (0 none, 1 32B, 2 64B, 3 128B, 4 / 5 / 6 = 128B with 32B atomicity / + 8B flip / 64B atomicity), fill mode in bits 8..;
+  // stored as tensormap.replace's swizzle_mode (0 none, 1 32B, 2 64B, 3 128B, 4 96B) and swizzle_atomicity (0 16B, 1 32B, 2 32B+8B flip, 3 64B)
+  syntax Int ::= swzMode(Int) [function, total] | swzAtom(Int) [function, total]
+  rule swzMode(Z) => 3 requires Z >=Int 3 andBool Z <=Int 6
+  rule swzMode(Z) => Z [owise]
+  rule swzAtom(Z) => Z -Int 3 requires Z >=Int 4 andBool Z <=Int 6
+  rule swzAtom(_) => 0 [owise]
+  syntax Int ::= tmCode(Ty) [function, total]
+  rule tmCode(ty("u", 8)) => 0   rule tmCode(ty("u", 16)) => 1   rule tmCode(ty("u", 32)) => 2   rule tmCode(ty("s", 32)) => 3
+  rule tmCode(ty("u", 64)) => 4  rule tmCode(ty("s", 64)) => 5   rule tmCode(ty("f", 16)) => 6   rule tmCode(ty("f", 32)) => 7
+  rule tmCode(ty("s", 8)) => 20  rule tmCode(ty("s", 16)) => 21      // texture-only codes (not CUtensorMapDataType values)
+  rule tmCode(ty("f", 64)) => 8  rule tmCode(ty("bf", 16)) => 9  rule tmCode(ty("tf", 32)) => 11
+  rule tmCode(_) => 0 [owise]
+endmodule
+
+module PTX-HARNESS
+  imports PTX-HARNESS-EXT
 endmodule

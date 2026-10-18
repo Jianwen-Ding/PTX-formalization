@@ -62,7 +62,7 @@ module PTX-EXEC-BULK
   syntax KItem ::= #bulkRd(Loc, List, List, Int) | #bulkWr(List, List, Int) | #bulkEach(List, List, Int, Int) | #bulkTx(Loc, Int)
   // data movement towards shared memory, completed on an mbarrier
   rule <tk> exec(opc("cp", M, _), ops([ D ], [ S ], Sz, Rest:Operands), C) =>
-            #mem(ea(S, #if "global" in M #then "generic" #else "shared" #fi, C), rdOp(rd(Sz, ty("u", 32), C)))
+            #amem(ea(S, #if "global" in M #then "generic" #else "shared" #fi, C), rdOp(rd(Sz, ty("u", 32), C)))
             ~> #bulkWr(bulkLocs(ea(D, #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(opsList(Rest), C), isMc(M)),
                        bulkLocs(ea(bulkMbar(opsList(Rest)), #if "shared::cluster" in M #then "shared_cluster" #else "shared" #fi, C), bulkMask(opsList(Rest), C), isMc(M)),
                        rd(Sz, ty("u", 32), C)) ... </tk>
@@ -70,7 +70,7 @@ module PTX-EXEC-BULK
              andBool notBool "reduce" in M andBool notBool "tensor" in M
   rule <tk> #res(V) ~> #bulkWr(Ds, Ms, N) => #bulkEach(Ds, Ms, N, V) ... </tk>
   rule <tk> #bulkEach(ListItem(D) Ds, ListItem(Mb) Ms, N, V) =>
-            #mem(D, wrOp(N, V)) ~> #drop ~> #bulkTx(Mb, N) ~> #bulkEach(Ds, Ms, N, V) ... </tk>
+            #amem(D, wrOp(N, V)) ~> #drop ~> #bulkTx(Mb, N) ~> #bulkEach(Ds, Ms, N, V) ... </tk>
   rule <tk> #bulkEach(.List, _, _, _) => .K ... </tk>
   rule <tk> #bulkTx(Mb, N) => .K ... </tk>
        <ctaid> CT </ctaid> <gridDim> GD </gridDim> <clusterDim> CD </clusterDim>
@@ -80,13 +80,13 @@ module PTX-EXEC-BULK
   // ---------------------------------------------------------------- shared::cta -> global (bulk_group)
   syntax KItem ::= #bulkG(Loc, Int, Int) | #bulkMerge(Loc, Int, Int, Int)
   rule <tk> exec(opc("cp", M, _), ops([ D ], [ S ], Sz, Rest:Operands), C) =>
-            #mem(ea(S, "shared", C), rdOp(rd(Sz, ty("u", 32), C)))
+            #amem(ea(S, "shared", C), rdOp(rd(Sz, ty("u", 32), C)))
             ~> #bulkG(ea(D, "generic", C), rd(Sz, ty("u", 32), C), #if "cp_mask" in M #then lastArg(opsList(Rest), C) #else 0 -Int 1 #fi) ... </tk>
     requires "async" in M andBool "bulk" in M andBool "bulk_group" in M andBool notBool "reduce" in M andBool notBool "tensor" in M
-  rule <tk> #res(V) ~> #bulkG(D, N, Mask) => #mem(D, wrOp(N, V)) ~> #drop ... </tk> requires Mask <Int 0
-  rule <tk> #res(V) ~> #bulkG(D, N, Mask) => #mem(D, rdOp(N)) ~> #bulkMerge(D, N, V, Mask) ... </tk> requires Mask >=Int 0
+  rule <tk> #res(V) ~> #bulkG(D, N, Mask) => #amem(D, wrOp(N, V)) ~> #drop ... </tk> requires Mask <Int 0
+  rule <tk> #res(V) ~> #bulkG(D, N, Mask) => #amem(D, rdOp(N)) ~> #bulkMerge(D, N, V, Mask) ... </tk> requires Mask >=Int 0
   rule <tk> #res(Old) ~> #bulkMerge(D, N, V, Mask) =>
-            #mem(D, wrOp(N, (V &Int expandMask(Mask, N /Int 16, 0)) |Int (Old &Int (~Int expandMask(Mask, N /Int 16, 0))))) ~> #drop ... </tk>
+            #amem(D, wrOp(N, (V &Int expandMask(Mask, N /Int 16, 0)) |Int (Old &Int (~Int expandMask(Mask, N /Int 16, 0))))) ~> #drop ... </tk>
   // the i-th bit of byteMask selects byte i of every 16-byte chunk
   syntax Int ::= expandMask(Int, Int, Int) [function, total]
   rule expandMask(Mask, Chunks, I) => byteSel(Mask, I %Int 16) <<Int (8 *Int I) |Int expandMask(Mask, Chunks, I +Int 1) requires I <Int Chunks *Int 16
@@ -97,11 +97,11 @@ module PTX-EXEC-BULK
   // ---------------------------------------------------------------- cp.reduce.async.bulk
   syntax KItem ::= #bulkR(Loc, String, Ty, Int, List)
   rule <tk> exec(opc("cp", M, ListItem(T)), ops([ D ], [ S ], Sz, Rest:Operands), C) =>
-            #mem(ea(S, "shared", C), rdOp(rd(Sz, ty("u", 32), C)))
+            #amem(ea(S, "shared", C), rdOp(rd(Sz, ty("u", 32), C)))
             ~> #bulkR(ea(D, #if "global" in M #then "generic" #else "shared_cluster" #fi, C), atomOp(M), T, rd(Sz, ty("u", 32), C),
                       #if hasMbar(opsList(Rest)) #then ListItem(ea(bulkMbar(opsList(Rest)), "shared_cluster", C)) #else .List #fi) ... </tk>
     requires "reduce" in M andBool "async" in M andBool "bulk" in M andBool notBool "tensor" in M
-  rule <tk> #res(V) ~> #bulkR(D, OP, T, N, Mb) => #mem(D, bulkRed(OP, T, N, V)) ~> #drop ~> #bulkR2(Mb, N) ... </tk>
+  rule <tk> #res(V) ~> #bulkR(D, OP, T, N, Mb) => #amem(D, bulkRed(OP, T, N, V)) ~> #drop ~> #bulkR2(Mb, N) ... </tk>
   syntax KItem ::= #bulkR2(List, Int)
   rule <tk> #bulkR2(ListItem(Mb) _, N) => #bulkTx(Mb, N) ... </tk>
   rule <tk> #bulkR2(.List, _) => .K ... </tk>

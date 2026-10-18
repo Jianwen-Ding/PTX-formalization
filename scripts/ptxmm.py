@@ -480,6 +480,15 @@ def check(evs, init, tinfo, alias, live, livei, lw, lr, rf, order, fsc, ms, po, 
         final[l] = last.value if last.tid == -1 else value[last.idx]
     outcome = dict(env)
     outcome.update({'[' + k + ']': v for k, v in final.items()})
+    # data races: conflicting operations (same location, one a write) that are neither morally strong nor causality-ordered
+    race = False
+    mems = [e for e in liveo if e.is_mem]
+    for i, a in enumerate(mems):
+        for b in mems[i + 1:]:
+            if a.tid != b.tid and a.loc == b.loc and (a.is_write or b.is_write) and not ms(a, b) \
+               and (a.idx, b.idx) not in cause and (b.idx, a.idx) not in cause:
+                race = True
+    outcome['#race'] = int(race)
     return tuple(sorted(outcome.items()))
 
 
@@ -511,7 +520,8 @@ def main(argv):
             hit = any(holds(t['exists'], o) for o in outs) if t['exists'] else None
             verdict = 'allowed' if hit else 'forbidden'
             ok = (t['expect'] is None) or (t['expect'] == verdict)
-            print(f"{'PASS' if ok else 'FAIL'}  {t['name']:28s} {verdict:9s} ({len(outs)} outcomes)")
+            racy = any(dict(o).get('#race') for o in outs)
+            print(f"{'PASS' if ok else 'FAIL'}  {t['name']:28s} {verdict:9s} {'racy' if racy else 'race-free':9s} ({len(outs)} outcomes)")
             if not ok:
                 bad += 1
     return 1 if bad else 0

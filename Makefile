@@ -14,11 +14,12 @@ export K_OPTS ?= -Xmn64m -Xmx10g
 KRUN     ?= krun
 BUILD    := build/ptx-kompiled
 SEARCH   := build/ptx-search-kompiled
+MM       := build/ptx-mm-kompiled
 SOURCES  := $(wildcard semantics/*.k)
 SEEDS    ?= 1 2 3 4 5 6 7 8
 FUZZ_N   ?= 256
 
-.PHONY: all build build-search memmodel litmus negative test fuzz examples zluda run clean
+.PHONY: all build build-search build-mm memmodel litmus negative test fuzz examples zluda run clean
 
 all: build
 
@@ -42,11 +43,22 @@ $(SEARCH)/timestamp: $(SOURCES)
 	cd $(SEARCH) && llvm-kompile definition.kore dt search -- -o search
 	touch $(SEARCH)/timestamp
 
-litmus: build-search
-	PTX_DEF=$(SEARCH) bash scripts/run-litmus.sh
+litmus: build-mm
+	PTX_DEF=$(MM) bash scripts/run-litmus.sh
 
-memmodel: build-search
-	PTX_DEF=$(SEARCH) python3 scripts/ptxmm.py && PTX_DEF=$(SEARCH) python3 scripts/run-memmodel.py
+memmodel: build-mm
+	python3 scripts/ptxmm.py && PTX_DEF=$(MM) python3 scripts/run-memmodel.py
+
+# The reduced definition (semantics/ptx-mm.k: no tensor cores, TMA, textures, bulk copies) with the search interpreter:
+# used for the litmus tests, the memory-model cross-check and the examples that explore all schedules.
+build-mm: $(MM)/timestamp
+
+$(MM)/timestamp: $(SOURCES)
+	$(KOMPILE) semantics/ptx-mm.k --main-module PTX-MM --syntax-module PTX-SYNTAX \
+	    --enable-search --no-llvm-kompile --output-definition $(MM)
+	cd $(MM) && llvm-kompile definition.kore dt main -- -o interpreter
+	cd $(MM) && llvm-kompile definition.kore dt search -- -o search
+	touch $(MM)/timestamp
 
 negative: build
 	bash scripts/run-negative.sh
@@ -61,8 +73,8 @@ fuzz: build
 zluda: build
 	@scripts/run-zluda.py
 
-examples: build-search
-	@PTX_DEF=$(SEARCH) scripts/run-examples.sh
+examples: build-mm
+	@PTX_DEF=$(MM) scripts/run-examples.sh
 
 run: build
 	$(KRUN) -d $(BUILD) $(FILE)

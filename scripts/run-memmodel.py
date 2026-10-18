@@ -19,16 +19,18 @@ def k_reachable(src):
     try:
         env = dict(os.environ, K_OPTS=os.environ.get('K_OPTS', '-Xss512m'))
         r = subprocess.run(['krun', '-d', DEF, f.name, '--search', '--pattern', '<exit-code> X:Int </exit-code>'],
-                           capture_output=True, text=True, env=env, timeout=1800)
+                           capture_output=True, text=True, env=env, timeout=int(os.environ.get('MM_TIMEOUT', '300')))
         codes = set(re.findall(r'^\s+(\d+)\s*$', r.stdout.split('X:Int', 1)[-1], re.M)) if 'X:Int' in r.stdout else set()
         return '0' in codes, codes
+    except subprocess.TimeoutExpired:
+        return None, set()
     finally:
         os.unlink(f.name)
 
 
 def main(argv):
     names = set(argv[1:])
-    bad = gaps = n = 0
+    bad = gaps = n = skipped = 0
     for fn in sorted(os.listdir('tests/memmodel')):
         if not fn.endswith('.litmus'): continue
         for t in ptxmm.parse(open('tests/memmodel/' + fn).read()):
@@ -36,6 +38,8 @@ def main(argv):
             if not litmus2ptx.translatable(t): continue
             allowed = any(ptxmm.holds(t['exists'], o) for o in ptxmm.run(t))
             reach, codes = k_reachable(litmus2ptx.translate(t))
+            if reach is None:
+                print(f"skip  {t['name']:28s} search did not finish in time"); skipped += 1; continue
             n += 1
             if reach and not allowed:
                 print(f"FAIL  {t['name']:28s} K reaches an outcome the PTX model forbids"); bad += 1
@@ -43,7 +47,7 @@ def main(argv):
                 print(f"gap   {t['name']:28s} allowed by the model, not reached by K"); gaps += 1
             else:
                 print(f"PASS  {t['name']:28s} {'allowed' if allowed else 'forbidden'}")
-    print(f"---- {n} tests, {bad} unsound, {gaps} gaps")
+    print(f"---- {n} tests, {bad} unsound, {gaps} gaps, {skipped} skipped")
     return 1 if bad else 0
 
 

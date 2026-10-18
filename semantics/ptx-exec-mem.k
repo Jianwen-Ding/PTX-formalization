@@ -62,6 +62,11 @@ module PTX-EXEC-MEM
     requires A >=Int 0
   // relaxed memory model (ptx-exec-weak.k): global and shared accesses go through the store buffer
   syntax KItem ::= #rm(Loc, MemOp) | #mem1(Loc, MemOp)
+  // accesses of the asynchronous proxy (bulk copies, fabric operations): they do not see the issuing thread's store buffer, so a
+  // generic-proxy store must be made visible with fence.proxy.async (or a fence) before it
+  syntax KItem ::= #amem(Loc, MemOp)
+  rule <tk> #amem(L, OP) => #mem(L, OP) ... </tk> <mm> M </mm> requires M =/=String "relaxed"
+  rule <tk> #amem(L, OP) => #mem1(L, OP) ... </tk> <mm> "relaxed" </mm>
   rule <tk> #mem(loc(S, A), OP) => #rm(loc(S, A), OP) ... </tk> <mm> "relaxed" </mm>
     requires (S ==String "global" andBool A >=Int 4096) orBool (S ==String "shared" andBool A >=Int 0)
   rule <tk> #mem1(loc("global", A), OP) => #res(memVal(OP, M, A)) ... </tk>

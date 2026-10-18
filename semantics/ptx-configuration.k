@@ -123,6 +123,9 @@ module PTX-CONFIGURATION
               <ltop> 0 </ltop>
               <sb> .List </sb>                      // store buffer of the relaxed memory model
               <pl> .List </pl>                      // pending (not yet performed) loads of the relaxed memory model
+              <ag> .List </ag>                      // asynchronous operations issued by this thread and not yet performed (relaxed memory model)
+              <agn> 0 </agn>                        // id of the open cp.async group
+              <abn> 0 </abn>                        // id of the open cp.async.bulk group
             </thread>
           </threads>
         </cta>

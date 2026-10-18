@@ -45,9 +45,9 @@ module PTX-EXEC-FABRIC
             #fbGet(fbBases(F, hAddr(L, C), rd(O, ty("u", 64), C), rd(Sz, ty("u", 32), C), false), ea(D, "shared", C), ea(B, "shared", C), rd(Sz, ty("u", 32), C)) ... </tk>
        <fabtab> F </fabtab>
     requires "try_get" in M andBool notBool "tensor" in M
-  rule <tk> #fbGet(ListItem(A:Int) _, D, B, N) => #mem(loc("global", A), rdOp(N)) ~> #fbWr(D, B, N, N) ... </tk>
+  rule <tk> #fbGet(ListItem(A:Int) _, D, B, N) => #amem(loc("global", A), rdOp(N)) ~> #fbWr(D, B, N, N) ... </tk>
   rule <tk> #fbGet(.List, _, _, _) => #fault("fabric access outside the logical endpoint", 0) ... </tk>
-  rule <tk> #res(V) ~> #fbWr(D, B, N, Tx) => #mem(D, wrOp(N, V)) ~> #drop ~> #bulkTx(B, Tx) ... </tk>
+  rule <tk> #res(V) ~> #fbWr(D, B, N, Tx) => #amem(D, wrOp(N, V)) ~> #drop ~> #bulkTx(B, Tx) ... </tk>
 
   // ---- try_put (plain, masked, counted)
   syntax KItem ::= #fbPut(List, Loc, Loc, Int, Int, Int) | #fbPutW(List, Loc, Int, Int, Int)
@@ -62,15 +62,15 @@ module PTX-EXEC-FABRIC
        <fabtab> F </fabtab>
     requires "try_put" in M andBool notBool "tensor" in M
   rule <tk> #fbPut(.List, _, _, _, _, _) => #fault("fabric access outside the logical endpoint", 0) ... </tk>
-  rule <tk> #fbPut(Ds, S, B, N, Mask, Cn) => #mem(S, rdOp(N)) ~> #fbPutW(Ds, B, N, Mask, Cn) ... </tk> requires Ds =/=K .List
+  rule <tk> #fbPut(Ds, S, B, N, Mask, Cn) => #amem(S, rdOp(N)) ~> #fbPutW(Ds, B, N, Mask, Cn) ... </tk> requires Ds =/=K .List
   rule <tk> #res(V) ~> #fbPutW(Ds, B, N, Mask, Cn) => #fbWrDev(Ds, N, V, Mask) ~> #fbCnt(Cn, N) ~> #bulkTx(B, N /Int 16) ... </tk>
   syntax KItem ::= #fbWrDev(List, Int, Int, Int) | #fbMerge(Int, List, Int, Int, Int) | #fbCnt(Int, Int)
-  rule <tk> #fbWrDev(ListItem(A:Int) As, N, V, Mask) => #mem(loc("global", A), wrOp(N, V)) ~> #drop ~> #fbWrDev(As, N, V, Mask) ... </tk> requires Mask <Int 0
-  rule <tk> #fbWrDev(ListItem(A:Int) As, N, V, Mask) => #mem(loc("global", A), rdOp(N)) ~> #fbMerge(A, As, N, V, Mask) ... </tk> requires Mask >=Int 0
+  rule <tk> #fbWrDev(ListItem(A:Int) As, N, V, Mask) => #amem(loc("global", A), wrOp(N, V)) ~> #drop ~> #fbWrDev(As, N, V, Mask) ... </tk> requires Mask <Int 0
+  rule <tk> #fbWrDev(ListItem(A:Int) As, N, V, Mask) => #amem(loc("global", A), rdOp(N)) ~> #fbMerge(A, As, N, V, Mask) ... </tk> requires Mask >=Int 0
   rule <tk> #res(Old) ~> #fbMerge(A, As, N, V, Mask) =>
-            #mem(loc("global", A), wrOp(N, (V &Int expandMask(Mask, N /Int 16, 0)) |Int (Old &Int (~Int expandMask(Mask, N /Int 16, 0))))) ~> #drop ~> #fbWrDev(As, N, V, Mask) ... </tk>
+            #amem(loc("global", A), wrOp(N, (V &Int expandMask(Mask, N /Int 16, 0)) |Int (Old &Int (~Int expandMask(Mask, N /Int 16, 0))))) ~> #drop ~> #fbWrDev(As, N, V, Mask) ... </tk>
   rule <tk> #fbWrDev(.List, _, _, _) => .K ... </tk>
-  rule <tk> #fbCnt(Cn, N) => #mem(loc("global", Cn), atOp("add", ty("u", 64), N, 0)) ~> #drop ... </tk> requires Cn >=Int 0
+  rule <tk> #fbCnt(Cn, N) => #amem(loc("global", Cn), atOp("add", ty("u", 64), N, 0)) ~> #drop ... </tk> requires Cn >=Int 0
   rule <tk> #fbCnt(Cn, _) => .K ... </tk> requires Cn <Int 0
 
   // ---- try_red: elementwise reduction into every target location
@@ -87,13 +87,13 @@ module PTX-EXEC-FABRIC
     requires "try_red" in M andBool notBool "tensor" in M
   syntax KItem ::= #fbRed(List, Loc, Loc, Int, Ty, String, Int) | #fbRedV(List, Loc, Int, Ty, String, Int)
   rule <tk> #fbRed(.List, _, _, _, _, _, _) => #fault("fabric access outside the logical endpoint", 0) ... </tk>
-  rule <tk> #fbRed(Ds, S, B, N, T, OP, Cn) => #mem(S, rdOp(N)) ~> #fbRedV(Ds, B, N, T, OP, Cn) ... </tk> requires Ds =/=K .List
+  rule <tk> #fbRed(Ds, S, B, N, T, OP, Cn) => #amem(S, rdOp(N)) ~> #fbRedV(Ds, B, N, T, OP, Cn) ... </tk> requires Ds =/=K .List
   rule <tk> #res(V) ~> #fbRedV(Ds, B, N, T, OP, Cn) => #seq(fbRedOps(Ds, V, N /Int bytes(T), T, OP)) ~> #fbCnt(Cn, N) ~> #bulkTx(B, N /Int 16) ... </tk>
   syntax List ::= fbRedOps(List, Int, Int, Ty, String) [function, total]
   rule fbRedOps(ListItem(A:Int) As, V, NE, T, OP) => fbRedDev(A, V, 0, NE, T, OP) fbRedOps(As, V, NE, T, OP)
   rule fbRedOps(_, _, _, _, _) => .List [owise]
   syntax KItem ::= #memDrop(Loc, MemOp)
-  rule <tk> #memDrop(L, O) => #mem(L, O) ~> #drop ... </tk>
+  rule <tk> #memDrop(L, O) => #amem(L, O) ~> #drop ... </tk>
   syntax List ::= fbRedDev(Int, Int, Int, Int, Ty, String) [function, total]
   rule fbRedDev(A, V, I, NE, T, OP) =>
        ListItem(#memDrop(loc("global", A +Int I *Int bytes(T)), atOp(OP, T, (V >>Int (8 *Int bytes(T) *Int I)) &Int mask(8 *Int bytes(T)), 0))) fbRedDev(A, V, I +Int 1, NE, T, OP)
@@ -110,10 +110,10 @@ module PTX-EXEC-FABRIC
     requires "try_pullred" in M andBool rreg("%laneid", C) =/=Int 0
   syntax KItem ::= #fbPullG(List, Loc, Loc, Int, Ty, Set, List)
   rule <tk> #fbPull(.List, D, B, N, T, M, Vs) => #fault("fabric access outside the logical endpoint", 0) ... </tk> requires Vs ==K .List
-  rule <tk> #fbPull(ListItem(A:Int) As, D, B, N, T, M, Vs) => #mem(loc("global", A), rdOp(N)) ~> #fbPullG(As, D, B, N, T, M, Vs) ... </tk>
+  rule <tk> #fbPull(ListItem(A:Int) As, D, B, N, T, M, Vs) => #amem(loc("global", A), rdOp(N)) ~> #fbPullG(As, D, B, N, T, M, Vs) ... </tk>
   rule <tk> #res(V) ~> #fbPullG(As, D, B, N, T, M, Vs) => #fbPull(As, D, B, N, T, M, Vs ListItem(V)) ... </tk>
   rule <tk> #fbPull(.List, D, B, N, T, M, Vs) =>
-            #mem(D, wrOp(N, fbPack(mmOp(M), T, mmAcc(M, T), Vs, 0, N /Int bytes(T)))) ~> #drop ~> #bulkTx(B, N) ... </tk> requires Vs =/=K .List
+            #amem(D, wrOp(N, fbPack(mmOp(M), T, mmAcc(M, T), Vs, 0, N /Int bytes(T)))) ~> #drop ~> #bulkTx(B, N) ... </tk> requires Vs =/=K .List
   syntax Int ::= fbPack(String, Ty, Ty, List, Int, Int) [function, total]
   rule fbPack(OP, T, A, Vs, I, NE) =>
        (mmRed(OP, T, A, fbElem(Vs, bytes(T), I)) <<Int (8 *Int bytes(T) *Int I)) |Int fbPack(OP, T, A, Vs, I +Int 1, NE) requires I <Int NE
@@ -130,12 +130,12 @@ module PTX-EXEC-FABRIC
        <fabtab> F </fabtab>
     requires "try_atom" in M
   rule <tk> #fbAt0(A, _, _, _, _, _, _) => #fault("fabric access outside the logical endpoint", 0) ... </tk> requires A <Int 0
-  rule <tk> #fbAt0(A, So, D, S, B, T, OP) => #mem(fbAdd(S, So), rdOp(bytes(T))) ~> #fbAt1(A, fbAdd(D, So), fbAdd(S, 16 +Int So), T, OP) ~> #bulkTx(B, 1) ... </tk> requires A >=Int 0
+  rule <tk> #fbAt0(A, So, D, S, B, T, OP) => #amem(fbAdd(S, So), rdOp(bytes(T))) ~> #fbAt1(A, fbAdd(D, So), fbAdd(S, 16 +Int So), T, OP) ~> #bulkTx(B, 1) ... </tk> requires A >=Int 0
   // operand b (and, for cas, the swap value 16 bytes further on)
-  rule <tk> #res(V) ~> #fbAt1(A, DE, SW, T, "cas") => #mem(SW, rdOp(bytes(T))) ~> #fbAt2(A, DE, T, "cas", V) ... </tk>
-  rule <tk> #res(V) ~> #fbAt1(A, DE, _, T, OP) => #mem(loc("global", A), atOp(OP, T, V, 0)) ~> #fbAtOut(DE, bytes(T)) ... </tk> requires OP =/=String "cas"
-  rule <tk> #res(X) ~> #fbAt2(A, DE, T, OP, V) => #mem(loc("global", A), atOp(OP, T, V, X)) ~> #fbAtOut(DE, bytes(T)) ... </tk>
-  rule <tk> #res(Old) ~> #fbAtOut(DE, W) => #mem(DE, wrOp(W, Old)) ~> #drop ... </tk>
+  rule <tk> #res(V) ~> #fbAt1(A, DE, SW, T, "cas") => #amem(SW, rdOp(bytes(T))) ~> #fbAt2(A, DE, T, "cas", V) ... </tk>
+  rule <tk> #res(V) ~> #fbAt1(A, DE, _, T, OP) => #amem(loc("global", A), atOp(OP, T, V, 0)) ~> #fbAtOut(DE, bytes(T)) ... </tk> requires OP =/=String "cas"
+  rule <tk> #res(X) ~> #fbAt2(A, DE, T, OP, V) => #amem(loc("global", A), atOp(OP, T, V, X)) ~> #fbAtOut(DE, bytes(T)) ... </tk>
+  rule <tk> #res(Old) ~> #fbAtOut(DE, W) => #amem(DE, wrOp(W, Old)) ~> #drop ... </tk>
 
   // ---- tensor forms: the tensor-map copy against endpoint memory
   syntax KItem ::= #fbTx(Loc, Int)
