@@ -251,3 +251,7 @@ Not modelled: the conditional phase / payload report of `.layout::v1` mbarriers 
 ## Build performance
 * The LLVM backend's pattern-matching compiler dominated kompile time and memory (a 1.5 GB decision tree).  Rules with a variable opcode (`exec(opc(OP, ...), ...)`) were replicated into every opcode-specific branch; they are now reached through one low-priority dispatcher (`exec` -> `#gx`), which cut the tree to 0.6 GB and the full build from 25-45 minutes (and out-of-memory kills) to about 10 minutes.
 * The Makefile builds in two stages (`kompile --no-llvm-kompile`, then `llvm-kompile`) so the JVM and the LLVM compile never share the sandbox's memory.
+
+## Generic window of the cluster and exited threads
+* The generic address space gains a window at 2^42 holding the whole cluster's shared memory (rank r at 2^42 + r * 2^24); `cvta.shared::cluster` maps a shared::cluster address ((rank+1) << 24 | offset, or a plain offset for the executing CTA) into it and `cvta.to.shared::cluster` back; ordinary `ld`/`st`/`atom` through such a generic address reach the peer CTA.  `isspacep.shared::cluster` accepts both the CTA's own window and the cluster window; `isspacep.shared::cta` only the CTA's own address (own rank in the cluster window).
+* `exit` withdraws a thread from the cluster barrier (its arrival in the open phase, if any, is taken back and the number of threads the phase waits for shrinks), so barrier.cluster no longer hangs on exited threads.  An access to the shared memory of a CTA that has exited faults (undefined behaviour in the ISA).

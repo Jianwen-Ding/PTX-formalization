@@ -99,7 +99,7 @@ Items are numbered in task order (44 onward).  Sources: `docs/coverage.md`, `doc
 - [x] 63 surfaces: formatted accesses (.p), clamp modes, sured all types, suq
 - [x] 64 multimem.ld_reduce / st / red
 - [x] 65 fabric.*
-- [ ] 66 generic-window cluster addresses (cvta.shared::cluster), exited-thread DSMEM semantics
+- [x] 66 generic-window cluster addresses (cvta.shared::cluster), exited-thread DSMEM semantics
 
 ## Memory model and execution model
 - [ ] 67 scopes (.cta/.cluster/.gpu/.sys), morally-strong, scope-aware fences and release/acquire
