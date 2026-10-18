@@ -143,13 +143,18 @@ module PTX-EXEC-MM
   rule mmStep(OP, L, A, Acc, ListItem(V:Int) Vs) => mmStep(OP, L, A, mmComb(OP, A, Acc, mmTo(L, A, V)), Vs)
   rule mmStep(_, _, _, Acc, _) => Acc [owise]
   syntax Int ::= mmTo(Ty, Ty, Int) [function, total] | mmBack(Ty, Ty, Int) [function, total] | mmComb(String, Ty, Int, Int) [function, total]
+  syntax String ::= mmKind(Ty) [function, total]
+  rule mmKind(ty(K, _)) => K
+  syntax Float ::= mmFlt(Ty, Int) [function, total]
+  rule mmFlt(ty(_, W), V) => roundFloat(decodeF(V, W), WP, WEXP)
   rule mmTo(L, A, V) => V requires L ==K A
+  rule mmTo(L, A, V) => miniToF16(mmKind(L), V) requires L =/=K A andBool mmIsFp8(L) andBool A ==K ty("f", 16)
+  rule mmTo(L, A, V) => cvt(.Set, A, ty("f", 16), miniToF16(mmKind(L), V)) requires L =/=K A andBool mmIsFp8(L) andBool A =/=K ty("f", 16)
   rule mmTo(L, A, V) => cvt(.Set, A, L, V) [owise]
   rule mmBack(L, A, V) => V requires L ==K A
-  rule mmBack(L, A, V) => cvt(SetItem("rn") SetItem("satfinite"), L, A, V) requires L =/=K A andBool mmIsFp8(L)
+  rule mmBack(L, A, V) => miniFrom(mmKind(L), mmFlt(A, V), false) requires L =/=K A andBool mmIsFp8(L)
   rule mmBack(L, A, V) => cvt(SetItem("rn"), L, A, V) [owise]
   // 8-bit floats accumulate through f16
-  rule mmComb(OP, A, X, Y) => cvt(SetItem("rn") SetItem("satfinite"), A, ty("f", 16),
-                                  bin(OP, .Set, ty("f", 16), cvt(.Set, ty("f", 16), A, X), cvt(.Set, ty("f", 16), A, Y))) requires mmIsFp8(A)
+  rule mmComb(OP, A, X, Y) => miniFrom(mmKind(A), mmFlt(ty("f", 16), bin(OP, .Set, ty("f", 16), miniToF16(mmKind(A), X), miniToF16(mmKind(A), Y))), false) requires mmIsFp8(A)
   rule mmComb(OP, A, X, Y) => bin(OP, .Set, A, X, Y) [owise]
 endmodule
