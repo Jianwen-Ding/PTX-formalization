@@ -56,6 +56,11 @@ def pattern(t, ops):
 
 rows = {}      # op -> {(quals tuple, kind): value}
 def add(op, quals, ver=None, sm=None, arch=None):
+    # the half-precision chapter repeats the opcodes of the f32 chapters: its plain notes apply to the half types only
+    if not list(quals) and globals().get("sec_family", "") == "half":
+        for t in ("f16", "f16x2", "bf16", "bf16x2"): add(op, [t], ver, sm, arch)
+        return
+    quals = list(quals) + list(globals().get("sec_extra", []))
     if any(not re.fullmatch(r"[A-Za-z0-9_:]+", q) or q in ("scope", "sem", "space", "support", "for", "cc") for q in quals): return
     key = tuple(sorted(set(quals)))
     r = rows.setdefault(op, {}).setdefault(key, [None, None, False])
@@ -93,10 +98,14 @@ for k, (p, sid) in enumerate(secs):
     b = t.find("Examples", a)
     if a < 0: continue
     if sid.startswith(("mixed-precision", "alternate-floating")): continue   # type-list forms overlap the plain half-precision rows
-    sec_op = sid.split("instructions-")[-1].split("-")[0]
+    sec_family = "half" if sid.startswith("half-precision") else ""
+    parts_ = sid.split("instructions-")[-1].split("-")
+    sec_op = parts_[0]
+    sec_extra = [x for x in parts_[1:] if x not in ("approx",)]      # sections of variants (st-async, cp-async-bulk, ...) apply to instructions carrying these qualifiers
     note = " ".join(t[a:b].split("\n"))
     # sentences (a period followed by a space and a capital / lower-case word, not inside a version number)
     for sent in re.split(r"(?<![0-9])\.\s+|(?<=[0-9]{1}\.[0-9])\.\s+", note):
+        sent = re.sub(r"^\s*(PTX ISA Notes|Target ISA Notes)\s*", "", sent)
         if re.match(r"^\s*(Target ISA Notes\s*)?Supported on all target architectures", sent, re.I):
             add(sec_op, [], sm=1); continue
         m = re.search(r"^(.*?)\s*(?:is |are )?introduced in PTX ISA version (\d+)\.(\d+)", sent, re.I)
