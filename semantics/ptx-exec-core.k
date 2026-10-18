@@ -133,9 +133,11 @@ module PTX-EXEC-CORE
   // for the thread's store buffer to drain; the buffer is always empty in the default sequentially consistent mode.
   syntax KItem ::= "#sbWait"
   syntax K ::= drainPre(Opc) [function, total]
+  // bulk copies belong to the async proxy: they do not wait for the issuing thread's generic-proxy stores (fence.proxy.async)
+  rule drainPre(opc("cp", M, _)) => .K requires "bulk" in M andBool "async" in M
   rule drainPre(opc(OP, M, _)) => #sbWait
-    requires OP ==String "fence" orBool OP ==String "membar" orBool OP ==String "exit"
-      orBool isBar(OP, M) orBool isBarRed(OP, M) orBool isBarWarp(OP, M) orBool isBarCluster(OP, M) orBool isCollective(OP)
+    requires notBool (OP ==String "cp" andBool "bulk" in M andBool "async" in M) andBool (OP ==String "fence" orBool OP ==String "membar" orBool OP ==String "exit"
+      orBool isBar(OP, M) orBool isBarRed(OP, M) orBool isBarWarp(OP, M) orBool isBarCluster(OP, M) orBool isCollective(OP))
   rule drainPre(_) => .K [owise]
   rule <tk> #sbWait => .K ... </tk> <sb> .List </sb>
 
