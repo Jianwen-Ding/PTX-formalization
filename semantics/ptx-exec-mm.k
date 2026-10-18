@@ -15,10 +15,12 @@
 // =============================================================================
 requires "ptx-exec-memq.k"
 requires "ptx-exec-mma.k"
+requires "ptx-exec-tex.k"
 
 module PTX-EXEC-MM
   imports PTX-EXEC-MEMQ
   imports PTX-EXEC-MMA
+  imports PTX-EXEC-TEX
 
   syntax MmEnt ::= mm(Int, List)
   // window containing an address -> (start, entry)
@@ -32,15 +34,15 @@ module PTX-EXEC-MM
   rule mmBases(mm(_, B)) => B
   // device addresses of an address inside a window
   syntax List ::= mmAddrs(Map, Int) [function, total]
-  rule mmAddrs(T, A) => addAll(mmBases({T[mmStart(T, keys_list(T), A)]}:>MmEnt), A -Int mmStart(T, keys_list(T), A))
+  rule mmAddrs(T, A) => mmAddAll(mmBases({T[mmStart(T, keys_list(T), A)]}:>MmEnt), A -Int mmStart(T, keys_list(T), A))
     requires mmStart(T, keys_list(T), A) >=Int 0
   rule mmAddrs(_, _) => .List [owise]
-  syntax List ::= addAll(List, Int) [function, total]
-  rule addAll(ListItem(B:Int) Bs, O) => ListItem(B +Int O) addAll(Bs, O)
-  rule addAll(_, _) => .List [owise]
-  syntax List ::= addElem(List, Int) [function, total]
-  rule addElem(ListItem(B:Int) Bs, O) => ListItem(B +Int O) addElem(Bs, O)
-  rule addElem(_, _) => .List [owise]
+  syntax List ::= mmAddAll(List, Int) [function, total]
+  rule mmAddAll(ListItem(B:Int) Bs, O) => ListItem(B +Int O) mmAddAll(Bs, O)
+  rule mmAddAll(_, _) => .List [owise]
+  syntax List ::= mmAddElem(List, Int) [function, total]
+  rule mmAddElem(ListItem(B:Int) Bs, O) => ListItem(B +Int O) mmAddElem(Bs, O)
+  rule mmAddElem(_, _) => .List [owise]
 
   syntax KItem ::= #seq(List)
   rule <tk> #seq(ListItem(I:KItem) L) => I ~> #seq(L) ... </tk>
@@ -72,7 +74,7 @@ module PTX-EXEC-MM
   rule mmVec(_) => 1 [owise]
   // device-major addresses for each element: element e at offset e*bytes
   syntax List ::= mmElems(List, Int, Int, Int) [function, total]          // device bases, offset, element bytes, element count
-  rule mmElems(Bs, O, W, N) => addElem(Bs, O) mmElems(Bs, O +Int W, W, N -Int 1) requires N >Int 0
+  rule mmElems(Bs, O, W, N) => mmAddElem(Bs, O) mmElems(Bs, O +Int W, W, N -Int 1) requires N >Int 0
   rule mmElems(_, _, _, _) => .List [owise]
   rule <tk> exec(opc("multimem", M, ListItem(T)), ops(D, [ A ], .Operands), C) =>
             #mmRd(mmElems(mmBases({Tb[mmStart(Tb, keys_list(Tb), hAddr(A, C))]}:>MmEnt), hAddr(A, C) -Int mmStart(Tb, keys_list(Tb), hAddr(A, C)), bytes(T), mmVec(M)),
@@ -90,37 +92,35 @@ module PTX-EXEC-MM
   rule mmDst(D) => ListItem(D) [owise]
   // the values arrive element-major: for each element, ND device values
   syntax List ::= mmElemsRed(List, Ty, Set, Int, Int) [function, total]
-  rule mmElemsRed(Vs, T, M, ND, NE) => ListItem(mmRed(mmOp(M), T, mmAcc(M, T), take(Vs, ND))) mmElemsRed(drop(Vs, ND), T, M, ND, NE -Int 1) requires NE >Int 0
+  rule mmElemsRed(Vs, T, M, ND, NE) => ListItem(mmRed(mmOp(M), T, mmAcc(M, T), mmTake(Vs, ND))) mmElemsRed(mmDrop(Vs, ND), T, M, ND, NE -Int 1) requires NE >Int 0
   rule mmElemsRed(_, _, _, _, _) => .List [owise]
-  syntax List ::= take(List, Int) [function, total] | drop(List, Int) [function, total]
-  rule take(ListItem(X) L, N) => ListItem(X) take(L, N -Int 1) requires N >Int 0
-  rule take(_, _) => .List [owise]
-  rule drop(ListItem(_) L, N) => drop(L, N -Int 1) requires N >Int 0
-  rule drop(L, _) => L [owise]
+  syntax List ::= mmTake(List, Int) [function, total] | mmDrop(List, Int) [function, total]
+  rule mmTake(ListItem(X) L, N) => ListItem(X) mmTake(L, N -Int 1) requires N >Int 0
+  rule mmTake(_, _) => .List [owise]
+  rule mmDrop(ListItem(_) L, N) => mmDrop(L, N -Int 1) requires N >Int 0
+  rule mmDrop(L, _) => L [owise]
   syntax String ::= mmOp(Set) [function, total]
   rule mmOp(M) => pick(M, ListItem("add") ListItem("min") ListItem("max") ListItem("and") ListItem("or") ListItem("xor"), "add")
   // accumulation type: the element's lane type unless .acc::f32 / .acc::f16
   syntax Ty ::= mmAcc(Set, Ty) [function, total]
   rule mmAcc(M, _) => ty("f", 32) requires "acc::f32" in M
   rule mmAcc(M, _) => ty("f", 16) requires "acc::f16" in M
-  rule mmAcc(_, T) => laneTy(T) [owise]
-  syntax Ty ::= laneTy(Ty) [function, total]
-  rule laneTy(ty("f16x2", _)) => ty("f", 16)      rule laneTy(ty("bf16x2", _)) => ty("bf", 16)
-  rule laneTy(ty("e4m3x2", _)) => ty("e4m3", 8)   rule laneTy(ty("e4m3x4", _)) => ty("e4m3", 8)
-  rule laneTy(ty("e5m2x2", _)) => ty("e5m2", 8)   rule laneTy(ty("e5m2x4", _)) => ty("e5m2", 8)
-  rule laneTy(T) => T [owise]
-  syntax Int ::= laneN(Ty) [function, total]
-  rule laneN(ty("f16x2", _)) => 2   rule laneN(ty("bf16x2", _)) => 2   rule laneN(ty("e4m3x2", _)) => 2   rule laneN(ty("e5m2x2", _)) => 2
-  rule laneN(ty("e4m3x4", _)) => 4  rule laneN(ty("e5m2x4", _)) => 4
-  rule laneN(_) => 1 [owise]
-  syntax Bool ::= isFp8(Ty) [function, total]
-  rule isFp8(ty(K, _)) => K ==String "e4m3" orBool K ==String "e5m2"
+  rule mmAcc(_, T) => mmLaneTy(T) [owise]
+  syntax Ty ::= mmLaneTy(Ty) [function, total]
+  rule mmLaneTy(ty("f16x2", _)) => ty("f", 16)      rule mmLaneTy(ty("bf16x2", _)) => ty("bf", 16)
+  rule mmLaneTy(ty("e4m3x2", _)) => ty("e4m3", 8)   rule mmLaneTy(ty("e4m3x4", _)) => ty("e4m3", 8)
+  rule mmLaneTy(ty("e5m2x2", _)) => ty("e5m2", 8)   rule mmLaneTy(ty("e5m2x4", _)) => ty("e5m2", 8)
+  rule mmLaneTy(T) => T [owise]
+  syntax Int ::= mmLaneN(Ty) [function, total]
+  rule mmLaneN(ty("f16x2", _)) => 2   rule mmLaneN(ty("bf16x2", _)) => 2   rule mmLaneN(ty("e4m3x2", _)) => 2   rule mmLaneN(ty("e5m2x2", _)) => 2
+  rule mmLaneN(ty("e4m3x4", _)) => 4  rule mmLaneN(ty("e5m2x4", _)) => 4
+  rule mmLaneN(_) => 1 [owise]
+  syntax Bool ::= mmIsFp8(Ty) [function, total]
+  rule mmIsFp8(ty(K, _)) => K ==String "e4m3" orBool K ==String "e5m2"
   // reduce the device values of one element
   syntax Int ::= mmRed(String, Ty, Ty, List) [function, total]
-  rule mmRed(OP, T, A, Vs) => mmFoldPlain(OP, T, Vs) requires A ==K laneTy(T) andBool notBool isFp8(A) andBool laneN(T) ==Int 1 orBool (A ==K laneTy(T) andBool notBool isFp8(A) andBool notBool isFloatLane(T))
+  rule mmRed(OP, T, A, Vs) => mmFoldPlain(OP, T, Vs) requires A ==K T andBool notBool mmIsFp8(T)
   rule mmRed(OP, T, A, Vs) => mmLanes(OP, T, A, Vs, 0) [owise]
-  syntax Bool ::= isFloatLane(Ty) [function, total]
-  rule isFloatLane(T) => laneTy(T) =/=K T orBool isFp8(T)
   // plain: atomic-update semantics fold
   syntax Int ::= mmFoldPlain(String, Ty, List) [function, total]
   rule mmFoldPlain(OP, T, ListItem(V:Int) Vs) => mmFoldPlainN(OP, T, V, Vs)
@@ -130,12 +130,12 @@ module PTX-EXEC-MM
   rule mmFoldPlainN(_, _, Acc, _) => Acc [owise]
   // lane-wise: each lane accumulates in the accumulation type
   syntax Int ::= mmLanes(String, Ty, Ty, List, Int) [function, total]
-  rule mmLanes(OP, T, A, Vs, J) => (mmLane(OP, laneTy(T), A, lanesOf(Vs, laneTy(T), J)) <<Int (8 *Int bytes(laneTy(T)) *Int J)) |Int mmLanes(OP, T, A, Vs, J +Int 1)
-    requires J <Int laneN(T)
+  rule mmLanes(OP, T, A, Vs, J) => (mmLane(OP, mmLaneTy(T), A, mmLanesOf(Vs, mmLaneTy(T), J)) <<Int (8 *Int bytes(mmLaneTy(T)) *Int J)) |Int mmLanes(OP, T, A, Vs, J +Int 1)
+    requires J <Int mmLaneN(T)
   rule mmLanes(_, _, _, _, _) => 0 [owise]
-  syntax List ::= lanesOf(List, Ty, Int) [function, total]
-  rule lanesOf(ListItem(V:Int) Vs, L, J) => ListItem((V >>Int (8 *Int bytes(L) *Int J)) &Int mask(8 *Int bytes(L))) lanesOf(Vs, L, J)
-  rule lanesOf(_, _, _) => .List [owise]
+  syntax List ::= mmLanesOf(List, Ty, Int) [function, total]
+  rule mmLanesOf(ListItem(V:Int) Vs, L, J) => ListItem((V >>Int (8 *Int bytes(L) *Int J)) &Int mask(8 *Int bytes(L))) mmLanesOf(Vs, L, J)
+  rule mmLanesOf(_, _, _) => .List [owise]
   syntax Int ::= mmLane(String, Ty, Ty, List) [function, total]
   rule mmLane(OP, L, A, ListItem(V:Int) Vs) => mmBack(L, A, mmStep(OP, L, A, mmTo(L, A, V), Vs))
   rule mmLane(_, _, _, _) => 0 [owise]
@@ -146,10 +146,10 @@ module PTX-EXEC-MM
   rule mmTo(L, A, V) => V requires L ==K A
   rule mmTo(L, A, V) => cvt(.Set, A, L, V) [owise]
   rule mmBack(L, A, V) => V requires L ==K A
-  rule mmBack(L, A, V) => cvt(SetItem("rn") SetItem("satfinite"), L, A, V) requires L =/=K A andBool isFp8(L)
+  rule mmBack(L, A, V) => cvt(SetItem("rn") SetItem("satfinite"), L, A, V) requires L =/=K A andBool mmIsFp8(L)
   rule mmBack(L, A, V) => cvt(SetItem("rn"), L, A, V) [owise]
   // 8-bit floats accumulate through f16
   rule mmComb(OP, A, X, Y) => cvt(SetItem("rn") SetItem("satfinite"), A, ty("f", 16),
-                                  bin(OP, .Set, ty("f", 16), cvt(.Set, ty("f", 16), A, X), cvt(.Set, ty("f", 16), A, Y))) requires isFp8(A)
+                                  bin(OP, .Set, ty("f", 16), cvt(.Set, ty("f", 16), A, X), cvt(.Set, ty("f", 16), A, Y))) requires mmIsFp8(A)
   rule mmComb(OP, A, X, Y) => bin(OP, .Set, A, X, Y) [owise]
 endmodule
