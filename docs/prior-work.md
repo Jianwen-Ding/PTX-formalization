@@ -289,3 +289,8 @@ Not modelled: the conditional phase / payload report of `.layout::v1` mbarriers 
 
 ## Packed and wide types (audit)
 * `tests/packed-types.ptx` and `tests/packed-edge.ptx` check, against hand-derived values from the ISA rules: `cvt` to f16x2 / bf16x2 / e4m3x2 / e5m2x2 / e2m1x2 (operand order: the first source goes to the upper half), `.relu`, `.satfinite` saturation and NaN encodings, packed `add`/`fma`, `mov.b128` pack/unpack and 128-bit stores.  No discrepancies were found.
+
+## Float audit and approximate operations
+* The `.approx` transcendental and reciprocal instructions (`rcp`, `sqrt`, `rsqrt`, `sin`, `cos`, `ex2`, `lg2`, `tanh`) are modelled by the correctly rounded result (computed with MPFR at high precision), which is one of the results the hardware may produce: hardware returns any value within the documented error bound (rcp/sqrt 2^-23 relative, rsqrt 2^-22.9, sin/cos 2^-20.9 absolute on [-100pi, 100pi], ex2 2^-22.5 relative, lg2 2^-22.6 absolute near 1, tanh 2^-11 relative).  `make approx` (`scripts/check_approx.py`) checks that the semantics stays inside these bounds on sample inputs (worst case 0.5x the bound).  Programs that need bit-exact hardware results from these instructions cannot be validated against this model; a nondeterministic "any value within the bound" mode is not implemented.
+* The bounds quoted are those remembered from the ISA text of the version implemented; they should be re-checked against the document when it is available offline.
+* Existing coverage of the exact-rounded operations: IEEE differential fuzzing against the host FPU (`make fuzz`), TestFloat-style tests for all four rounding modes (`tests/testfloat*.ptx`), `tests/float.ptx`, `tests/ieee-diff.ptx`.

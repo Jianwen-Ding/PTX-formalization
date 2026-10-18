@@ -19,7 +19,7 @@ SOURCES  := $(wildcard semantics/*.k)
 SEEDS    ?= 1 2 3 4 5 6 7 8
 FUZZ_N   ?= 256
 
-.PHONY: all build build-search build-mm memmodel litmus negative test fuzz examples zluda run clean
+.PHONY: approx all build build-search build-mm memmodel litmus negative test fuzz examples zluda run clean
 
 all: build
 
@@ -81,3 +81,7 @@ run: build
 
 clean:
 	rm -rf build
+
+# the approximate instructions (rcp/sqrt/rsqrt/sin/cos/ex2/lg2/tanh .approx) against the error bounds of the ISA
+approx: build
+	python3 scripts/check_approx.py
