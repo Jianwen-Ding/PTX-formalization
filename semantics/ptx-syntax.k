@@ -61,12 +61,15 @@ module PTX-SYNTAX
   syntax Operand ::= Reg
                    | Int | Float | HexLit
                    | Name                      // symbol, label, function, `_`
+                   | Name "+" Int              // symbol + offset as a value (cvta, getctarank)
+                   | Name Int
                    | "[" Addr "]"              // memory address
                    | "[" Addr "," Operand "]"             // [tex, {x,y}] / [surf, {x}]
                    | "[" Addr "," Addr "," Operand "]"    // [tex, smp, {x,y}]
                    | "[" Addr "," Addr "," Operand "," Operand "]"                                   // [tmap, gAddr, {size}, {coords}]  (.override::global_dim)
                    | "[" Addr "," Addr "," Operand "," Operand "," Operand "," Operand "]"           // [tmap, gAddr, {size}, {lower}, upper, {coords}]
                    | "[" Addr "," Addr "," Operand "," Operand "," Operand "]"                       // [tmap, leId, off, override, {coords}]  (fabric tensor ops)
+                   | "[" Addr "," Addr "," Operand "," Operand "," Operand "," Operand "," Operand "]"   // [tmap, leId, off, {size}, {lower}, upper, {coords}]  (fabric tensor ops, PTX 9.4)
                    | "{" Operands "}"          // vector operand
                    | "(" Operands ")"          // call argument / return list
                    | "{" Operands "}" "|" Reg     // tex: vector destination with residency predicate
@@ -89,6 +92,8 @@ module PTX-SYNTAX
                   | ".align" Int | ".ptr"
                   | ".v2" | ".v4" | ".v8"
                   | ".attribute" "(" ".managed" ")"
+                  | ".attribute" "(" ".unified" ")"
+                  | ".attribute" "(" ".unified" "(" Int "," Int ")" ")"
   syntax DAttrs ::= List{DAttr, ""}
   syntax TexKind ::= ".texref" | ".samplerref" | ".surfref"
 
@@ -96,7 +101,7 @@ module PTX-SYNTAX
                   | Reg "<" Int ">"           // %r<10>  declares %r0 .. %r9
                   | Name "<" Int ">"          // tmp<4>  declares tmp0 .. tmp3
                   | Name ArrDims              // arrays of any rank
-  syntax ArrDims ::= "[" Int "]" ArrDims | "[" Int "]" | "[" "]"
+  syntax ArrDims ::= "[" Int "]" ArrDims | "[" Int "]" | "[" "]" | "[" "]" ArrDims
   syntax DItems ::= NeList{DItem, ","}
 
   syntax InitVal  ::= Int | Float | HexLit | Name | "{" InitVals "}"
@@ -104,6 +109,8 @@ module PTX-SYNTAX
                     | Name "+" Int            // sym + 4
                     | Name "-" Name            // label difference (debug sections)
                     | "generic" "(" Name ")"   // generic address of a symbol
+                    | "generic" "(" Name ")" "+" Int
+                    | "generic" "(" Name ")" Int
 
   syntax InitVals ::= List{InitVal, ","}
 
@@ -120,6 +127,9 @@ module PTX-SYNTAX
                  | ".loc" Int Int Int LocOpts
                  | Name ":" ".callprototype" "(" ParamDecls ")" Name "(" ParamDecls ")" PerfDirs ";"
                  | Name ":" ".callprototype" Name "(" ParamDecls ")" PerfDirs ";"
+                 | Name ":" ".callprototype" Name ";"
+                 | Name ":" ".callprototype" "(" ParamDecls ")" Name ";"
+                 | ".loc_intermediate" Int Int Int
                  | Name ":" ".calltargets" Names ";"
                  | Name ":" ".branchtargets" Names ";"
   syntax LocOpt  ::= "prologue_end" | "epilogue_begin" | "is_stmt" Int
@@ -141,6 +151,7 @@ module PTX-SYNTAX
                     | ".explicitcluster" | ".blocksareclusters"
                     | ".abi_preserve" Int | ".abi_preserve_control" Int
                     | ".pragma" String
+                    | ".minperctamemory" Int | ".language" String
   syntax PerfDirs ::= List{PerfDir, ""}
 
   syntax FuncHead ::= ".entry" Name "(" ParamDecls ")"
@@ -195,6 +206,7 @@ module PTX-SYNTAX
                    | ".file" Int String "," Int "," Int
                    | ".alias" Name "," Name ";"
                    | ".section" SecName "{" SecItems "}"
+                   | ".nv_intermediate_source_section" "{" SecItems "}"
                    | ".pragma" String ";"
                    | Decl
                    | FuncDef

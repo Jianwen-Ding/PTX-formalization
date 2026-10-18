@@ -269,6 +269,9 @@ module PTX-LOAD
   rule pp1(.loc _:Int _:Int _:Int _:LocOpts, P) => P
   rule pp1(_:Name : .callprototype ( _:ParamDecls ) _:Name ( _:ParamDecls ) _:PerfDirs ;, P) => P
   rule pp1(_:Name : .callprototype _:Name ( _:ParamDecls ) _:PerfDirs ;, P) => P
+  rule pp1(_:Name : .callprototype _:Name ;, P) => P
+  rule pp1(_:Name : .callprototype ( _:ParamDecls ) _:Name ;, P) => P
+  rule pp1(.loc_intermediate _:Int _:Int _:Int, P) => P
   rule pp1(_:DAttrs _:TexKind _:DItems ;, P) => P      // textures: see task 35
   // target lists are kept in the label table under "@calltargets:L" / "@branchtargets:L"
   rule pp1(N:Name : .calltargets Ns:Names ;, pps(C, I, L, RW, SH)) =>

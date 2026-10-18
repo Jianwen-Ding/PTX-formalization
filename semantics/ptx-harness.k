@@ -23,6 +23,7 @@ module PTX-HARNESS-BASE
   rule <k> .file _ _ , _ , _ => .K ... </k>
   rule <k> (.pragma _:String ;):TopDecl => .K ... </k>
   rule <k> .section _ { _:SecItems } => .K ... </k>          // debug info is ignored
+  rule <k> .nv_intermediate_source_section { _:SecItems } => .K ... </k>
   rule <k> _:DAttrs _:TexKind _:DItems ; => .K ... </k>       // textures: see task 35
   rule <k> .alias A , B ; => .K ... </k>
        <funcs> F => F[Name2String(A) <- {F[Name2String(B)]}:>FDef] </funcs>

@@ -39,6 +39,8 @@ module PTX-EXEC-CORE
   rule rd(N:Name, T, C)   => trunc(rreg(Name2String(N), C), wid(T)) requires isRegName(N, C)
   rule rd(! N:Name, _, C) => b2i(rreg(Name2String(N), C) ==Int 0) requires isRegName(N, C)
   rule rd(N:Name, T, C)   => trunc(symAddr(lookupSym(Name2String(N), C)), wid(T))  // &var
+  rule rd(N:Name + I:Int, T, C) => trunc(symAddr(lookupSym(Name2String(N), C)) +Int I, wid(T))
+  rule rd(N:Name I:Int, T, C)   => trunc(symAddr(lookupSym(Name2String(N), C)) +Int I, wid(T))
     requires Name2String(N) =/=String "WARP_SZ" andBool notBool isRegName(N, C)
   rule rd(N:Name, T, _)   => trunc(32, wid(T)) requires Name2String(N) ==String "WARP_SZ"
 
