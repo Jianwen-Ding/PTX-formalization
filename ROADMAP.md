@@ -94,8 +94,8 @@ Items are numbered in task order (44 onward).  Sources: `docs/coverage.md`, `doc
 - [x] 58 TMA hardware 128-byte tensormap encoding, tensormap.replace all fields, .override
 - [x] 59 cp.async.bulk.tensor multicast / cta_group::2 / prefetch.tensor / reduce audit
 - [ ] 60 mbarrier .multicast::cluster::32b, cluster-scope arrive/expect_tx, try_wait timeouts
-- [ ] 61 textures: cubemaps (+arrays), tex.level/.grad, mipmaps
-- [ ] 62 textures: depth compare, tld4 on cubemap/depth, array edge cases, sampler addressing/border colours
+- [x] 61 textures: cubemaps (+arrays), tex.level/.grad, mipmaps
+- [x] 62 textures: depth compare, tld4 on a2d/cube/acube, offsets, residency predicate, array layer clamping (sampler border colours other than zero not modelled)
 - [ ] 63 surfaces: formatted accesses (.p), clamp modes, sured all types, suq
 - [ ] 64 multimem.ld_reduce / st / red
 - [ ] 65 fabric.*

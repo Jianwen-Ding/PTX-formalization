@@ -225,3 +225,10 @@ inc / dec (u32), and / or / xor (b32 b64), in tile, `.im2col_no_offs` and `.im2c
 `mbarrier.expect_tx`, `mbarrier.complete_tx`, `mbarrier.arrive` and `mbarrier.arrive.expect_tx` with `.multicast::cluster::32b` apply the operation to the mbarrier at the same
 CTA-relative offset in every CTA whose rank bit is set in the 32-bit `ctaMask` (arrive: optional count, then the mask).  Test: `scripts/gen_mbar_mc.py`.
 Not modelled: the conditional phase / payload report of `.layout::v1` mbarriers (`report-on`) used by `.mbarrier::report::*` of the async copies and by fabric operations.
+
+## Textures: mipmaps, cubemaps, depth compare (own model; the ISA gives no numeric rules)
+* Texture objects gain levels (word 12), flags (13: bit 0 depth, bit 1 cube) and a mip filter (15); samplers gain mip filter, minLOD, maxLOD (1/256 units).  Levels are stored one after another, each holding all layers.
+* lod: `.base` 0, `.level` the operand, `.grad` log2 of the larger scaled gradient length (cube: divided by 2*major axis); clamped to [minLOD, min(maxLOD, levels-1)]; point mip = floor(lod+1/2), linear mip = lerp of two levels, weight quantised to 1/256.
+* Cube faces follow OpenGL (+X -X +Y -Y +Z -Z); filtering clamps inside the face (no seam blending).  Depth compare is LEQUAL on each texel before filtering; offsets add to texel indices; the residency predicate is always true.
+* Divisions in the texture unit are computed at double precision: `mpfr_div` at the 4400-bit working precision crashed (SIGFPE) or returned wrong values.
+* Build note: the JVM frontend plus llvm-kompile exceed the sandbox memory limit, so the Makefile runs kompile with `--no-llvm-kompile` and then llvm-kompile.

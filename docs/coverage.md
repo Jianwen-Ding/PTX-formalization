@@ -16,14 +16,14 @@ per-instruction version/target minima are in `semantics/ptx-isa-table.k` (`.isac
 | Matrix | wmma, mma.sync (dense + sparse metadata), ldmatrix/stmatrix/movmatrix, wgmma (dense), tcgen05 (alloc, ld/st, mma, fence/wait/commit) |
 | Async | cp.async (+ groups), cp.async.bulk(.tensor) incl. multicast, TMA tile/gather4 loads, stores and reductions, tensormap.*, st.async/red.async/st.bulk, griddepcontrol, clusterlaunchcontrol |
 | Control | bra/brx.idx/call (direct, indirect, prototypes)/ret/exit, predication, dynamic stack |
-| Textures | tex/tld4/txq/suld/sust/sured/suq on descriptor objects |
+| Textures | tex (.base/.level/.grad, mipmaps, cube/acube, offsets, depth compare, `d\|p`), tld4 (2d/a2d/cube/acube), txq/suld/sust/sured/suq on descriptor objects |
 | Special registers | all of `%tid … %globaltimer`, cluster registers, `%warpid`, `%smid`-style registers |
 | Memory model | default sequentially consistent interleaving (`--search` for all schedules); `.memmodel relaxed;` store-buffer mode with litmus suite |
 | Legality | `.version`/`.target` minima for 103 base instructions (`.isacheck ;`) |
 
 ## Not modelled
 * `multimem.*`, `fabric.*` (need multi-device objects).
-* Textures: cubemaps, mipmaps/`tex.level/.grad` LOD hardware, depth compare, formatted surface accesses (`.p`).
+* Textures: 2dms/a2dms, seam-blended cube filtering, non-zero border colours, formatted surface accesses (`.p`).
 * `wgmma.mma_async.sp`; tcgen05 `.cta_group::2` for sparse/block-scaled kinds, `.decompress::lut::b`, `kind::ti16`.
 * TMA: interleaved layouts, `im2col` modes, `.override` forms.  (The tensor-map encoding is private to this semantics, not the hardware 128-byte format.)
 * `vmad`, video `.mask` destinations, permuting SIMD selectors; `istypep`.

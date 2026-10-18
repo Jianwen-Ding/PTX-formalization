@@ -23,8 +23,11 @@ all: build
 build: $(BUILD)/timestamp
 
 $(BUILD)/timestamp: $(SOURCES)
+	# two stages: the JVM frontend and llvm-kompile together exceed the sandbox's memory limit
 	$(KOMPILE) semantics/ptx.k --main-module PTX --syntax-module PTX-SYNTAX \
-	    --enable-search --output-definition $(BUILD)
+	    --enable-search --no-llvm-kompile --output-definition $(BUILD)
+	cd $(BUILD) && llvm-kompile definition.kore dt main -- -o interpreter
+	touch $(BUILD)/timestamp
 
 litmus: build
 	bash scripts/run-litmus.sh
