@@ -96,7 +96,7 @@ Items are numbered in task order (44 onward).  Sources: `docs/coverage.md`, `doc
 - [ ] 60 mbarrier .multicast::cluster::32b, cluster-scope arrive/expect_tx, try_wait timeouts
 - [x] 61 textures: cubemaps (+arrays), tex.level/.grad, mipmaps
 - [x] 62 textures: depth compare, tld4 on a2d/cube/acube, offsets, residency predicate, array layer clamping (sampler border colours other than zero not modelled)
-- [ ] 63 surfaces: formatted accesses (.p), clamp modes, sured all types, suq
+- [x] 63 surfaces: formatted accesses (.p), clamp modes, sured all types, suq
 - [ ] 64 multimem.ld_reduce / st / red
 - [ ] 65 fabric.*
 - [ ] 66 generic-window cluster addresses (cvta.shared::cluster), exited-thread DSMEM semantics

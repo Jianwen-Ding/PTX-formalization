@@ -232,3 +232,9 @@ Not modelled: the conditional phase / payload report of `.layout::v1` mbarriers 
 * Cube faces follow OpenGL (+X -X +Y -Y +Z -Z); filtering clamps inside the face (no seam blending).  Depth compare is LEQUAL on each texel before filtering; offsets add to texel indices; the residency predicate is always true.
 * Divisions in the texture unit are computed at double precision: `mpfr_div` at the 4400-bit working precision crashed (SIGFPE) or returned wrong values.
 * Build note: the JVM frontend plus llvm-kompile exceed the sandbox memory limit, so the Makefile runs kompile with `--no-llvm-kompile` and then llvm-kompile.
+
+## Surfaces: formatted accesses and queries
+* Surface descriptors carry sample format (UNORM8/SNORM8/UINT8/SINT8/UNORM16/SNORM16/UINT16/SINT16/FLOAT16/UINT32/SINT32/FLOAT32), channels, channel data type/order, memory layout and an array flag.
+* `sust.p`: the lowest coordinate is a sample offset; f32 sources convert with round-to-nearest-even and saturation (UNORM/SNORM), integer sources saturate; source components beyond the surface's channels are ignored, missing components leave memory unchanged (the ISA says "unpredictable").
+* `sured.p`: the sample offset scales by the data size of `.ctype`; `.b32`/`.b64` reduce as unsigned or signed according to the surface format.
+* `suq.array_size` is 0 for non-array surfaces; `channel_data_type`, `channel_order` and `memory_layout` read descriptor words.
