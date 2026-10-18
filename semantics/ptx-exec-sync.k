@@ -87,7 +87,7 @@ module PTX-EXEC-SYNC
   rule <tk> #barCheckAll(.List) => .K ... </tk>
   rule <threads> ... (<thread> <tid> _ </tid> <tk> #die ... </tk> ... </thread> => .Bag) ... </threads>
        <turn> _ => -1 </turn>
-  rule <ctas> ... (<cta> <ctaid> _ </ctaid> <live> 0 </live> <threads> .Bag </threads> ... </cta> => .Bag) ... </ctas>
+  rule <ctas> ... (<cta> <ctaid> _ </ctaid> <live> 0 </live> <threads> .Bag </threads> ... </cta> => .Bag) ... </ctas> <resident> R => R -Int 1 </resident>
 
   // anything else is outside the modelled subset
 endmodule

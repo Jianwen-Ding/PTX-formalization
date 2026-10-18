@@ -178,6 +178,8 @@ module PTX-SYNTAX
                       | ".fabric" Int ".size" Int "{" Names "}" ";"
                       | ".memmodel" Name ";"
                       | ".ub" Name ";"
+                      | ".occupancy" Int ";"
+                      | ".cooplaunch" Name "<<<" Dim "," Dim ">>>" "(" Operands ")" ";"
                       | ".convergence" Name ";"
                       | ".isacheck" ";"
                       | ".append" Name Type "=" "{" InitVals "}" ";"            // extend the most recent buffer (keeps text small)

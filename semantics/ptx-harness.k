@@ -82,6 +82,7 @@ module PTX-HARNESS-BASE
   rule intsL(X:Int) => ListItem(X)
   rule intsL(.Ints) => .List
   rule <k> .convergence N ; => .K ... </k> <its> _ => Name2String(N) ==String "its" </its>
+  rule <k> .occupancy N ; => .K ... </k> <occ> _ => N </occ>
   rule <k> .ub N ; => .K ... </k> <ub> _ => Name2String(N) ==String "strict" </ub>
   rule <k> .memmodel N ; => .K ... </k> <mm> _ => Name2String(N) </mm>
   rule <k> .patch N T @ O = { Vs } ; => #patch(Name2String(N), typeOf(T), O, ivList(Vs)) ... </k>
@@ -107,13 +108,19 @@ module PTX-HARNESS-BASE
   syntax KItem ::= #launch(String, Dim3, Dim3, List)
                  | #mkCtas(Int, Int) | #mkThreads(Int, Int, Int) | "#waitGrid"
   rule <k> .launch K <<< G , B >>> ( As ) ; => #isaChk ~> #launch(Name2String(K), dimOf(G), dimOf(B), opsList(As)) ... </k>
+  // cooperative launch: every CTA of the grid must be resident at once
+  syntax KItem ::= #coop(Int)
+  rule <k> .cooplaunch K <<< G , B >>> ( As ) ; => #coop(vol(dimOf(G))) ~> #isaChk ~> #launch(Name2String(K), dimOf(G), dimOf(B), opsList(As)) ... </k>
+  rule <k> #coop(N) => .K ... </k> <occ> O </occ> requires O ==Int 0 orBool N <=Int O
+  rule <k> #coop(N) => #fault("cooperative launch of " +String Int2String(N) +String " CTAs exceeds the resident-CTA limit", 0) ... </k> <occ> O </occ> requires O >Int 0 andBool N >Int O
   rule <k> .launch K <<< G , B , _ >>> ( As ) ; => #isaChk ~> #launch(Name2String(K), dimOf(G), dimOf(B), opsList(As)) ... </k>
 
   // threads are created while the host holds the turn; the grid starts when
   // it is released
   syntax KItem ::= "#startGrid"
   rule <k> #startGrid => .K ... </k> <turn> _ => -1 </turn>
-  rule <k> #launch(K, GD, BD, As) => #mkCtas(0, vol(GD)) ~> #startGrid ~> #waitGrid ... </k>
+  rule <k> #launch(K, GD, BD, As) => #mkCtas(0, resLimit(OCC, vol(GD))) ~> #startGrid ~> #waitGrid ... </k>
+       <occ> OCC </occ> <nextcta> _ => 0 </nextcta> <resident> _ => 0 </resident>
        <funcs> ... K |-> fdef("entry", _, PS, _, _, _) ... </funcs>
        <syms> S => fixDyn(S, keys_list(S), alignUp(ST, DYNSHARED)) </syms>
        <stop> ST </stop>
@@ -125,6 +132,8 @@ module PTX-HARNESS-BASE
     requires size(PS) ==Int size(As)
   rule <k> #launch(K, _, _, _) => #fault("cannot launch " +String K, 0) ... </k> [owise]
 
+  syntax Int ::= resLimit(Int, Int) [function, total]
+  rule resLimit(O, V) => #if O >Int 0 andBool O <Int V #then O #else V #fi
   syntax Map ::= fixDyn(Map, List, Int) [function, total]
   rule fixDyn(S, ListItem(N) Ns, B) => fixDyn(S[N <- sym("shared", B)], Ns, B)
     requires S[N] ==K sym("dynshared", 0)
@@ -151,6 +160,7 @@ module PTX-HARNESS-BASE
   rule <k> #mkCtas(C, N) => #mkThreads(C, 0, vol(BD)) ~> #mkCtas(C +Int 1, N) ... </k>
        <blockDim> BD </blockDim>
        <ctas> ... .Bag => <cta> <ctaid> C </ctaid> <live> vol(BD) </live> ... </cta> ... </ctas>
+       <nextcta> _ => C +Int 1 </nextcta> <resident> R => R +Int 1 </resident>
     requires C <Int N
   rule <k> #mkCtas(C, N) => .K ... </k> requires C >=Int N
 
@@ -233,6 +243,11 @@ module PTX-HARNESS-BASE
        (P +String ".x") |-> X  (P +String ".y") |-> Y  (P +String ".z") |-> Z
 
   rule <k> #waitGrid => .K ... </k> <ctas> .Bag </ctas> <kernel> _ => "" </kernel> <turn> _ => -2 </turn>
+       <nextcta> N </nextcta> <gridDim> GD </gridDim> requires N >=Int vol(GD)
+  // a CTA finished and the limit allows the next one: start it (only while no thread holds the turn)
+  rule <k> #waitGrid => #mkCtas(N, N +Int 1) ~> #startGrid ~> #waitGrid ... </k> <turn> -1 => -2 </turn>
+       <nextcta> N </nextcta> <resident> R </resident> <occ> O </occ> <gridDim> GD </gridDim>
+    requires O >Int 0 andBool R <Int O andBool N <Int vol(GD)
 
   // ------------------------------------------------------------ inspection
   syntax KItem ::= #print(String, Ty, Int) | #expect(String, Ty, List)
