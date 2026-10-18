@@ -1,0 +1,39 @@
+test CoWR-alias
+alias a b
+desc ISA: virtual aliases need an alias proxy fence
+init a=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak a 1
+  r0 = ld.weak b
+exists r0==0
+expect allowed
+
+test CoWR-alias-fenced
+alias a b
+desc ... and with fence.proxy.alias the store is visible
+init a=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak a 1
+  fence.proxy.alias
+  r0 = ld.weak b
+exists r0==0
+expect forbidden
+
+test Async-proxy-nofence
+desc a generic store followed by an async-proxy read of the same location needs fence.proxy.async
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  r0 = ld.weak x @proxy=async
+exists r0==0
+expect allowed
+
+test Async-proxy-fenced
+desc with fence.proxy.async the async read sees it
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.proxy.async
+  r0 = ld.weak x @proxy=async
+exists r0==0
+expect forbidden

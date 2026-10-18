@@ -1,0 +1,103 @@
+test IRIW-fence-sc
+desc independent reads of independent writes: fence.sc makes writes observed in one order
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.relaxed.sys x 1
+thread T2 cta=1 cluster=0 gpu=0
+  st.relaxed.sys y 1
+thread T3 cta=2 cluster=0 gpu=0
+  r0 = ld.relaxed.sys x
+  fence.sc.sys
+  r1 = ld.relaxed.sys y
+thread T4 cta=3 cluster=0 gpu=0
+  r2 = ld.relaxed.sys y
+  fence.sc.sys
+  r3 = ld.relaxed.sys x
+exists r0==1 && r1==0 && r2==1 && r3==0
+expect forbidden
+
+test IRIW-acquire
+desc with only acquire loads the two readers may disagree
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.relaxed.sys x 1
+thread T2 cta=1 cluster=0 gpu=0
+  st.relaxed.sys y 1
+thread T3 cta=2 cluster=0 gpu=0
+  r0 = ld.acquire.sys x
+  r1 = ld.acquire.sys y
+thread T4 cta=3 cluster=0 gpu=0
+  r2 = ld.acquire.sys y
+  r3 = ld.acquire.sys x
+exists r0==1 && r1==0 && r2==1 && r3==0
+expect allowed
+
+test WRC-relacq
+desc write-to-read causality: cumulativity through the observed relaxed load
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.relaxed.sys x 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.relaxed.sys x
+  st.release.sys y 1
+thread T3 cta=2 cluster=0 gpu=0
+  r1 = ld.acquire.sys y
+  r2 = ld.relaxed.sys x
+exists r0==1 && r1==1 && r2==0
+expect forbidden
+
+test WRC-weak
+desc with weak accesses nothing is cumulative
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.weak x
+  st.release.sys y 1
+thread T3 cta=2 cluster=0 gpu=0
+  r1 = ld.acquire.sys y
+  r2 = ld.weak x
+exists r0==1 && r1==1 && r2==0
+expect allowed
+
+test WRC-relacq-fenced
+desc ... and with the first hop acquired too the chain is causal
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.release.sys x 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.acquire.sys x
+  st.release.sys y 1
+thread T3 cta=2 cluster=0 gpu=0
+  r1 = ld.acquire.sys y
+  r2 = ld.relaxed.sys x
+exists r0==1 && r1==1 && r2==0
+expect forbidden
+
+test ISA2
+desc three-thread chain with release/acquire
+init x=0 y=0 z=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.sys y 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.acquire.sys y
+  st.release.sys z 1
+thread T3 cta=2 cluster=0 gpu=0
+  r1 = ld.acquire.sys z
+  r2 = ld.weak x
+exists r0==1 && r1==1 && r2==0
+expect forbidden
+
+test R-relacq
+desc R shape: write-write then write-read
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.sys y 1
+thread T2 cta=1 cluster=0 gpu=0
+  st.relaxed.sys y 2
+  fence.sc.sys
+  r0 = ld.weak x
+exists [y]==2 && r0==0
+expect allowed

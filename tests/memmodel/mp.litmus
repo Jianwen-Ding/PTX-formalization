@@ -1,0 +1,152 @@
+test MP-weak
+desc message passing with weak accesses: stale data is observable
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.weak f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.weak f
+  r1 = ld.weak x
+exists r0==1 && r1==0
+expect allowed
+
+test MP-fences-sys
+desc ISA litmus MP: fence.sys on both sides forbids the stale read
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.acq_rel.sys
+  st.relaxed.sys f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.relaxed.sys f
+  fence.acq_rel.sys
+  r1 = ld.weak x
+exists r0==1 && r1==0
+expect forbidden
+
+test MP-relacq-gpu
+desc release/acquire at gpu scope across CTAs
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.gpu f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.acquire.gpu f
+  r1 = ld.weak x
+exists r0==1 && r1==0
+expect forbidden
+
+test MP-relacq-cta-cross
+desc cta-scoped release/acquire in different CTAs do not synchronize
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.cta f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.acquire.cta f
+  r1 = ld.weak x
+exists r0==1 && r1==0
+expect allowed
+
+test MP-relacq-cta-same
+desc cta-scoped release/acquire inside one CTA synchronize
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.cta f 1
+thread T2 cta=0 cluster=0 gpu=0
+  r0 = ld.acquire.cta f
+  r1 = ld.weak x
+exists r0==1 && r1==0
+expect forbidden
+
+test MP-relacq-cluster
+desc cluster scope covers CTAs of one cluster
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.cluster f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.acquire.cluster f
+  r1 = ld.weak x
+exists r0==1 && r1==0
+expect forbidden
+
+test MP-relacq-cluster-cross
+desc cluster scope does not cover CTAs of different clusters
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.cluster f 1
+thread T2 cta=1 cluster=1 gpu=0
+  r0 = ld.acquire.cluster f
+  r1 = ld.weak x
+exists r0==1 && r1==0
+expect allowed
+
+test MP-relaxed-flag
+desc relaxed flag without fences does not order the data
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.relaxed.gpu f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.relaxed.gpu f
+  r1 = ld.weak x
+exists r0==1 && r1==0
+expect allowed
+
+test MP-acquire-fence
+desc relaxed store, relaxed load then acquire fence; release fence on the other side
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.acq_rel.gpu
+  st.relaxed.gpu f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.relaxed.gpu f
+  fence.acq_rel.gpu
+  r1 = ld.weak x
+exists r0==1 && r1==0
+expect forbidden
+
+test MP-red
+desc ISA 8.11.1: a red does not form an acquire pattern
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 42
+  st.release.gpu f 1
+thread T2 cta=1 cluster=0 gpu=0
+  red.sys.add f 1
+  fence.acq_rel.gpu
+  r1 = ld.weak x
+exists r1==0 && [f]==2
+expect allowed
+
+test MP-atom
+desc with atom instead of red the acquire pattern is formed
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 42
+  st.release.gpu f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r2 = atom.relaxed.gpu.add f 1
+  fence.acq_rel.gpu
+  r1 = ld.weak x
+exists r2==1 && r1==0
+expect forbidden
+
+test MP-cumulative
+desc release fence is cumulative: WRC-like chain through a third thread
+init x=0 f=0 g=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.gpu f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.acquire.gpu f
+  st.release.gpu g 1
+thread T3 cta=2 cluster=0 gpu=0
+  r1 = ld.acquire.gpu g
+  r2 = ld.weak x
+exists r0==1 && r1==1 && r2==0
+expect forbidden

@@ -1,0 +1,23 @@
+test MP-bar
+desc bar.sync orders accesses inside a CTA
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  bar.sync 0
+thread T2 cta=0 cluster=0 gpu=0
+  bar.sync 0
+  r0 = ld.weak x
+exists r0==0
+expect forbidden
+
+test MP-bar-cross-cta
+desc ... but not across CTAs (different barrier instances)
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  bar.sync 0
+thread T2 cta=1 cluster=0 gpu=0
+  bar.sync 0
+  r0 = ld.weak x
+exists r0==0
+expect allowed

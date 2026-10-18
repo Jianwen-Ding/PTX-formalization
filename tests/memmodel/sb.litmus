@@ -1,0 +1,79 @@
+test SB-weak
+desc store buffering is observable with weak accesses
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  r0 = ld.weak y
+thread T2 cta=1 cluster=0 gpu=0
+  st.weak y 1
+  r1 = ld.weak x
+exists r0==0 && r1==0
+expect allowed
+
+test SB-fence-sc
+desc fence.sc forbids it
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.sc.sys
+  r0 = ld.weak y
+thread T2 cta=1 cluster=0 gpu=0
+  st.weak y 1
+  fence.sc.sys
+  r1 = ld.weak x
+exists r0==0 && r1==0
+expect forbidden
+
+test SB-fence-acqrel
+desc fence.acq_rel does not
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.acq_rel.sys
+  r0 = ld.weak y
+thread T2 cta=1 cluster=0 gpu=0
+  st.weak y 1
+  fence.acq_rel.sys
+  r1 = ld.weak x
+exists r0==0 && r1==0
+expect allowed
+
+test SB-fence-sc-cta-cross
+desc cta-scoped fence.sc in different CTAs are not morally strong
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.sc.cta
+  r0 = ld.weak y
+thread T2 cta=1 cluster=0 gpu=0
+  st.weak y 1
+  fence.sc.cta
+  r1 = ld.weak x
+exists r0==0 && r1==0
+expect allowed
+
+test SB-fence-sc-cta-same
+desc ... but are inside one CTA
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.sc.cta
+  r0 = ld.weak y
+thread T2 cta=0 cluster=0 gpu=0
+  st.weak y 1
+  fence.sc.cta
+  r1 = ld.weak x
+exists r0==0 && r1==0
+expect forbidden
+
+test SB-relaxed-strong
+desc strong relaxed accesses are still reorderable store->load
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.relaxed.sys x 1
+  r0 = ld.relaxed.sys y
+thread T2 cta=1 cluster=0 gpu=0
+  st.relaxed.sys y 1
+  r1 = ld.relaxed.sys x
+exists r0==0 && r1==0
+expect allowed

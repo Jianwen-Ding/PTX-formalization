@@ -1,0 +1,39 @@
+test Atomicity-sys
+desc ISA litmus 1: two morally strong atomic increments
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  r0 = atom.sys.add x 1
+thread T2 cta=1 cluster=0 gpu=0
+  r1 = atom.sys.add x 1
+exists [x]==1
+expect forbidden
+
+test Atomicity-scope-mismatch
+desc ISA litmus 2: not morally strong (cta scope in different CTAs)
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  r0 = atom.cta.add x 1
+thread T2 cta=1 cluster=0 gpu=0
+  r1 = atom.gpu.add x 1
+exists [x]==1
+expect allowed
+
+test Atomicity-xchg
+desc exchange and add on one location serialize
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  r0 = atom.gpu.exch x 5
+thread T2 cta=1 cluster=0 gpu=0
+  r1 = atom.gpu.add x 1
+exists r0==0 && r1==0
+expect forbidden
+
+test Atomicity-cas
+desc only one compare-and-swap wins
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  r0 = atom.gpu.cas x 0 1
+thread T2 cta=1 cluster=0 gpu=0
+  r1 = atom.gpu.cas x 0 2
+exists r0==0 && r1==0
+expect forbidden

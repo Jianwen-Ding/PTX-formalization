@@ -1,0 +1,70 @@
+test CoRR
+desc ISA: coherent read-read
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.relaxed.sys x 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.relaxed.sys x
+  r1 = ld.relaxed.sys x
+exists r0==1 && r1==0
+expect forbidden
+
+test CoRR-weak
+desc weak loads may be reordered
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.relaxed.sys x 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.weak x
+  r1 = ld.weak x
+exists r0==1 && r1==0
+expect allowed
+
+test CoWW
+desc two stores of one thread are coherence-ordered
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.relaxed.sys x 1
+  st.relaxed.sys x 2
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.relaxed.sys x
+  r1 = ld.relaxed.sys x
+exists r0==2 && r1==1
+expect forbidden
+
+test CoWR
+desc a thread reads its own latest store or a later one
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.relaxed.sys x 1
+  r0 = ld.relaxed.sys x
+thread T2 cta=1 cluster=0 gpu=0
+  st.relaxed.sys x 2
+exists r0==0
+expect forbidden
+
+test 2+2W-weak
+desc two write-write pairs: coherence cycle is possible with weak stores
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.weak y 2
+thread T2 cta=1 cluster=0 gpu=0
+  st.weak y 1
+  st.weak x 2
+exists [x]==1 && [y]==1
+expect allowed
+
+test 2+2W-fence-sc
+desc fence.sc forbids it
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.sc.sys
+  st.weak y 2
+thread T2 cta=1 cluster=0 gpu=0
+  st.weak y 1
+  fence.sc.sys
+  st.weak x 2
+exists [x]==1 && [y]==1
+expect forbidden

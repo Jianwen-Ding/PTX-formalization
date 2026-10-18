@@ -1,0 +1,47 @@
+test LB-nodeps
+desc ISA: load buffering without dependencies is allowed
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  r0 = ld.weak x
+  st.weak y 1
+thread T2 cta=1 cluster=0 gpu=0
+  r1 = ld.weak y
+  st.weak x 1
+exists r0==1 && r1==1
+expect allowed
+
+test LB-deps
+desc ISA: LB with true dependencies is forbidden (no thin air)
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  r0 = ld.weak x
+  st.weak y r0
+thread T2 cta=1 cluster=0 gpu=0
+  r1 = ld.weak y
+  st.weak x r1
+exists r0!=0 || r1!=0
+expect forbidden
+
+test LB-ctrl
+desc LB with control dependencies (the stores are conditional on a value of 1)
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  r0 = ld.relaxed.gpu x
+  ? r0==1 : st.relaxed.gpu y 1
+thread T2 cta=1 cluster=0 gpu=0
+  r1 = ld.relaxed.gpu y
+  ? r1==1 : st.relaxed.gpu x 1
+exists r0==1 && r1==1
+expect forbidden
+
+test LB-relacq
+desc release store after the load forbids LB
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  r0 = ld.acquire.gpu x
+  st.release.gpu y 1
+thread T2 cta=1 cluster=0 gpu=0
+  r1 = ld.acquire.gpu y
+  st.release.gpu x 1
+exists r0==1 && r1==1
+expect forbidden
