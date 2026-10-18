@@ -122,6 +122,7 @@ module PTX-CONFIGURATION
               <lmem> .Bytes </lmem>
               <ltop> 0 </ltop>
               <sb> .List </sb>                      // store buffer of the relaxed memory model
+              <pl> .List </pl>                      // pending (not yet performed) loads of the relaxed memory model
             </thread>
           </threads>
         </cta>

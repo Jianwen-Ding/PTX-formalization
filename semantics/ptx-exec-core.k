@@ -69,6 +69,54 @@ module PTX-EXEC-CORE
   rule isVec({ _ }) => true
   rule isVec(_) => false [owise]
 
+
+  // ------------------------------------------------------------ pending loads (relaxed memory model, ptx-exec-weak.k)
+  // `pl(D, T, S, A, N)` is a load that has been issued but not yet performed: register D is not yet written.  An
+  // instruction that mentions a pending destination, or orders memory, waits until the loads are performed.
+  syntax PendLoad ::= pl(Operand, Ty, String, Int, Int)
+  syntax Set ::= opRegs(Operand) [function, total] | oprsRegs(Operands) [function, total] | addrRegs(Addr) [function, total]
+  rule opRegs(R:Reg) => SetItem(Reg2String(R))
+  rule opRegs(N:Name) => SetItem(Name2String(N))
+  rule opRegs(_:Int) => .Set
+  rule opRegs(_:Float) => .Set
+  rule opRegs(_:HexLit) => .Set
+  rule opRegs([ A ]) => addrRegs(A)
+  rule opRegs([ A , O:Operand ]) => addrRegs(A) |Set opRegs(O)
+  rule opRegs({ Os }) => oprsRegs(Os)
+  rule opRegs(( Os )) => oprsRegs(Os)
+  rule opRegs({ Os } | R:Reg) => oprsRegs(Os) SetItem(Reg2String(R))
+  rule opRegs({ Os } | N:Name) => oprsRegs(Os) SetItem(Name2String(N))
+  rule opRegs(R1:Reg | R2:Reg) => SetItem(Reg2String(R1)) SetItem(Reg2String(R2))
+  rule opRegs(N1:Name | N2:Name) => SetItem(Name2String(N1)) SetItem(Name2String(N2))
+  rule opRegs(- R:Reg) => SetItem(Reg2String(R))
+  rule opRegs(- N:Name) => SetItem(Name2String(N))
+  rule opRegs(! R:Reg) => SetItem(Reg2String(R))
+  rule opRegs(! N:Name) => SetItem(Name2String(N))
+  rule opRegs(_) => SetItem("*") [owise]                       // tuple forms of the tensor instructions: assume a conflict
+  rule oprsRegs(O:Operand, Os:Operands) => opRegs(O) |Set oprsRegs(Os)
+  rule oprsRegs(.Operands) => .Set
+  rule addrRegs(R:Reg) => SetItem(Reg2String(R))
+  rule addrRegs(N:Name) => SetItem(Name2String(N))
+  rule addrRegs(_:Int) => .Set
+  rule addrRegs(R:Reg _:Int) => SetItem(Reg2String(R))
+  rule addrRegs(N:Name _:Int) => SetItem(Name2String(N))
+  rule addrRegs(R:Reg + _:Int) => SetItem(Reg2String(R))
+  rule addrRegs(N:Name + _:Int) => SetItem(Name2String(N))
+  syntax Set ::= plDests(List) [function, total]
+  rule plDests(ListItem(pl(D, _, _, _, _)) L) => opRegs(D) |Set plDests(L)
+  rule plDests(_) => .Set [owise]
+  syntax Set ::= insRegs(KItem) [function, total]
+  rule insRegs(ins(noG, _, Os)) => oprsRegs(Os)
+  rule insRegs(ins(g(P, _), _, Os)) => SetItem(P) |Set oprsRegs(Os)
+  rule insRegs(_) => .Set [owise]
+  syntax Opc ::= insOpc(KItem) [function, total]
+  rule insOpc(ins(_, O, _)) => O
+  rule insOpc(_) => opc("", .Set, .List) [owise]
+  syntax Bool ::= plBlocked(List, KItem) [function, total]
+  rule plBlocked(.List, _) => false
+  rule plBlocked(PL, I) => ("*" in insRegs(I)) orBool (intersectSet(plDests(PL), insRegs(I)) =/=K .Set) orBool (drainPre(insOpc(I)) =/=K .K)
+    requires PL =/=K .List
+
   // ------------------------------------------------------------ fetch
   syntax K ::= fetch(KItem, Ctx) [function]
   rule fetch(ins(noG, O, Os), C) => drainPre(O) ~> exec(O, ops(Os), C)
@@ -111,10 +159,19 @@ module PTX-EXEC-CORE
        <ctaid> C </ctaid> <tid> T </tid>
        <status> running </status>
        <fn> F </fn> <pc> PC => PC +Int 1 </pc>
-       <regs> R </regs> <env> E </env> <syms> S </syms> <rw> RW </rw>
+       <regs> R </regs> <env> E </env> <syms> S </syms> <rw> RW </rw> <pl> PL </pl>
        <funcs> ... F |-> fdef(_, _, _, CODE, L, _) ... </funcs>
     requires PC in_keys(CODE)
      andBool (U ==Int -1 orBool (U ==Int uid(C, T) andBool notBool isVisible({CODE[PC]}:>KItem)))
+     andBool notBool plBlocked(PL, {CODE[PC]}:>KItem)
+  // an instruction that needs a register of a pending load (or orders memory) first performs the pending loads
+  rule <tk> .K => #plDrain </tk>
+       <turn> U => uid(C, T) </turn>
+       <ctaid> C </ctaid> <tid> T </tid>
+       <status> running </status>
+       <fn> F </fn> <pc> PC </pc> <pl> PL </pl>
+       <funcs> ... F |-> fdef(_, _, _, CODE, _, _) ... </funcs>
+    requires PC in_keys(CODE) andBool (U ==Int -1 orBool U ==Int uid(C, T)) andBool plBlocked(PL, {CODE[PC]}:>KItem)
   // yield before a visible instruction
   rule <tk> .K </tk>
        <turn> U => -1 </turn>
@@ -132,7 +189,7 @@ module PTX-EXEC-CORE
        <funcs> ... F |-> fdef(_, _, _, CODE, _, _) ... </funcs>
     requires notBool PC in_keys(CODE) andBool (U ==Int -1 orBool U ==Int uid(C, T))
 
-  syntax KItem ::= "#yield" | "#ret" | "#exit" | "#die" | "#clExit"
+  syntax KItem ::= "#yield" | "#ret" | "#exit" | "#die" | "#clExit" | "#plDrain"
   rule <tk> #yield => .K ... </tk> <turn> _ => -1 </turn>
 
   syntax Bool ::= isBar(String, Set) [function, total]

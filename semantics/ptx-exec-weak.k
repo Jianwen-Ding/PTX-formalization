@@ -71,6 +71,38 @@ module PTX-EXEC-WEAK
   syntax Int ::= sbVal(SbE) [function, total]
   rule sbVal(sbe(_, _, _, V, _)) => V
 
+
+  // ---------------------------------------------------------------- load buffering
+  // A weak or relaxed scalar load from .global / .shared is issued but performed later: the thread goes on with the
+  // following instructions (which may include stores that reach memory first) and the load takes its value from
+  // memory at a spontaneous step.  Instructions that use the destination register, memory-ordering instructions,
+  // later accesses to an overlapping location and release stores wait for the pending loads.  This allows the
+  // load-buffering outcomes of the PTX model (a load observing a later store of another thread that itself
+  // observed a store of this thread).
+  syntax KItem ::= #plPush(Operand, Ty, Loc) | #plDo(PendLoad)
+  rule <tk> exec(opc("ld", M, ListItem(T)), ops(D, [ A ], .Operands), C) => #plPush(D, T, ea(A, spaceOf(M), C)) ... </tk>
+       <mm> "relaxed" </mm>
+    requires notBool isVec(D) andBool notBool ("acquire" in M orBool "volatile" in M orBool "mmio" in M) [priority(40)]
+  rule <tk> #plPush(D, T, loc(S, A)) => .K ... </tk>
+       <pl> PL => PL ListItem(pl(D, T, S, A, bytes(T))) </pl>
+    requires S ==String "global" orBool S ==String "shared"
+  rule <tk> #plPush(D, T, loc(S, A)) => #mem(loc(S, A), rdOp(bytes(T))) ~> #ldwb(D, T) ... </tk>
+    requires S =/=String "global" andBool S =/=String "shared"
+  rule <tk> #plPush(D, T, badLoc(E)) => #fault(E, 0) ... </tk>
+  rule <tk> #plDo(pl(D, T, S, A, N)) => #mem(loc(S, A), rdOp(N)) ~> #ldwb(D, T) ... </tk>
+  rule <tk> #plDrain => .K ... </tk> <pl> .List </pl>
+  rule <tk> #plDrain => #plDo(E) ~> #plDrain ... </tk> <pl> ListItem(E) Post => Post </pl>
+  // a spontaneous step: the turn is free and the thread idle
+  rule <tk> .K => #plDo(E) </tk> <turn> -1 </turn> <pl> ListItem(E) Post => Post </pl>
+  rule <tk> .K </tk> <turn> U => -1 </turn> <ctaid> C </ctaid> <tid> T </tid> <status> running </status>
+       <pl> ListItem(_) _ </pl> requires U ==Int uid(C, T)
+  // later accesses to a location with a pending load wait for it; so does a release store
+  syntax Bool ::= plOverlap(List, Loc) [function, total]
+  rule plOverlap(ListItem(pl(_, _, S, A, N)) L, loc(S2, A2)) => (S ==String S2 andBool A <Int A2 +Int 8 andBool A2 <Int A +Int N) orBool plOverlap(L, loc(S2, A2))
+  rule plOverlap(_, _) => false [owise]
+  rule <tk> #rm(L, OP) => #plDrain ~> #rm(L, OP) ... </tk> <pl> PL </pl> requires plOverlap(PL, L) [priority(40)]
+  rule <tk> #rm(L, wrRelOp(N, V)) => #plDrain ~> #rm(L, wrRelOp(N, V)) ... </tk> <pl> ListItem(_) _ </pl> [priority(40)]
+
   // ---------------------------------------------------------------- flushing (spontaneous steps)
   // A thread whose computation is idle while the turn is free may retire a buffered store: the oldest one, or a
   // younger one that is allowed to overtake all older ones (different locations, no release entries involved).
