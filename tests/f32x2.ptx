@@ -1,0 +1,27 @@
+// add / sub / mul / fma .f32x2 (PTX ISA 8.6, sm_100): lane-wise, each lane rounded like the scalar f32 instruction
+.version 8.6
+.target sm_100
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %a, %b, %c, %r<5>; .reg .b32 %x, %y;
+    ld.param.u64 %o, [po];
+    mov.b32 %x, 0x3fc00000; mov.b32 %y, 0xc0100000;       // 1.5, -2.25
+    mov.b64 %a, {%x, %y};
+    mov.b32 %x, 0x40000000; mov.b32 %y, 0x3f800000;       // 2.0, 1.0
+    mov.b64 %b, {%x, %y};
+    mov.b32 %x, 0x3f000000; mov.b32 %y, 0x3f000000;       // 0.5, 0.5
+    mov.b64 %c, {%x, %y};
+    add.rn.f32x2 %r0, %a, %b;       // 3.5, -1.25
+    sub.rn.f32x2 %r1, %a, %b;       // -0.5, -3.25
+    mul.rn.f32x2 %r2, %a, %b;       // 3.0, -2.25
+    fma.rn.f32x2 %r3, %a, %b, %c;   // 3.5, -1.75
+    st.global.b64 [%o], %r0;
+    st.global.b64 [%o+8], %r1;
+    st.global.b64 [%o+16], %r2;
+    st.global.b64 [%o+24], %r3;
+    ret;
+}
+.buffer OUT .u32 [8];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 1080033280, 3214934016, 3204448256, 3226468352, 1077936128, 3222274048, 1080033280, 3219128320 };

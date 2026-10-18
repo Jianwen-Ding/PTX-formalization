@@ -28,6 +28,25 @@ module PTX-EXEC-PRED
        <regs> R => wr(R, D, setRes(bop(cmp(cmpOp(M), ST, ftzSrc(M, ST, rd(A, ST, C)), ftzSrc(M, ST, rd(B, ST, C))),
                                       boolOp(M), rd(X, ty("p", 1), C)) =/=Int 0, DT)) </regs>
 
+  // set.CmpOp.{u8x4,s8x4,u16x2,s16x2} d, a, b: lane-wise comparison, all ones in a lane where it holds (PTX ISA 9.4)
+  syntax Ty ::= setLane(Ty) [function, total]
+  rule setLane(ty("u8x4", _))  => ty("u", 8)
+  rule setLane(ty("s8x4", _))  => ty("s", 8)
+  rule setLane(ty("u16x2", _)) => ty("u", 16)
+  rule setLane(ty("s16x2", _)) => ty("s", 16)
+  rule setLane(T) => T [owise]
+  syntax Bool ::= isSetPk(Ty) [function, total]
+  rule isSetPk(T) => T ==K ty("u8x4", 32) orBool T ==K ty("s8x4", 32) orBool T ==K ty("u16x2", 32) orBool T ==K ty("s16x2", 32)
+  syntax Int ::= setPk(Set, Ty, Int, Int, Int, Int) [function, total]     // modifiers, lane type, a, b, lane index, lane count
+  rule setPk(M, LT, A, B, I, N) =>
+       (#if cmp(cmpOp(M), LT, (A >>Int (wid(LT) *Int I)) &Int mask(wid(LT)), (B >>Int (wid(LT) *Int I)) &Int mask(wid(LT))) =/=Int 0
+        #then mask(wid(LT)) <<Int (wid(LT) *Int I) #else 0 #fi) |Int setPk(M, LT, A, B, I +Int 1, N)
+    requires I <Int N
+  rule setPk(_, _, _, _, _, _) => 0 [owise]
+  rule <tk> exec(opc("set", M, ListItem(T)), ops(D, A, B, .Operands), C) => .K ... </tk>
+       <regs> R => wr(R, D, setPk(M, setLane(T), rd(A, ty("b", 32), C), rd(B, ty("b", 32), C), 0, 32 /Int wid(setLane(T)))) </regs>
+    requires isSetPk(T)
+
   // ---------------------------------------------------------------- slct
   syntax Bool ::= nonNeg(Ty, Int) [function, total]
   rule nonNeg(T, V) => notBool isNaN(decodeF(V, fw(T))) andBool decodeF(V, fw(T)) >=Float fc(0.0, decodeF(V, fw(T)))
