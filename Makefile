@@ -19,7 +19,7 @@ SOURCES  := $(wildcard semantics/*.k)
 SEEDS    ?= 1 2 3 4 5 6 7 8
 FUZZ_N   ?= 256
 
-.PHONY: isa-examples approx all build build-search build-mm memmodel litmus negative test fuzz examples zluda run clean
+.PHONY: build-agx test-agx isa-examples approx all build build-search build-mm memmodel litmus negative test fuzz examples zluda run clean
 
 all: build
 
@@ -90,3 +90,13 @@ approx: build
 isa-examples: build
 	python3 scripts/extract_isa_examples.py $(ISA_HTML) /tmp/isa_examples.json
 	python3 scripts/isa_examples.py /tmp/isa_examples.json
+
+# the Apple AGX (G13) semantics, built separately from the PTX definition (it reuses the PTX float core)
+AGX := build/agx-kompiled
+build-agx: $(AGX)/timestamp
+$(AGX)/timestamp: agx/agx.k semantics/ptx-float.k semantics/ptx-common.k semantics/ptx-syntax.k
+	$(KOMPILE) agx/agx.k --main-module AGX --syntax-module AGX-SYNTAX --no-llvm-kompile --output-definition $(AGX)
+	cd $(AGX) && llvm-kompile definition.kore dt main -- -o interpreter
+	touch $(AGX)/timestamp
+test-agx: build-agx
+	bash scripts/run-agx.sh

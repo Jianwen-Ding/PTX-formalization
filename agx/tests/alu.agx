@@ -1,0 +1,28 @@
+// integer ALU: lane id arithmetic, halves, bit operations
+.laneid r4;
+.all r5 = 100;
+iadd r6, r4, r5;
+isub r7, r5, r4;
+imadd r8, r4, 3, 7;
+bitop 8 r9, r4, 12;   // and
+bitop 14 r10, r4, 3;   // or  (tt: a&b | a&~b | ~a&b)
+popcount r11, r4;
+bitrev r12, 1;
+ffs r13, 40;
+asr r14, 4294967280, 2;   // -16 >> 2 = -4
+iadd r15l, r4, 65535;   // 16-bit wrap
+mov r16, 0;
+stop;
+.run;
+.expectlane 0 r6 = 100;
+.expectlane 31 r6 = 131;
+.expectlane 5 r7 = 95;
+.expectlane 10 r8 = 37;
+.expectlane 13 r9 = 12;
+.expectlane 13 r10 = 15;
+.expectlane 7 r11 = 3;
+.expectall r12 = 2147483648;
+.expectall r13 = 5;
+.expectall r14 = 4294967292;
+.expectlane 3 r15l = 2;
+.expectlane 3 r15 = 2

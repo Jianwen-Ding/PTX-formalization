@@ -1,0 +1,26 @@
+// execution-mask stack: if/else on lane parity, nested while loop, ballot
+.laneid r4;
+mov r0, 0;
+mov r5, 0;
+if_icmp ult r4, 16;
+  iadd r5, r5, 1;
+else_icmp ult r4, 16;
+  iadd r5, r5, 2;
+pop_exec 1;
+// loop: each lane counts down from (lane % 4)
+bitop 8 r6, r4, 3;
+mov r7, 0;
+LOOP:
+while_icmp ugt r6, 0;
+  iadd r7, r7, 1;
+  isub r6, r6, 1;
+jmp_exec_any LOOP;
+pop_exec 1;
+icmp_ballot ult r8, r4, 8;
+.run;
+.expectlane 3 r5 = 1;
+.expectlane 20 r5 = 2;
+.expectlane 6 r7 = 2;
+.expectlane 7 r7 = 3;
+.expectall r8 = 255;
+.expectmask 4294967295
