@@ -37,6 +37,7 @@ module AGX-SYNTAX
                  | "bitop" Int AReg "," AOperand "," AOperand
                  | "bfi" Int AReg "," AOperand "," AOperand "," AOperand
                  | "asr" AReg "," AOperand "," AOperand
+                 | "bfeil" Int AReg "," AOperand "," AOperand "," AOperand
                  | "popcount" AReg "," AOperand
                  | "bitrev" AReg "," AOperand
                  | "ffs" AReg "," AOperand
@@ -77,6 +78,7 @@ module AGX-SYNTAX
                      | ".lane" Int AReg "=" Int
                      | ".uni" AReg "=" Int
                      | ".sr" Int "=" "laneid"
+                     | ".srall" Int "=" Int
                      | ".dev" Int "=" Int
                      | ".run"
                      | ".expectall" AReg "=" Int
@@ -172,6 +174,10 @@ module AGX
   syntax Map ::= setSr(Map, Int, Int) [function, total]
   rule setSr(S, N, T) => setSr(S[N *Int 32 +Int T <- T], N, T +Int 1) requires T <Int 32
   rule setSr(S, _, _) => S [owise]
+  rule <k> .srall N = V => .K ... </k> <srs> S => setSrAll(S, N, 0, V) </srs>
+  syntax Map ::= setSrAll(Map, Int, Int, Int) [function, total]
+  rule setSrAll(S, N, T, V) => setSrAll(S[N *Int 32 +Int T <- V], N, T +Int 1, V) requires T <Int 32
+  rule setSrAll(S, _, _, _) => S [owise]
   rule <k> .dev A = V => .K ... </k> <dmem> M => wrBytes(M, A, V, 4) </dmem>
 
   rule <k> .run => #run ... </k> <status> "loading" => "running" </status>
@@ -232,6 +238,7 @@ module AGX
   rule <k> #exec(imadd D, A, B, C) => #lanes(lane3("imadd", D, A, B, C)) ... </k>
   rule <k> #exec(bitop TT D, A, B) => #lanes(laneI(TT, "bitop", D, A, B)) ... </k>
   rule <k> #exec(bfi M D, A, B, C) => #lanes(laneI3(M, "bfi", D, A, B, C)) ... </k>
+  rule <k> #exec(bfeil M D, A, B, C) => #lanes(laneI3(M, "bfeil", D, A, B, C)) ... </k>
   rule <k> #exec(asr D, A, B) => #lanes(lane2("asr", D, A, B)) ... </k>
   rule <k> #exec(popcount D, A) => #lanes(lane1("popcount", D, A)) ... </k>
   rule <k> #exec(bitrev D, A) => #lanes(lane1("bitrev", D, A)) ... </k>
@@ -268,6 +275,7 @@ module AGX
   rule opFn(lane3("imadd", D, A, B, C), G, U, T) => (opv(G, U, T, A, db(D)) *Int opv(G, U, T, B, db(D)) +Int opv(G, U, T, C, db(D))) &Int amask(db(D))
   rule opFn(laneI(TT, "bitop", D, A, B), G, U, T) => bitopv(TT, opv(G, U, T, A, db(D)), opv(G, U, T, B, db(D)), db(D))
   rule opFn(laneI3(M, "bfi", D, A, B, C), G, U, T) => bfiv(M, opv(G, U, T, A, 32), opv(G, U, T, B, 32), opv(G, U, T, C, 32))
+  rule opFn(laneI3(M, "bfeil", D, A, B, C), G, U, T) => ((opv(G, U, T, A, 32) &Int ~Int (#if M ==Int 0 #then 4294967295 #else amask(M) #fi)) |Int ((opv(G, U, T, B, 32) >>Int (opv(G, U, T, C, 32) &Int 127)) &Int (#if M ==Int 0 #then 4294967295 #else amask(M) #fi))) &Int 4294967295
   rule opFn(lane2("asr", D, A, B), G, U, T) => (asext(opv(G, U, T, A, db(D)), db(D)) >>Int (opv(G, U, T, B, db(D)) &Int 127)) &Int amask(db(D))
   rule opFn(lane1("popcount", D, A), G, U, T) => popc(opv(G, U, T, A, 32), 0)
   rule opFn(lane1("bitrev", D, A), G, U, T) => brev(opv(G, U, T, A, 32), 0, 0)
