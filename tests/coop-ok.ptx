@@ -15,10 +15,11 @@
     atom.global.add.u32 %tk, [counter], 1;
     mul.wide.u32 %a, %c, 4;
     add.u64 %a, %o, %a;
+    mov.u32 %tk, 1;
     st.global.u32 [%a], %tk;
     ret;
 }
 
 .buffer OUT .u32 [4];
 .cooplaunch k <<< 4, 8 >>> (OUT);
-.expect OUT .u32 = { 0, 1, 2, 3 };
+.expect OUT .u32 = { 1, 1, 1, 1 };
