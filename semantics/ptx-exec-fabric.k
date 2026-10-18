@@ -92,9 +92,11 @@ module PTX-EXEC-FABRIC
   syntax List ::= fbRedOps(List, Int, Int, Ty, String) [function, total]
   rule fbRedOps(ListItem(A:Int) As, V, NE, T, OP) => fbRedDev(A, V, 0, NE, T, OP) fbRedOps(As, V, NE, T, OP)
   rule fbRedOps(_, _, _, _, _) => .List [owise]
+  syntax KItem ::= #memDrop(Loc, MemOp)
+  rule <tk> #memDrop(L, O) => #mem(L, O) ~> #drop ... </tk>
   syntax List ::= fbRedDev(Int, Int, Int, Int, Ty, String) [function, total]
   rule fbRedDev(A, V, I, NE, T, OP) =>
-       ListItem(#mem(loc("global", A +Int I *Int bytes(T)), atOp(OP, T, (V >>Int (8 *Int bytes(T) *Int I)) &Int mask(8 *Int bytes(T)), 0))) ListItem(#drop) fbRedDev(A, V, I +Int 1, NE, T, OP)
+       ListItem(#memDrop(loc("global", A +Int I *Int bytes(T)), atOp(OP, T, (V >>Int (8 *Int bytes(T) *Int I)) &Int mask(8 *Int bytes(T)), 0))) fbRedDev(A, V, I +Int 1, NE, T, OP)
     requires I <Int NE
   rule fbRedDev(_, _, _, _, _, _) => .List [owise]
 
