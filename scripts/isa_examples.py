@@ -13,7 +13,8 @@ DEF = os.environ.get("PTX_DEF", "build/ptx-kompiled")
 HDR = ".version 9.4\n.target sm_100a\n.address_size 64\n"
 
 def wrap(code):
-    lines = [l for l in code.splitlines() if l.strip() not in ("...", "…")]
+    code = re.sub(r'\.{3,}|…', '', code)                                    # elision marks of the document
+    lines = [l for l in code.splitlines() if not re.match(r'^\s*Examples?\s*\d*\s*:\s*$', l)]
     code = "\n".join(lines)
     top = re.search(r'^\s*(\.visible|\.entry|\.func|\.weak|\.extern|\.version|\.target|\.alias|\.callprototype|\.pragma|\.section|\.file|\.loc|\.branchtargets|\.common|\.global|\.const|\.tex|\.surf|\.sampler)', code, re.M)
     if re.search(r'^\s*(\.visible|\.entry|\.func|\.weak|\.extern|\.version|\.target|\.alias|\.section|\.file|\.common)', code, re.M):
