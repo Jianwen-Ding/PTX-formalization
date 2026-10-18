@@ -2,7 +2,8 @@
 .version 7.0
 .target sm_80
 .address_size 64
-.isacheck ;.visible .entry k()
+.isacheck ;
+.visible .entry k()
 {
     .reg .b32 %r<8>; .reg .b64 %d<4>; .reg .b16 %h<2>; .reg .f32 %f<4>; .reg .pred %p;
     atom.global.min.f32 %f0, [%d0], %f1;

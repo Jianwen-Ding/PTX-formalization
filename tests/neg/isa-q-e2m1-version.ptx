@@ -2,7 +2,8 @@
 .version 8.5
 .target sm_100a
 .address_size 64
-.isacheck ;.visible .entry k()
+.isacheck ;
+.visible .entry k()
 {
     .reg .b32 %r<8>; .reg .b64 %d<4>; .reg .b16 %h<2>; .reg .f32 %f<4>; .reg .pred %p;
     cvt.rn.satfinite.e2m1x2.f32 %h0, %f0, %f1;
