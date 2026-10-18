@@ -109,7 +109,7 @@ Items are numbered in task order (44 onward).  Sources: `docs/coverage.md`, `doc
 - [x] 71 load buffering (relaxed mode)
 - [x] 74 validate against the official PTX memory model (Alloy/herd litmus catalogue), data-race UB check
 - [~] 72 UB detection (misalignment, global/local bounds done; see docs/prior-work.md for what is missing): out-of-bounds, misalignment, uninitialised reads, `.aligned` violations, bad masks
-- [ ] 73 independent thread scheduling: convergence, activemask under divergence, bar.warp.sync, reconvergence
+- [x] 73 independent thread scheduling: activemask under `.convergence its;` (reconvergence points not modelled)
 - [ ] 74 grid level: CTA scheduling fairness, cooperative launch grid sync, streams/multiple kernels, griddepcontrol (PDL), device-side launch
 
 ## Language, linking, legality
