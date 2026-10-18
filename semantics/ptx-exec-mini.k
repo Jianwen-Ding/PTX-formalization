@@ -120,7 +120,7 @@ module PTX-EXEC-MINI
   syntax Bool ::= isMiniX2(Ty) [function, total]
   rule isMiniX2(ty(K, _)) => K in (SetItem("e4m3x2") SetItem("e5m2x2") SetItem("e2m3x2") SetItem("e3m2x2") SetItem("e2m1x2") SetItem("ue5m3x2"))
   syntax String ::= miniKind(Ty) [function, total]
-  rule miniKind(ty(K, _)) => substrString(K, 0, 4)
+  rule miniKind(ty(K, _)) => substrString(K, 0, 4) [owise]
   rule miniKind(ty("ue5m3x2", _)) => "ue5m3"
   // element i (1 = high) of a packed pair, packed result
   syntax Int ::= miniElem(Ty, Int, Int) [function, total]          // container type, bits, i

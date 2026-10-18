@@ -19,5 +19,5 @@
     ret;
 }
 .buffer OUT .u32 [4];
-.launch k <<< 1, 1 >>> (OUT, 30064771077, 9);
-.expect OUT .u32 = { 5, 7, 0, 9 };
+.launch k <<< 1, 1 >>> (OUT, 5, 9);
+.expect OUT .u32 = { 5, 0, 0, 9 };

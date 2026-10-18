@@ -55,7 +55,7 @@ module PTX-EXEC-CORE
 
   // packed 2x16-bit types are handled lane-wise by dedicated rules
   syntax Bool ::= isPacked(Ty) [function, total]
-  rule isPacked(ty(K, _)) => K in (SetItem("s16x2") SetItem("u16x2") SetItem("f16x2") SetItem("bf16x2"))
+  rule isPacked(ty(K, _)) => K in (SetItem("s16x2") SetItem("u16x2") SetItem("f16x2") SetItem("bf16x2") SetItem("f32x2") SetItem("u8x4") SetItem("s8x4"))
 
   syntax Bool ::= isRegName(Name, Ctx) [function, total]
   rule isRegName(N, ctx(_, _, _, _, RW)) => Name2String(N) in_keys(RW)
