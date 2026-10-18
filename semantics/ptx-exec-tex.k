@@ -150,9 +150,13 @@ module PTX-EXEC-TEX
   rule flo(X) => Float2Int(floorFloat(X))
   // weight of the upper texel quantised to 1/256
   syntax Float ::= qw(Float) [function, total]
-  rule qw(Xb) => Int2Float(flo((Xb -Float floorFloat(Xb)) *Float Int2Float(256, WP, WEXP) +Float Int2Float(1, WP, WEXP) /Float Int2Float(2, WP, WEXP)), WP, WEXP) *Float inv256()
+  rule qw(Xb) => Int2Float(flo((Xb -Float floorFloat(Xb)) *Float Int2Float(256, WP, WEXP) +Float half()), WP, WEXP) *Float inv256()
   syntax Float ::= half() [function, total]
-  rule half() => Int2Float(1, WP, WEXP) /Float Int2Float(2, WP, WEXP)
+  rule half() => divD(Int2Float(1, WP, WEXP), Int2Float(2, WP, WEXP))
+  // quotient computed at double precision: mpfr_div at the 4400-bit working precision has been seen to crash or
+  // return wrong values; texture-unit divisions (lod, cube projection) are approximate on hardware anyway
+  syntax Float ::= divD(Float, Float) [function, total]
+  rule divD(A, B) => roundFloat(roundFloat(A, 53, 11) /Float roundFloat(B, 53, 11), WP, WEXP)
   // 1/256 by multiplication: mpfr_div has crashed (SIGFPE in mpfr_divhigh_n) on some 4400-bit operands
   syntax Float ::= inv256() [function, total]
   rule inv256() => half() *Float half() *Float half() *Float half() *Float half() *Float half() *Float half() *Float half()
@@ -207,15 +211,15 @@ module PTX-EXEC-TEX
   syntax Float ::= gradLam(Int, Int, Int, List, List, Float) [function, total]    // blob, norm, rank, dPdx, dPdy, scale divisor
   rule gradLam(B, NM, R, Dx, Dy, Sd) => lamLog(maxF(gLen2(B, NM, R, Dx, 0, Sd), gLen2(B, NM, R, Dy, 0, Sd)))
   syntax Float ::= lamLog(Float) [function, total]
-  rule lamLog(S) => logFloat(S) /Float (Int2Float(2, WP, WEXP) *Float logFloat(Int2Float(2, WP, WEXP))) requires S >Float zF()
+  rule lamLog(S) => divD(logFloat(roundFloat(S, 53, 11)), Int2Float(2, WP, WEXP) *Float logFloat(Int2Float(2, 53, 11))) requires S >Float zF()
   rule lamLog(_) => Int2Float(0 -Int 1000, WP, WEXP) [owise]
   syntax Float ::= gLen2(Int, Int, Int, List, Int, Float) [function, total]
   rule gLen2(B, NM, R, D, I, Sd) => gTerm(nthF(D, I) *Float gScale(B, NM, I, Sd)) +Float gLen2(B, NM, R, D, I +Int 1, Sd) requires I <Int R
   rule gLen2(_, _, _, _, _, _) => zF() [owise]
   syntax Float ::= gTerm(Float) [function, total] | gScale(Int, Int, Int, Float) [function, total]
   rule gTerm(X) => X *Float X
-  rule gScale(B, 1, I, Sd) => Int2Float(txDim(B, I), WP, WEXP) /Float Sd
-  rule gScale(_, _, _, Sd) => Int2Float(1, WP, WEXP) /Float Sd [owise]
+  rule gScale(B, 1, I, Sd) => divD(Int2Float(txDim(B, I), WP, WEXP), Sd)
+  rule gScale(_, _, _, Sd) => divD(Int2Float(1, WP, WEXP), Sd) [owise]
   syntax Float ::= absF(Float) [function, total]
   rule absF(X) => #if X <Float zF() #then zF() -Float X #else X #fi
 
@@ -234,7 +238,7 @@ module PTX-EXEC-TEX
   rule negF(X) => zF() -Float X
   rule cscSel(0, _, Z) => negF(Z)    rule cscSel(1, _, Z) => Z    rule cscSel(5, X, _) => negF(X)    rule cscSel(_, X, _) => X [owise]
   rule ctcSel(2, _, Z) => Z          rule ctcSel(3, _, Z) => negF(Z)    rule ctcSel(_, Y, _) => negF(Y) [owise]
-  rule cubeNorm(S, Ma) => (S /Float Ma +Float oneF()) /Float Int2Float(2, WP, WEXP) requires Ma >Float zF()
+  rule cubeNorm(S, Ma) => (divD(S, Ma) +Float oneF()) *Float half() requires Ma >Float zF()
   rule cubeNorm(_, _) => half() [owise]
 
   // ---------------------------------------------------------------- result conversion and the instruction
