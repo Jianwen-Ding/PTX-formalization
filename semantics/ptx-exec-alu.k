@@ -64,4 +64,15 @@ module PTX-EXEC-ALU
   rule <tk> exec(opc("cvta", M, ListItem(T)), ops(D, A, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, trunc(#if "to" in M #then rd(A, T, C) -Int winBase(spaceOf(M))
                                   #else rd(A, T, C) +Int winBase(spaceOf(M)) #fi, wid(T))) </regs>
+    requires notBool "shared::cluster" in M
+  // shared::cluster addresses are (rank + 1) << 24 | offset (no rank bits: the executing CTA); the generic window of the cluster is at CLBASE
+  rule <tk> exec(opc("cvta", M, ListItem(T)), ops(D, A, .Operands), C) => .K ... </tk>
+       <regs> R => wr(R, D, trunc(#if "to" in M #then clFromGeneric(rd(A, T, C), rreg("%cluster_ctarank", C))
+                                  #else clToGeneric(rd(A, T, C), rreg("%cluster_ctarank", C)) #fi, wid(T))) </regs>
+    requires "shared::cluster" in M
+  syntax Int ::= clToGeneric(Int, Int) [function, total] | clFromGeneric(Int, Int) [function, total]
+  rule clToGeneric(A, Own) => CLBASE +Int ((#if A >>Int 24 ==Int 0 #then Own #else (A >>Int 24) -Int 1 #fi) <<Int 24) +Int (A &Int 16777215)
+  rule clFromGeneric(A, _) => ((((A -Int CLBASE) >>Int 24) +Int 1) <<Int 24) |Int ((A -Int CLBASE) &Int 16777215) requires A >=Int CLBASE
+  rule clFromGeneric(A, Own) => ((Own +Int 1) <<Int 24) |Int (A -Int SHBASE) requires A >=Int SHBASE andBool A <Int LOCBASE
+  rule clFromGeneric(_, _) => 0 [owise]
 endmodule

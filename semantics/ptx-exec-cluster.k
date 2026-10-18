@@ -7,8 +7,9 @@
 // (a plain shared::cta offset) designates the executing CTA, as the shared::cta window is
 // a sub-window of shared::cluster.  mapa builds such addresses, getctarank decodes them.
 // barrier.cluster.arrive/wait use a per-cluster generation counter (cell <clbar>).
-// Not modelled: generic-window cluster addresses (cvta.shared::cluster) and exited threads
-// releasing a cluster barrier.
+// The generic address space carries the whole cluster's shared memory in the window starting at CLBASE (rank r at CLBASE + r * 2^24,
+// see cvta.shared::cluster); the executing CTA's own shared::cta window at SHBASE is a sub-window of it.  A thread that exits is
+// dropped from the cluster barrier, and an access to the shared memory of a CTA that has exited faults (undefined behaviour in the ISA).
 // =============================================================================
 requires "ptx-exec-mem.k"
 
@@ -39,7 +40,7 @@ module PTX-EXEC-CLUSTER
        <cta> <ctaid> TC </ctaid> <smem> M => memNew(OP, M, A &Int 16777215) </smem> ... </cta>
        <gridDim> GD </gridDim> <clusterDim> CD </clusterDim>
     requires A >>Int 24 >Int 0 andBool (A >>Int 24) -Int 1 <Int clSize(CD) andBool TC ==Int clTarget(C, (A >>Int 24) -Int 1, GD, CD) andBool TC =/=Int C
-  rule <tk> #mem(loc("cluster", A), _) => #fault("invalid shared::cluster address", A) ... </tk> [owise]
+  rule <tk> #mem(loc("cluster", A), _) => #fault("shared::cluster access to a CTA that has exited or is not in the cluster", A) ... </tk> [owise]
 
   // mapa.shared::cluster.type d, a, rank ;  getctarank.shared::cluster.type d, a
   rule <tk> exec(opc("mapa", _, ListItem(T)), ops(D, A, R, .Operands), C) => .K ... </tk>
@@ -50,11 +51,21 @@ module PTX-EXEC-CLUSTER
   // ---------------------------------------------------------------- barrier.cluster
   syntax KItem ::= #clWait(Int, Int)
   syntax ClBar ::= clState(Map, Int) [function, total]
-  rule clState(CB, Id) => {CB[Id] orDefault cl(0, 0)}:>ClBar
+  rule clState(CB, Id) => {CB[Id] orDefault cl(0, 0, 0)}:>ClBar
   syntax ClBar ::= clNext(ClBar, Int) [function, total]
-  rule clNext(cl(N, G), T) => #if N +Int 1 ==Int T #then cl(0, G +Int 1) #else cl(N +Int 1, G) #fi
+  rule clNext(cl(N, G, X), T) => #if N +Int 1 >=Int T -Int X #then cl(0, G +Int 1, X) #else cl(N +Int 1, G, X) #fi
   syntax Int ::= clGen(ClBar) [function, total]
-  rule clGen(cl(_, G)) => G
+  rule clGen(cl(_, G, _)) => G
+  // a thread that exits no longer takes part in the barrier: if it had already arrived in the open phase its arrival is withdrawn,
+  // and the phase completes once every remaining thread has arrived
+  syntax ClBar ::= clExit(ClBar, Bool, Int) [function, total]
+  rule clExit(cl(N, G, X), Arrived, T) =>
+       #if (N -Int b2i(Arrived)) >=Int T -Int (X +Int 1) andBool (N -Int b2i(Arrived)) >Int 0
+       #then cl(0, G +Int 1, X +Int 1) #else cl(N -Int b2i(Arrived), G, X +Int 1) #fi
+  rule <tk> #clExit => .K ... </tk>
+       <ctaid> C </ctaid> <gridDim> GD </gridDim> <blockDim> BD </blockDim> <clusterDim> CD </clusterDim>
+       <regs> R </regs>
+       <clbar> CB => CB[clId(C, GD, CD) <- clExit(clState(CB, clId(C, GD, CD)), {R["%%clgen"] orDefault 0}:>Int >Int clGen(clState(CB, clId(C, GD, CD))), clSize(CD) *Int clSize(BD))] </clbar>
   rule <tk> exec(opc("barrier", M, _), ops(.Operands), _) => .K ... </tk>
        <ctaid> C </ctaid> <gridDim> GD </gridDim> <blockDim> BD </blockDim> <clusterDim> CD </clusterDim>
        <clbar> CB => CB[clId(C, GD, CD) <- clNext(clState(CB, clId(C, GD, CD)), clSize(CD) *Int clSize(BD))] </clbar>

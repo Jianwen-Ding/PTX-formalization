@@ -23,7 +23,8 @@ module PTX-EXEC-MEM
   rule ea(N:Name + I:Int, _, C) => symLoc(lookupSym(Name2String(N), C), I) requires notBool isRegName(N, C)
   rule ea(I:Int, S, _)          => mkLoc(S, I)
 
-  rule mkLoc("generic", A) => loc("local", A -Int LOCBASE) requires A >=Int LOCBASE
+  rule mkLoc("generic", A) => loc("cluster", (((A -Int CLBASE) >>Int 24) +Int 1) <<Int 24 |Int ((A -Int CLBASE) &Int 16777215)) requires A >=Int CLBASE
+  rule mkLoc("generic", A) => loc("local", A -Int LOCBASE) requires A >=Int LOCBASE andBool A <Int CLBASE
   rule mkLoc("generic", A) => loc("shared", A -Int SHBASE) requires A >=Int SHBASE andBool A <Int LOCBASE
   rule mkLoc("generic", A) => loc("global", A) requires A <Int SHBASE
   rule mkLoc("const", A) => loc("global", A)

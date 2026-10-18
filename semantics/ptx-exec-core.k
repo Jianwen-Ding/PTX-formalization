@@ -132,7 +132,7 @@ module PTX-EXEC-CORE
        <funcs> ... F |-> fdef(_, _, _, CODE, _, _) ... </funcs>
     requires notBool PC in_keys(CODE) andBool (U ==Int -1 orBool U ==Int uid(C, T))
 
-  syntax KItem ::= "#yield" | "#ret" | "#exit" | "#die"
+  syntax KItem ::= "#yield" | "#ret" | "#exit" | "#die" | "#clExit"
   rule <tk> #yield => .K ... </tk> <turn> _ => -1 </turn>
 
   syntax Bool ::= isBar(String, Set) [function, total]

@@ -56,12 +56,14 @@ module PTX-EXEC-PRED
                                       rd(A, T, C), wid(T)))) </regs>
 
   // isspacep.space p, a : does the generic address a lie in the given state space?
-  syntax Bool ::= inSpace(Set, Int) [function, total]
-  rule inSpace(M, A) => (("global" in M orBool "const" in M orBool "param" in M) andBool A <Int SHBASE)
-                        orBool (("shared" in M orBool "shared::cta" in M orBool "shared::cluster" in M) andBool A >=Int SHBASE andBool A <Int LOCBASE)
-                        orBool ("local" in M andBool A >=Int LOCBASE)
+  syntax Bool ::= inSpace(Set, Int, Int) [function, total]
+  rule inSpace(M, A, Own) => (("global" in M orBool "const" in M orBool "param" in M) andBool A <Int SHBASE)
+                        orBool (("shared" in M orBool "shared::cta" in M) andBool ((A >=Int SHBASE andBool A <Int LOCBASE)
+                                 orBool (A >=Int CLBASE andBool ((A -Int CLBASE) >>Int 24) ==Int Own)))
+                        orBool ("shared::cluster" in M andBool ((A >=Int SHBASE andBool A <Int LOCBASE) orBool A >=Int CLBASE))
+                        orBool ("local" in M andBool A >=Int LOCBASE andBool A <Int CLBASE)
   rule <tk> exec(opc("isspacep", M, _), ops(D, A, .Operands), C) => .K ... </tk>
-       <regs> R => wr(R, D, b2i(inSpace(M, rd(A, ty("u", 64), C)))) </regs>
+       <regs> R => wr(R, D, b2i(inSpace(M, rd(A, ty("u", 64), C), rreg("%cluster_ctarank", C)))) </regs>
   // ldu is ld with a uniformity hint
   rule <tk> exec(opc("ldu", M, T), Os, C) => exec(opc("ld", M, T), Os, C) ... </tk>
 endmodule

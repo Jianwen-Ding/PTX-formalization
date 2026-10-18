@@ -38,7 +38,7 @@ module PTX-CONFIGURATION
 
   // function definition: kind ("entry"/"func"), return params, params,
   // code (pc |-> instruction), labels (label |-> pc), register widths
-  syntax ClBar ::= cl(Int, Int)
+  syntax ClBar ::= cl(Int, Int, Int)
   syntax MbState ::= mb(Int, Int, Int, Int, Int)
   syntax FDef  ::= fdef(String, List, List, Map, Map, Map)
   syntax PDecl ::= pdecl(String, Ty, Int, Int)          // name, type, size, align
@@ -78,7 +78,7 @@ module PTX-CONFIGURATION
       <mbars> .Map </mbars>                   // CTA * 2^32 + shared offset |-> mbarrier object mb(phase, pending, expected, tx-count, layout)
       <fabtab> .Map </fabtab>                 // fabric logical endpoint id |-> mm(size, member device buffers)
       <mmtab> .Map </mmtab>                   // multimem window start |-> mm(size, device buffer addresses)
-      <clbar> .Map </clbar>                   // cluster id |-> cl(arrived threads, generation) for barrier.cluster
+      <clbar> .Map </clbar>                   // cluster id |-> cl(arrived threads, generation, exited threads) for barrier.cluster
       <stop> 0 </stop>
       <launch>
         <kernel> "" </kernel>
@@ -131,9 +131,10 @@ module PTX-CONFIGURATION
   // ------------------------------------------------------------ address map
   // Generic addressing: global addresses are used as-is; shared and local
   // state spaces are mapped into disjoint windows of the generic space.
-  syntax Int ::= "SHBASE"  [macro] | "LOCBASE" [macro] | "DYNSHARED" [macro]
+  syntax Int ::= "SHBASE"  [macro] | "LOCBASE" [macro] | "CLBASE" [macro] | "DYNSHARED" [macro]
   rule SHBASE    => 1099511627776     // 2^40
   rule LOCBASE   => 2199023255552     // 2^41
+  rule CLBASE    => 4398046511104     // 2^42: the generic window of the cluster's shared memory, rank r at CLBASE + r * 2^24
   rule DYNSHARED => 16                // alignment of `.extern .shared` arrays,
                                       // placed after all static shared data
 

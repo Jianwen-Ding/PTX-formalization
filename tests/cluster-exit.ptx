@@ -1,0 +1,27 @@
+// Exited threads leave the cluster barrier: a thread that exits without arriving, or after arriving, no longer holds it up.
+.version 8.6
+.target sm_90
+.address_size 64
+
+.visible .entry k(.param .u64 po) .reqnctapercluster 2, 1, 1
+{
+    .reg .b64 %o, %oo; .reg .b32 %tid, %cta, %idx; .reg .pred %p0, %p1, %p2;
+    ld.param.u64 %o, [po];
+    mov.u32 %tid, %tid.x;
+    mov.u32 %cta, %ctaid.x;
+    setp.ne.u32 %p0, %tid, 0;
+    // CTA 0, thread 1 arrives and exits; CTA 1, thread 1 exits at once
+    setp.eq.u32 %p1, %cta, 0;
+    and.pred %p2, %p0, %p1;
+    @%p2 barrier.cluster.arrive;
+    @%p0 exit;
+    barrier.cluster.arrive;
+    barrier.cluster.wait;
+    mul.wide.u32 %oo, %cta, 4;
+    add.u64 %oo, %oo, %o;
+    st.global.u32 [%oo], 42;
+    ret;
+}
+.buffer O .u32 [2];
+.launch k <<< 2, 2 >>> (O);
+.expect O .u32 = { 42, 42 };

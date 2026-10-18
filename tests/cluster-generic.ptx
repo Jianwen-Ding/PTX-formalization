@@ -1,0 +1,58 @@
+// Generic-window addresses of distributed shared memory: cvta.shared::cluster / cvta.to.shared::cluster, isspacep, and
+// ordinary ld/st through a generic address that designates a peer CTA's shared memory.
+.version 8.6
+.target sm_90
+.address_size 64
+
+.visible .entry k(.param .u64 po) .reqnctapercluster 2, 1, 1
+{
+    .reg .b64 %o, %oo, %b, %a, %g, %back, %own, %sg, %sc; .reg .b32 %rank, %peer, %tid, %v, %w, %rk; .reg .pred %p0, %q;
+    .shared .align 8 .b32 slot[4];
+    ld.param.u64 %o, [po];
+    mov.u32 %tid, %tid.x;
+    mov.u32 %rank, %cluster_ctarank;
+    setp.eq.u32 %p0, %tid, 0;
+    add.u32 %v, %rank, 100;
+    @%p0 st.shared.u32 [slot], %v;
+    barrier.cluster.arrive.release.aligned;
+    barrier.cluster.wait.acquire.aligned;
+    xor.b32 %peer, %rank, 1;
+    mov.u64 %b, slot;
+    mapa.shared::cluster.u64 %a, %b, %peer;
+    cvta.shared::cluster.u64 %g, %a;
+    // load through the generic window: the peer's slot[0]
+    @%p0 ld.u32 %w, [%g];
+    // store through it: the peer's slot[1]
+    add.u32 %v, %rank, 7000;
+    @%p0 st.u32 [%g+4], %v;
+    barrier.cluster.arrive.release.aligned;
+    barrier.cluster.wait.acquire.aligned;
+    ld.shared.u32 %rk, [slot+4];
+    cvta.to.shared::cluster.u64 %back, %g;
+    sub.u64 %back, %back, %a;
+    // spaces: the peer's window is in shared::cluster, not in our shared::cta; our own address is in both
+    isspacep.shared::cluster %q, %g;
+    selp.u32 %v, 1, 0, %q;
+    mov.u32 %rank, %cluster_ctarank;
+    mapa.shared::cluster.u64 %own, %b, %rank;
+    cvta.shared::cluster.u64 %sc, %own;
+    cvta.shared.u64 %sg, %b;
+    isspacep.shared::cta %q, %g;
+    selp.u32 %peer, 1, 0, %q;
+    isspacep.shared::cta %q, %sc;
+    selp.u32 %rk, %rk, 999, %q;
+    mov.u32 %tid, %ctaid.x;
+    mul.wide.u32 %oo, %tid, 32;
+    add.u64 %oo, %oo, %o;
+    mov.u32 %tid, %tid.x;
+    setp.eq.u32 %p0, %tid, 0;
+    @%p0 st.global.u32 [%oo], %w;
+    @%p0 st.global.u32 [%oo+4], %rk;
+    @%p0 st.global.u32 [%oo+8], %back;
+    @%p0 st.global.u32 [%oo+12], %v;
+    @%p0 st.global.u32 [%oo+16], %peer;
+    ret;
+}
+.buffer O .u32 [16];
+.launch k <<< 2, 2 >>> (O);
+.expect O .u32 = { 101, 7001, 0, 1, 0, 0, 0, 0, 100, 7000, 0, 1, 0, 0, 0, 0 };

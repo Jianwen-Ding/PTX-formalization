@@ -78,7 +78,7 @@ module PTX-EXEC-SYNC
     requires {BG[B] orDefault 0}:>Int >Int G
 
   // ------------------------------------------------------------ thread exit
-  rule <tk> #exit => #barCheckAll(keys_list(BC)) ~> #die ... </tk>
+  rule <tk> #exit => #barCheckAll(keys_list(BC)) ~> #clExit ~> #die ... </tk>
        <tid> T </tid>
        <wlive> WL => WL[T /Int 32 <- clearBit({WL[T /Int 32] orDefault 0}:>Int, T %Int 32)] </wlive>
        <live> L => L -Int 1 </live>
