@@ -142,7 +142,7 @@ module PTX-EXEC-FABRIC
   rule <tk> #fbTx(B, N) => #bulkTx(B, N) ... </tk>
   // try_get.async.tensor [dstMem], [tensorMap, leId, off, override, coords], [mbar]
   rule <tk> exec(opc("fabric", M, _), ops([ D:Addr ], [ T:Addr , L:Addr , O:Operand , Ov:Operand , Cs:Operand ], [ B:Addr ], _:Operands), C) =>
-            #tmLd(M, D, tmOvDims(tmOvAddr(tmObj(GM, ea(T, "generic", C)), fbHead(fbBases(F, hAddr(L, C), rd(O, ty("u", 64), C), 0, false))), tmCoords(Ov, C), 0), Cs, B, .Operands, C) ... </tk>
+            #tmLd(M SetItem("bulk"), D, tmOvDims(tmOvAddr(tmObj(GM, ea(T, "generic", C)), fbHead(fbBases(F, hAddr(L, C), rd(O, ty("u", 64), C), 0, false))), tmCoords(Ov, C), 0), Cs, B, .Operands, C) ... </tk>
        <gmem> GM </gmem> <fabtab> F </fabtab>
     requires "try_get" in M andBool "tensor" in M
   // try_put / try_red .async.tensor [tensorMap, leId, off{, counterOff}, override, coords], [src], sizeBytes, [mbar]
@@ -164,6 +164,6 @@ module PTX-EXEC-FABRIC
   rule fbStores(_, _, _, _, _) => .List [owise]
   rule <tk> exec(opc("fabric", M, _), ops(.Operands), _) => .K ... </tk> requires "submit" in M orBool "wait" in M
   syntax Set ::= fbTM(Set) [function, total]
-  rule fbTM(M) => M SetItem("bulk_group") SetItem("reduce") requires "try_red" in M
-  rule fbTM(M) => M SetItem("bulk_group") [owise]
+  rule fbTM(M) => M SetItem("bulk") SetItem("bulk_group") SetItem("reduce") requires "try_red" in M
+  rule fbTM(M) => M SetItem("bulk") SetItem("bulk_group") [owise]
 endmodule
