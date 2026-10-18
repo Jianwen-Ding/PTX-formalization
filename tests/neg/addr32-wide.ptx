@@ -1,0 +1,15 @@
+// expect: address_size 32: 64-bit register
+.version 8.0
+.target sm_90
+.address_size 32
+.visible .entry k(.param .u32 po)
+{
+    .reg .b32 %o; .reg .b64 %w; .reg .b32 %r<4>;
+    ld.param.u32 %o, [po];
+    cvt.u64.u32 %w, %o;
+    mov.u32 %r0, 1;
+    st.global.u32 [%w], %r0;
+}
+
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1 >>> (OUT);

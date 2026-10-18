@@ -17,7 +17,8 @@ module PTX-HARNESS-BASE
   rule <k> .version F      => .K ... </k> <isaver> _ => Float2Int(F *Float 10.0 +Float 0.5) </isaver>
   rule <k> .target Ns      => .K ... </k> <isasm> _ => targetSm(namesL(Ns)) </isasm> <isaarch> _ => targetArch(namesL(Ns)) </isaarch>
   rule <k> .isacheck ; => .K ... </k> <isachk> _ => true </isachk>
-  rule <k> .address_size _ => .K ... </k>
+  rule <k> .address_size 32 => .K ... </k> <syms> S => S["%%asz" <- sym("asz", 32)] </syms>
+  rule <k> .address_size N => .K ... </k> requires N =/=Int 32
   rule <k> .file _ _       => .K ... </k>
   rule <k> .file _ _ , _ , _ => .K ... </k>
   rule <k> (.pragma _:String ;):TopDecl => .K ... </k>

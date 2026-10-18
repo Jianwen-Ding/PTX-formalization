@@ -1,0 +1,22 @@
+// .address_size 32: 32-bit pointers; addresses wrap modulo 2^32 (base + negative offset)
+.version 8.0
+.target sm_90
+.address_size 32
+.visible .entry k(.param .u32 po)
+{
+    .reg .b32 %o, %p, %r<4>;
+    ld.param.u32 %o, [po];
+    mov.u32 %r0, 11;
+    st.global.u32 [%o], %r0;
+    add.u32 %p, %o, 8;
+    mov.u32 %r1, 22;
+    st.global.u32 [%p+-4], %r1;
+    cvta.to.global.u32 %p, %p;
+    mov.u32 %r2, 33;
+    st.global.u32 [%p], %r2;
+    ret;
+}
+
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 11, 22, 33, 0 };

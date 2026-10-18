@@ -12,16 +12,26 @@ module PTX-EXEC-MEM
   syntax Loc ::= ea(Addr, String, Ctx)  [function]
                | mkLoc(String, Int)     [function, total]
                | symLoc(Sym, Int)       [function, total]
-  rule ea(R:Reg, S, C)         => mkLoc(S, rreg(Reg2String(R), C))
-  rule ea(R:Reg I:Int, S, C)   => mkLoc(S, rreg(Reg2String(R), C) +Int I)
-  rule ea(R:Reg + I:Int, S, C) => mkLoc(S, rreg(Reg2String(R), C) +Int I)
-  rule ea(N:Name, S, C)         => mkLoc(S, rreg(Name2String(N), C)) requires isRegName(N, C)
-  rule ea(N:Name I:Int, S, C)   => mkLoc(S, rreg(Name2String(N), C) +Int I) requires isRegName(N, C)
-  rule ea(N:Name + I:Int, S, C) => mkLoc(S, rreg(Name2String(N), C) +Int I) requires isRegName(N, C)
+  rule ea(R:Reg, S, C)         => mkLocA(S, rreg(Reg2String(R), C), Reg2String(R), C)
+  rule ea(R:Reg I:Int, S, C)   => mkLocA(S, rreg(Reg2String(R), C) +Int I, Reg2String(R), C)
+  rule ea(R:Reg + I:Int, S, C) => mkLocA(S, rreg(Reg2String(R), C) +Int I, Reg2String(R), C)
+  rule ea(N:Name, S, C)         => mkLocA(S, rreg(Name2String(N), C), Name2String(N), C) requires isRegName(N, C)
+  rule ea(N:Name I:Int, S, C)   => mkLocA(S, rreg(Name2String(N), C) +Int I, Name2String(N), C) requires isRegName(N, C)
+  rule ea(N:Name + I:Int, S, C) => mkLocA(S, rreg(Name2String(N), C) +Int I, Name2String(N), C) requires isRegName(N, C)
   rule ea(N:Name, _, C)         => symLoc(lookupSym(Name2String(N), C), 0) requires notBool isRegName(N, C)
   rule ea(N:Name I:Int, _, C)   => symLoc(lookupSym(Name2String(N), C), I) requires notBool isRegName(N, C)
   rule ea(N:Name + I:Int, _, C) => symLoc(lookupSym(Name2String(N), C), I) requires notBool isRegName(N, C)
   rule ea(I:Int, S, _)          => mkLoc(S, I)
+
+  // `.address_size 32`: address registers must be 32 bits wide and addresses wrap modulo 2^32
+  syntax Loc ::= mkLocA(String, Int, String, Ctx) [function, total]
+  syntax Bool ::= addr32(Ctx) [function, total]
+  rule addr32(ctx(_, _, S, _, _)) => "%%asz" in_keys(S)
+  rule mkLocA(S, V, _, C) => mkLoc(S, V) requires notBool addr32(C)
+  rule mkLocA(_, _, R, ctx(_, _, S, _, RW)) => badLoc("address_size 32: 64-bit register " +String R +String " used as an address")
+    requires "%%asz" in_keys(S) andBool {RW[R] orDefault 32}:>Int ==Int 64
+  rule mkLocA(S, V, R, ctx(_, _, SY, _, RW)) => mkLoc(S, V modInt 4294967296)
+    requires "%%asz" in_keys(SY) andBool {RW[R] orDefault 32}:>Int =/=Int 64
 
   rule mkLoc("generic", A) => loc("cluster", (((A -Int CLBASE) >>Int 24) +Int 1) <<Int 24 |Int ((A -Int CLBASE) &Int 16777215)) requires A >=Int CLBASE
   rule mkLoc("generic", A) => loc("local", A -Int LOCBASE) requires A >=Int LOCBASE andBool A <Int CLBASE
