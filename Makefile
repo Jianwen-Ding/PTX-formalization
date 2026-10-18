@@ -19,7 +19,7 @@ SOURCES  := $(wildcard semantics/*.k)
 SEEDS    ?= 1 2 3 4 5 6 7 8
 FUZZ_N   ?= 256
 
-.PHONY: build-agx test-agx isa-examples approx all build build-search build-mm memmodel litmus negative test fuzz examples zluda run clean
+.PHONY: properties build-agx test-agx isa-examples approx all build build-search build-mm memmodel litmus negative test fuzz examples zluda run clean
 
 all: build
 
@@ -100,3 +100,7 @@ $(AGX)/timestamp: agx/agx.k semantics/ptx-float.k semantics/ptx-common.k semanti
 	touch $(AGX)/timestamp
 test-agx: build-agx
 	bash scripts/run-agx.sh
+
+# schedule-independence properties of the example programs (exhaustive search with the reduced definition)
+properties: build-mm
+	python3 scripts/properties.py examples/race.ptx examples/race-atomic.ptx examples/reduce-nobarrier.ptx examples/reduce-search.ptx examples/deadlock.ptx examples/collective-mismatch.ptx || true
