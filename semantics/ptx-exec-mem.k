@@ -33,7 +33,8 @@ module PTX-EXEC-MEM
   rule mkLocA(S, V, R, ctx(_, _, SY, _, RW)) => mkLoc(S, V modInt 4294967296)
     requires "%%asz" in_keys(SY) andBool {RW[R] orDefault 32}:>Int =/=Int 64
 
-  rule mkLoc("generic", A) => loc("cluster", (((A -Int CLBASE) >>Int 24) +Int 1) <<Int 24 |Int ((A -Int CLBASE) &Int 16777215)) requires A >=Int CLBASE
+  rule mkLoc("generic", A) => loc("cluster", (((A -Int CLBASE) >>Int 24) +Int 1) <<Int 24 |Int ((A -Int CLBASE) &Int 16777215)) requires A >=Int CLBASE andBool A <Int PARBASE
+  rule mkLoc("generic", A) => loc("param", A -Int PARBASE) requires A >=Int PARBASE
   rule mkLoc("generic", A) => loc("local", A -Int LOCBASE) requires A >=Int LOCBASE andBool A <Int CLBASE
   rule mkLoc("generic", A) => loc("shared", A -Int SHBASE) requires A >=Int SHBASE andBool A <Int LOCBASE
   rule mkLoc("generic", A) => loc("global", A) requires A <Int SHBASE

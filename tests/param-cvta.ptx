@@ -1,0 +1,23 @@
+// kernel parameters seen through cvta.param (generic window), byval aggregate, and direct ld.param
+.version 8.0
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 po, .param .align 8 .b8 st[16], .param .u32 n)
+{
+    .reg .b64 %o, %g, %a; .reg .b32 %x, %y, %z, %w;
+    ld.param.u64 %o, [po];
+    mov.u64 %a, st;
+    cvta.param.u64 %g, %a;
+    ld.u32 %x, [%g];
+    ld.u32 %y, [%g+4];
+    ld.param.u32 %z, [st+8];
+    ld.param.u32 %w, [n];
+    st.global.u32 [%o], %x;
+    st.global.u32 [%o+4], %y;
+    st.global.u32 [%o+8], %z;
+    st.global.u32 [%o+12], %w;
+    ret;
+}
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1 >>> (OUT, 30064771077, 9);
+.expect OUT .u32 = { 5, 7, 0, 9 };

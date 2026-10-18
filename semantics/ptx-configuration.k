@@ -140,9 +140,10 @@ module PTX-CONFIGURATION
   // ------------------------------------------------------------ address map
   // Generic addressing: global addresses are used as-is; shared and local
   // state spaces are mapped into disjoint windows of the generic space.
-  syntax Int ::= "SHBASE"  [macro] | "LOCBASE" [macro] | "CLBASE" [macro] | "DYNSHARED" [macro]
+  syntax Int ::= "SHBASE"  [macro] | "LOCBASE" [macro] | "CLBASE" [macro] | "PARBASE" [macro] | "DYNSHARED" [macro]
   rule SHBASE    => 1099511627776     // 2^40
   rule LOCBASE   => 2199023255552     // 2^41
+  rule PARBASE   => 8796093022208     // 2^43: kernel parameters seen through cvta.param
   rule CLBASE    => 4398046511104     // 2^42: the generic window of the cluster's shared memory, rank r at CLBASE + r * 2^24
   rule DYNSHARED => 16                // alignment of `.extern .shared` arrays,
                                       // placed after all static shared data
@@ -150,6 +151,7 @@ module PTX-CONFIGURATION
   syntax Int ::= winBase(String) [function, total]
   rule winBase("shared") => SHBASE
   rule winBase("local")  => LOCBASE
+  rule winBase("param")  => PARBASE
   rule winBase(_)        => 0 [owise]
 
   syntax Int ::= alignUp(Int, Int) [function, total]

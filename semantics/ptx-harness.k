@@ -171,10 +171,12 @@ module PTX-HARNESS-BASE
   syntax KItem ::= #lcheck(String, Dim3, Dim3, Dim3)
   rule <k> #lcheck(K, GD, BD, CD) => #if lcHw(BD, GD) ==String "" #then #lcheck2(lcErr({PD[K] orDefault .PerfDirs}:>PerfDirs, BD, CD, GD)) #else #fault("cannot launch " +String K +String ": " +String lcHw(BD, GD), 0) #fi ... </k>
        <perfd> PD </perfd>
-  syntax KItem ::= #lcheck2(String)
+  syntax KItem ::= #pcheck(Int) | #lcheck2(String)
+  rule <k> #pcheck(N) => .K ... </k> requires N <=Int 32764
+  rule <k> #pcheck(N) => #fault("kernel parameters of " +String Int2String(N) +String " bytes exceed the 32764-byte limit", N) ... </k> requires N >Int 32764
   rule <k> #lcheck2("") => .K ... </k>
   rule <k> #lcheck2(S) => #fault("cannot launch: " +String S, 0) ... </k> requires S =/=String ""
-  rule <k> #launch(K, GD, BD, As) => #lcheck(K, GD, BD, {CDs[K] orDefault dim3(1, 1, 1)}:>Dim3) ~> #mkCtas(0, resLimit(OCC, vol(GD))) ~> #startGrid ~> #waitGrid ... </k>
+  rule <k> #launch(K, GD, BD, As) => #lcheck(K, GD, BD, {CDs[K] orDefault dim3(1, 1, 1)}:>Dim3) ~> #pcheck(kptop(PS, 0)) ~> #mkCtas(0, resLimit(OCC, vol(GD))) ~> #startGrid ~> #waitGrid ... </k>
        <occ> OCC </occ> <nextcta> _ => 0 </nextcta> <resident> _ => 0 </resident>
        <funcs> ... K |-> fdef("entry", _, PS, _, _, _) ... </funcs>
        <syms> S => fixDyn(S, keys_list(S), alignUp(ST, DYNSHARED)) </syms>
