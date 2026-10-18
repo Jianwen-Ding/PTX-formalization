@@ -499,8 +499,8 @@ module PTX-EXEC-TEX
        <gmem> GM </gmem>
     requires "p" in M
   syntax KItem ::= #sfStoreP(Int, List, List, Set)
-  rule #sfStoreP(B, Xs, Vs, M) => #sfStore(sfAN(B, M, sfNP(B, Vs), sfScaleX(Xs, sfTb(B))),
-                                           ty("b", 8 *Int sfChB(B)), fmtList(sfFmt(B), Vs, sfCh(B)), M)
+  rule <tk> #sfStoreP(B, Xs, Vs, M) => #sfStore(sfAN(B, M, sfNP(B, Vs), sfScaleX(Xs, sfTb(B))),
+                                           ty("b", 8 *Int sfChB(B)), fmtList(sfFmt(B), Vs, sfCh(B)), M) ... </tk>
   syntax Int ::= sfNP(Int, List) [function, total]
   rule sfNP(B, Vs) => minInt(size(Vs), sfCh(B)) *Int sfChB(B)
   // sured.p.op.geom.b32|b64.clamp: the sample offset scales by the data size, signedness follows the surface format
