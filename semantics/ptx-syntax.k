@@ -66,6 +66,7 @@ module PTX-SYNTAX
                    | "[" Addr "," Addr "," Operand "]"    // [tex, smp, {x,y}]
                    | "[" Addr "," Addr "," Operand "," Operand "]"                                   // [tmap, gAddr, {size}, {coords}]  (.override::global_dim)
                    | "[" Addr "," Addr "," Operand "," Operand "," Operand "," Operand "]"           // [tmap, gAddr, {size}, {lower}, upper, {coords}]
+                   | "[" Addr "," Addr "," Operand "," Operand "," Operand "]"                       // [tmap, leId, off, override, {coords}]  (fabric tensor ops)
                    | "{" Operands "}"          // vector operand
                    | "(" Operands ")"          // call argument / return list
                    | "{" Operands "}" "|" Reg     // tex: vector destination with residency predicate
@@ -174,6 +175,7 @@ module PTX-SYNTAX
                       | ".sampler" Name ".attrs" "{" Ints "}" ";"
                       | ".surface" Name Type Name ".dims" "{" Ints "}" ".attrs" "{" Ints "}" ";"
                       | ".multimem" Name ".size" Int "{" Names "}" ";"
+                      | ".fabric" Int ".size" Int "{" Names "}" ";"
                       | ".memmodel" Name ";"
                       | ".isacheck" ";"
                       | ".append" Name Type "=" "{" InitVals "}" ";"            // extend the most recent buffer (keeps text small)

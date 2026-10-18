@@ -91,6 +91,11 @@ module PTX-HARNESS
   rule symAs(Sy, ListItem(N:String) Ns) => ListItem(symA(Sy, N)) symAs(Sy, Ns)
   rule symAs(_, _) => .List [owise]
 
+  // .fabric ID .size N { BUF0, BUF1, ... } ;   logical endpoint ID over per-device buffers (see ptx-exec-fabric.k)
+  rule <k> .fabric I .size S { Bs } ; => .K ... </k>
+       <syms> Sy </syms>
+       <fabtab> T => T[I <- mm(S, symAs(Sy, namesL(Bs)))] </fabtab>
+
   syntax KItem ::= #patch(String, Ty, Int, List) | #appendTo(String, Ty, List)
   // .tensormap TM .f16 BUF .dims { d0, d1, ... } .strides { s1, ... } .box { b0, b1, ... } .swizzle 0 ;
   // builds a 128-byte tensor-map object (our own encoding, see ptx-exec-tma.k) in global memory

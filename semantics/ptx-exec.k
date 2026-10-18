@@ -42,6 +42,7 @@ requires "ptx-exec-tma.k"
 requires "ptx-exec-misc.k"
 requires "ptx-exec-tex.k"
 requires "ptx-exec-mm.k"
+requires "ptx-exec-fabric.k"
 requires "ptx-exec-weak.k"
 requires "ptx-exec-isa.k"
 
@@ -74,6 +75,7 @@ module PTX-EXEC
   imports PTX-EXEC-MISC
   imports PTX-EXEC-TEX
   imports PTX-EXEC-MM
+  imports PTX-EXEC-FABRIC
   imports PTX-EXEC-WEAK
   imports PTX-EXEC-ISA
 
