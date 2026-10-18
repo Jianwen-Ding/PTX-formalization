@@ -242,3 +242,12 @@ Not modelled: the conditional phase / payload report of `.layout::v1` mbarriers 
 ## multimem.ld_reduce / st / red
 * A `.multimem MM .size N { BUF0, BUF1, ... } ;` directive allocates an N-byte window and records the device buffers in `<mmtab>`; an address inside the window denotes the same offset in every buffer.  multimem.st / red run the ordinary st / red on each device location in device order; ld_reduce loads each device's value and folds in device order.
 * Floating-point ld_reduce rounds after every step in the accumulation type (element type by default, `.acc::f32` / `.acc::f16` otherwise); 8-bit floats combine through f16 and round back with saturation.  Order of reduction for non-associative fp ops is our choice (the ISA leaves it open).
+
+## fabric.* (PTX ISA 9.3 / 9.4)
+* `.fabric ID .size N { BUF0, BUF1, ... } ;` defines a logical endpoint (one buffer per member device; the first is the issuing device).  All operations execute atomically at issue and succeed; out-of-range accesses fault (the ISA calls them undefined).  Completion counts follow the ISA (bytes for try_get / try_pullred, 16-byte units otherwise); counted completion adds the byte count to an 8-byte counter at the given offset of the local buffer.
+* try_pullred is warp-collective: lane 0 performs the access.  Tensor forms reuse the cp.async.bulk.tensor machinery with the tensor map's base address overridden by the endpoint memory; `attributeOverrideInfo` is taken as the dimension vector.
+* Report predicates of mbarrier layout::v1 (a failed operation sets the report) are not modelled yet.
+
+## Build performance
+* The LLVM backend's pattern-matching compiler dominated kompile time and memory (a 1.5 GB decision tree).  Rules with a variable opcode (`exec(opc(OP, ...), ...)`) were replicated into every opcode-specific branch; they are now reached through one low-priority dispatcher (`exec` -> `#gx`), which cut the tree to 0.6 GB and the full build from 25-45 minutes (and out-of-memory kills) to about 10 minutes.
+* The Makefile builds in two stages (`kompile --no-llvm-kompile`, then `llvm-kompile`) so the JVM and the LLVM compile never share the sandbox's memory.

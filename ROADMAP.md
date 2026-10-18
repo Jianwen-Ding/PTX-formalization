@@ -98,7 +98,7 @@ Items are numbered in task order (44 onward).  Sources: `docs/coverage.md`, `doc
 - [x] 62 textures: depth compare, tld4 on a2d/cube/acube, offsets, residency predicate, array layer clamping (sampler border colours other than zero not modelled)
 - [x] 63 surfaces: formatted accesses (.p), clamp modes, sured all types, suq
 - [x] 64 multimem.ld_reduce / st / red
-- [ ] 65 fabric.*
+- [x] 65 fabric.*
 - [ ] 66 generic-window cluster addresses (cvta.shared::cluster), exited-thread DSMEM semantics
 
 ## Memory model and execution model

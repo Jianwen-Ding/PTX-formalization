@@ -16,6 +16,7 @@ per-instruction version/target minima are in `semantics/ptx-isa-table.k` (`.isac
 | Matrix | wmma, mma.sync (dense + sparse metadata), ldmatrix/stmatrix/movmatrix, wgmma (dense), tcgen05 (alloc, ld/st, mma, fence/wait/commit) |
 | Async | cp.async (+ groups), cp.async.bulk(.tensor) incl. multicast, TMA tile/gather4 loads, stores and reductions, tensormap.*, st.async/red.async/st.bulk, griddepcontrol, clusterlaunchcontrol |
 | Control | bra/brx.idx/call (direct, indirect, prototypes)/ret/exit, predication, dynamic stack |
+| Fabric | fabric.try_get/put/red/pullred/atom, submit/wait, .async.tensor forms over `.fabric` logical endpoints (always succeed) |
 | Multimem | multimem.ld_reduce / st / red over `.multimem` windows (device buffers), all integer and fp types incl. fp8 and `.acc::` |
 | Textures | tex (.base/.level/.grad, mipmaps, cube/acube, offsets, depth compare, `d\|p`), tld4 (2d/a2d/cube/acube), txq/suld/sust/sured/suq on descriptor objects |
 | Special registers | all of `%tid … %globaltimer`, cluster registers, `%warpid`, `%smid`-style registers |
@@ -23,7 +24,7 @@ per-instruction version/target minima are in `semantics/ptx-isa-table.k` (`.isac
 | Legality | `.version`/`.target` minima for 103 base instructions (`.isacheck ;`) |
 
 ## Not modelled
-* `fabric.*` (needs logical endpoints and mbarrier layout::v1 reporting); `multimem.cp.reduce.async.bulk`.
+* `fabric.*` error reporting (mbarrier layout::v1 payload/report predicate); `multimem.cp.reduce.async.bulk`.
 * Textures: 2dms/a2dms, seam-blended cube filtering, non-zero border colours.
 * `wgmma.mma_async.sp`; tcgen05 `.cta_group::2` for sparse/block-scaled kinds, `.decompress::lut::b`, `kind::ti16`.
 * TMA: interleaved layouts, `im2col` modes, `.override` forms.  (The tensor-map encoding is private to this semantics, not the hardware 128-byte format.)
