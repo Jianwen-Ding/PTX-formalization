@@ -14,5 +14,5 @@
     st.global.u32 [r], %c;
     ret;
 }
-.launch k <<< 1, 1 >>> ();
+.launch k <<< 1, 32 >>> ();
 .expect r .u32 = { 50529027 };

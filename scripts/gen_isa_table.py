@@ -15,7 +15,7 @@ lower bound on the requirements, never stricter than the document).
 import html, itertools, re, sys
 
 s = open(sys.argv[1], encoding="utf8", errors="ignore").read()
-secs = [(m.start(), m.group(1)) for m in re.finditer(r'<section id="([^"]*instructions-[^"]+)">', s)]
+secs = [(m.start(), m.group(1)) for m in re.finditer(r'<section id="([^"]*instructions-[^"]+|tcgen05-[^"]*operations-[^"]+)">', s)]
 txt = lambda x: html.unescape(re.sub(r"<[^>]+>", "", x))
 
 def expand(item):
@@ -102,7 +102,10 @@ for k, (p, sid) in enumerate(secs):
     if a < 0: continue
     if sid.startswith(("mixed-precision", "alternate-floating")): continue   # type-list forms overlap the plain half-precision rows
     sec_family = "half" if sid.startswith("half-precision") else ""
-    parts_ = sid.split("instructions-")[-1].split("-")
+    if sid.startswith("tcgen05-") and "instructions-" not in sid:
+        parts_ = ["tcgen05"] + sid.split("operations-")[-1].split("-")      # tcgen05-special-sync-operations-fence -> tcgen05 + fence
+    else:
+        parts_ = sid.split("instructions-")[-1].split("-")
     sec_op = parts_[0]
     sec_extra = [x for x in parts_[1:] if x not in ("approx",)]      # sections of variants (st-async, cp-async-bulk, ...) apply to instructions carrying these qualifiers
     note = " ".join(t[a:b].split("\n"))
