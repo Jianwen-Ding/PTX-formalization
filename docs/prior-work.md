@@ -238,3 +238,7 @@ Not modelled: the conditional phase / payload report of `.layout::v1` mbarriers 
 * `sust.p`: the lowest coordinate is a sample offset; f32 sources convert with round-to-nearest-even and saturation (UNORM/SNORM), integer sources saturate; source components beyond the surface's channels are ignored, missing components leave memory unchanged (the ISA says "unpredictable").
 * `sured.p`: the sample offset scales by the data size of `.ctype`; `.b32`/`.b64` reduce as unsigned or signed according to the surface format.
 * `suq.array_size` is 0 for non-array surfaces; `channel_data_type`, `channel_order` and `memory_layout` read descriptor words.
+
+## multimem.ld_reduce / st / red
+* A `.multimem MM .size N { BUF0, BUF1, ... } ;` directive allocates an N-byte window and records the device buffers in `<mmtab>`; an address inside the window denotes the same offset in every buffer.  multimem.st / red run the ordinary st / red on each device location in device order; ld_reduce loads each device's value and folds in device order.
+* Floating-point ld_reduce rounds after every step in the accumulation type (element type by default, `.acc::f32` / `.acc::f16` otherwise); 8-bit floats combine through f16 and round back with saturation.  Order of reduction for non-associative fp ops is our choice (the ISA leaves it open).
