@@ -11,6 +11,7 @@
 //
 // Assembly dialect (statements end with ';', labels start with an upper-case letter):
 //     r5 = 32-bit register, r5l / r5h = 16-bit halves, u3 = uniform register; `.discard` / `.cache` hints are accepted and ignored.
+// Labels are written L_name (identifiers made only of capitals collide with K variables in the lexer).
 // Test directives:  .all r3 = 7;  .laneid r4;  .lane 5 r3 = 9;  .uni u2 = 1;  .sr 80 = laneid;  .dev 16 = 0x12345678;  .run;
 //                   .expectall r3 = 7;  .expectlane 5 r3 = 9;  .expectdev 16 = 305419896;  .expectmask Int (exec mask)
 // =============================================================================

@@ -189,6 +189,7 @@ test("shared_reverse", """
   bar.sync 0;
   sub.u32 %r5, 31, %r1; shl.b32 %r5, %r5, 2; add.u32 %r5, %r3, %r5;
   ld.shared.u32 %r6, [%r5];
+  bar.sync 0;
   atom.shared.add.u32 %r7, [buf+8], %r6;
   bar.sync 0;
   ld.shared.u32 %r6, [buf+8];

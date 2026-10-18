@@ -10,11 +10,11 @@ pop_exec 1;
 // loop: each lane counts down from (lane % 4)
 bitop 8 r6, r4, 3;
 mov r7, 0;
-LOOP:;
+L_LOOP:;
 while_icmp ugt r6, 0;
   iadd r7, r7, 1;
   isub r6, r6, 1;
-jmp_exec_any LOOP;
+jmp_exec_any L_LOOP;
 pop_exec 1;
 icmp_ballot ult r8, r4, 8;
 stop;
