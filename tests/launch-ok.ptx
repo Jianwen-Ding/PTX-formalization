@@ -1,0 +1,14 @@
+// launch constraints that hold: .maxntid, .reqntid and a 3-D block
+.version 8.0
+.target sm_90
+.address_size 64
+.global .align 4 .u32 r;
+.visible .entry k() .maxntid 64, 4, 1 .reqntid 32, 2, 1
+{
+    .reg .b32 %t;
+    mov.u32 %t, %ntid.x;
+    st.global.u32 [r], %t;
+    ret;
+}
+.launch k <<< 2, (32, 2) >>> ();
+.expect r .u32 = { 32 };

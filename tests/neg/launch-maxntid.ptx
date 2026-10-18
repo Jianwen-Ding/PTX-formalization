@@ -1,0 +1,6 @@
+// expect: exceeds the kernel's .maxntid
+.version 8.0
+.target sm_90
+.address_size 64
+.visible .entry k() .maxntid 64 { ret; }
+.launch k <<< 1, 128 >>> ();

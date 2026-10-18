@@ -1,0 +1,16 @@
+// expect: too few arguments
+.version 8.0
+.target sm_90
+.address_size 64
+.visible .func (.param .b32 r) f(.param .b32 a, .param .b32 b) { ret; }
+.visible .entry k()
+{
+    .reg .b32 %v;
+    {
+      .param .b32 pa; .param .b32 pr;
+      st.param.b32 [pa], 1;
+      call (pr), f, (pa);
+    }
+    ret;
+}
+.launch k <<< 1, 1 >>> ();

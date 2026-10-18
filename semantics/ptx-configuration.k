@@ -74,6 +74,8 @@ module PTX-CONFIGURATION
       <clusterDims> .Map </clusterDims>       // kernel |-> .reqnctapercluster
       <its> false </its>                      // independent-thread-scheduling activemask (`.convergence its;`, ptx-exec-warp.k)
       <occ> 0 </occ> <nextcta> 0 </nextcta> <resident> 0 </resident>   // CTA scheduling: resident-CTA limit (0 = all), next CTA to start, resident CTAs
+      <linkd> .Map </linkd>                   // linking: symbol (variables, "func:" + name) |-> 0 strong / 1 weak or common definition (ptx-harness.k)
+      <perfd> .Map </perfd>                   // kernel |-> its performance-tuning directives (.maxntid, .reqntid, ...)
       <ub> false </ub>                        // strict undefined-behaviour checking (`.ub strict;`, ptx-exec-mem.k)
       <mm> "sc" </mm>                         // memory model: "sc" (default) or "relaxed" (store buffers, ptx-exec-weak.k)
       <isaver> 0 </isaver> <isasm> 0 </isasm> <isaarch> "" </isaarch> <isachk> false </isachk>   // .version x10, .target sm number/suffix, legality checking (ptx-exec-isa.k)

@@ -28,9 +28,22 @@ module PTX-HARNESS-BASE
        <funcs> F => F[Name2String(A) <- {F[Name2String(B)]}:>FDef] </funcs>
     requires Name2String(B) in_keys(F)
 
+  // linking: a symbol has one strong definition; weak and common definitions yield to a strong one and the first of them wins
+  syntax Int ::= lkKind(Set) [function, total] | lkAct(String, Int, Map) [function, total]
+  rule lkKind(S) => 1 requires "weak" in S orBool "common" in S
+  rule lkKind(S) => 0 requires notBool ("weak" in S orBool "common" in S)
+  rule lkAct(N, _, LD) => 0 requires notBool N in_keys(LD)                            // first definition: take it
+  rule lkAct(N, K, LD) => 2 requires N in_keys(LD) andBool K ==Int 0 andBool {LD[N]}:>Int ==Int 0   // two strong definitions
+  rule lkAct(N, K, LD) => 0 requires N in_keys(LD) andBool K ==Int 0 andBool {LD[N]}:>Int ==Int 1   // strong replaces weak
+  rule lkAct(N, K, LD) => 1 requires N in_keys(LD) andBool K ==Int 1                       // weak yields
+  rule <k> A:DAttrs H:FuncHead P:PerfDirs { Ss:Stmts } => .K ... </k>
+       <linkd> LD </linkd> requires lkAct("func:" +String fname(H), lkKind(aset(A)), LD) ==Int 1
+  rule <k> A:DAttrs H:FuncHead P:PerfDirs { Ss:Stmts } => #fault("multiple definition of function " +String fname(H), 0) ... </k>
+       <linkd> LD </linkd> requires lkAct("func:" +String fname(H), lkKind(aset(A)), LD) ==Int 2
   rule <k> A:DAttrs H:FuncHead P:PerfDirs { Ss:Stmts } =>
            #addFunc(fname(H), fkind(H), frets(H), fparams(H), pp(Ss, pps(.Map, 0, .Map, fmarks(frets(H) fparams(H)), .List))) ... </k>
-       <clusterDims> CDs => CDs[fname(H) <- clusterOf(P)] </clusterDims>
+       <linkd> LD => LD["func:" +String fname(H) <- lkKind(aset(A))] </linkd>
+       <clusterDims> CDs => CDs[fname(H) <- clusterOf(P)] </clusterDims> <perfd> PD => PD[fname(H) <- P] </perfd>
     requires notBool "extern" in aset(A)
   syntax Dim3 ::= clusterOf(PerfDirs) [function, total]
   rule clusterOf(.reqnctapercluster X:Int , Y:Int , Z:Int _:PerfDirs) => dim3(X, Y, Z)
@@ -48,9 +61,24 @@ module PTX-HARNESS-BASE
        <faddrs> FA => #if F in_keys(S) #then FA #else FA[536870912 +Int 64 *Int size(FA) <- F] #fi </faddrs>
 
   rule <k> A1:DAttrs T:Type A2:DAttrs Is:DItems ; =>
-           #static(sdecls(aset(A1) |Set aset(A2), alignOr(A1, A2, typeOf(T)), typeOf(T), itemsL(Is), .List)) ... </k>
+           #link(aset(A1) |Set aset(A2), sdecls(aset(A1) |Set aset(A2), alignOr(A1, A2, typeOf(T)), typeOf(T), itemsL(Is), .List), .List) ... </k>
   rule <k> A1:DAttrs T:Type A2:DAttrs Is:DItems = I:InitVal ; =>
-           #static(sdecls(aset(A1) |Set aset(A2), alignOr(A1, A2, typeOf(T)), typeOf(T), itemsL(Is), initOf(I))) ... </k>
+           #link(aset(A1) |Set aset(A2), sdecls(aset(A1) |Set aset(A2), alignOr(A1, A2, typeOf(T)), typeOf(T), itemsL(Is), initOf(I)), .List) ... </k>
+
+  // module-scope global/const definitions go through the linker; declarations (.extern) and other spaces pass
+  syntax KItem ::= #link(Set, List, List)
+  rule <k> #link(_, .List, Acc) => #static(Acc) ... </k>
+  rule <k> #link(A, ListItem(sdecl(SP, N, T, SZ, AL, E, I)) L, Acc) => #link(A, L, Acc ListItem(sdecl(SP, N, T, SZ, AL, E, I))) ... </k>
+    requires E orBool notBool (SP ==String "global" orBool SP ==String "const")
+  rule <k> #link(A, ListItem(sdecl(SP, N, T, SZ, AL, false, I)) L, Acc) => #link(A, L, Acc ListItem(sdecl(SP, N, T, SZ, AL, false, I))) ... </k>
+       <linkd> LD => LD[N <- lkKind(A)] </linkd>
+    requires (SP ==String "global" orBool SP ==String "const") andBool lkAct(N, lkKind(A), LD) ==Int 0
+  rule <k> #link(A, ListItem(sdecl(SP, N, _, _, _, false, _)) L, Acc) => #link(A, L, Acc) ... </k>
+       <linkd> LD </linkd>
+    requires (SP ==String "global" orBool SP ==String "const") andBool lkAct(N, lkKind(A), LD) ==Int 1
+  rule <k> #link(A, ListItem(sdecl(SP, N, _, _, _, false, _)) _, _) => #fault("multiple definition of " +String N, 0) ... </k>
+       <linkd> LD </linkd>
+    requires (SP ==String "global" orBool SP ==String "const") andBool lkAct(N, lkKind(A), LD) ==Int 2
 
   rule <k> #static(.List) => .K ... </k>
   // `.extern .shared` arrays: dynamically sized, placed after static shared data at launch
@@ -120,7 +148,33 @@ module PTX-HARNESS-BASE
   // it is released
   syntax KItem ::= "#startGrid"
   rule <k> #startGrid => .K ... </k> <turn> _ => -1 </turn>
-  rule <k> #launch(K, GD, BD, As) => #mkCtas(0, resLimit(OCC, vol(GD))) ~> #startGrid ~> #waitGrid ... </k>
+  // launch limits (the hardware's and the kernel's .maxntid / .reqntid / .maxclusterrank)
+  syntax String ::= lcErr(PerfDirs, Dim3, Dim3, Dim3) [function, total] | lcHw(Dim3, Dim3) [function, total]
+  syntax Bool ::= dimLe(Dim3, List) [function, total] | dimEq(Dim3, List) [function, total]
+  rule lcHw(dim3(X, Y, Z), dim3(GX, GY, GZ)) => "block dimensions exceed 1024 x 1024 x 64 or 1024 threads" requires X >Int 1024 orBool Y >Int 1024 orBool Z >Int 64 orBool X *Int Y *Int Z >Int 1024
+  rule lcHw(dim3(X, Y, Z), dim3(GX, GY, GZ)) => "grid dimensions exceed 2^31-1 x 65535 x 65535" requires GX >Int 2147483647 orBool GY >Int 65535 orBool GZ >Int 65535
+  rule lcHw(dim3(X, Y, Z), dim3(GX, GY, GZ)) => "empty block or grid" requires X <=Int 0 orBool Y <=Int 0 orBool Z <=Int 0 orBool GX <=Int 0 orBool GY <=Int 0 orBool GZ <=Int 0
+  rule lcHw(_, _) => "" [owise]
+  rule dimLe(dim3(X, Y, Z), ListItem(A:Int) ListItem(B:Int) ListItem(C:Int)) => X <=Int A andBool Y <=Int B andBool Z <=Int C
+  rule dimLe(dim3(X, Y, Z), ListItem(A:Int) ListItem(B:Int)) => X <=Int A andBool Y <=Int B andBool Z ==Int 1
+  rule dimLe(dim3(X, Y, Z), ListItem(A:Int)) => X <=Int A andBool Y ==Int 1 andBool Z ==Int 1
+  rule dimLe(_, _) => true [owise]
+  rule dimEq(dim3(X, Y, Z), ListItem(A:Int) ListItem(B:Int) ListItem(C:Int)) => X ==Int A andBool Y ==Int B andBool Z ==Int C
+  rule dimEq(dim3(X, Y, Z), ListItem(A:Int) ListItem(B:Int)) => X ==Int A andBool Y ==Int B andBool Z ==Int 1
+  rule dimEq(dim3(X, Y, Z), ListItem(A:Int)) => X ==Int A andBool Y ==Int 1 andBool Z ==Int 1
+  rule dimEq(_, _) => true [owise]
+  rule lcErr(.PerfDirs, _, _, _) => ""
+  rule lcErr(.maxntid Is:Ints P:PerfDirs, BD, CD, GD) => "launch exceeds the kernel's .maxntid" requires notBool dimLe(BD, intsL(Is))
+  rule lcErr(.reqntid Is:Ints P:PerfDirs, BD, CD, GD) => "launch does not match the kernel's .reqntid" requires notBool dimEq(BD, intsL(Is))
+  rule lcErr(.maxclusterrank N:Int P:PerfDirs, BD, dim3(CX, CY, CZ), GD) => "cluster larger than the kernel's .maxclusterrank" requires CX *Int CY *Int CZ >Int N
+  rule lcErr(_:PerfDir P:PerfDirs, BD, CD, GD) => lcErr(P, BD, CD, GD) [owise]
+  syntax KItem ::= #lcheck(String, Dim3, Dim3, Dim3)
+  rule <k> #lcheck(K, GD, BD, CD) => #if lcHw(BD, GD) ==String "" #then #lcheck2(lcErr({PD[K] orDefault .PerfDirs}:>PerfDirs, BD, CD, GD)) #else #fault("cannot launch " +String K +String ": " +String lcHw(BD, GD), 0) #fi ... </k>
+       <perfd> PD </perfd>
+  syntax KItem ::= #lcheck2(String)
+  rule <k> #lcheck2("") => .K ... </k>
+  rule <k> #lcheck2(S) => #fault("cannot launch: " +String S, 0) ... </k> requires S =/=String ""
+  rule <k> #launch(K, GD, BD, As) => #lcheck(K, GD, BD, {CDs[K] orDefault dim3(1, 1, 1)}:>Dim3) ~> #mkCtas(0, resLimit(OCC, vol(GD))) ~> #startGrid ~> #waitGrid ... </k>
        <occ> OCC </occ> <nextcta> _ => 0 </nextcta> <resident> _ => 0 </resident>
        <funcs> ... K |-> fdef("entry", _, PS, _, _, _) ... </funcs>
        <syms> S => fixDyn(S, keys_list(S), alignUp(ST, DYNSHARED)) </syms>

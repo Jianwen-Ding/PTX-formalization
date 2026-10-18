@@ -1,0 +1,36 @@
+// linking: the first weak definition wins; a later strong definition replaces a weak one; an extern declaration resolves to the definition
+.version 8.0
+.target sm_90
+.address_size 64
+.extern .global .u32 a;
+.weak .global .u32 a = 1;
+.weak .global .u32 a = 2;
+.weak .global .u32 b = 3;
+.visible .global .u32 b = 4;
+.visible .global .u32 c = 5;
+.weak .global .u32 c = 6;
+.weak .func (.param .b32 r) g(.param .b32 p) { .reg .b32 %v; mov.u32 %v, 10; st.param.b32 [r], %v; ret; }
+.weak .func (.param .b32 r) g(.param .b32 p) { .reg .b32 %v; mov.u32 %v, 20; st.param.b32 [r], %v; ret; }
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %x, %y, %z, %w;
+    ld.param.u64 %o, [po];
+    ld.global.u32 %x, [a];
+    ld.global.u32 %y, [b];
+    ld.global.u32 %z, [c];
+    {
+      .param .b32 pa; .param .b32 pr;
+      st.param.b32 [pa], 0;
+      call (pr), g, (pa);
+      ld.param.b32 %w, [pr];
+    }
+    st.global.u32 [%o], %x;
+    st.global.u32 [%o+4], %y;
+    st.global.u32 [%o+8], %z;
+    st.global.u32 [%o+12], %w;
+    ret;
+}
+
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 1, 4, 5, 10 };

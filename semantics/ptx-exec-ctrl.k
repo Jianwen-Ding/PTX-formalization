@@ -72,6 +72,8 @@ module PTX-EXEC-CTRL
        <pmem> PM => writeBytes(PM, alignUp(PT, AL), SZ, rd(V, T, C)) </pmem>
        <ptop> PT => alignUp(PT, AL) +Int SZ </ptop>
     requires notBool isName(V) andBool AL >=Int 0
+  rule <tk> #bindArgs(.List, ListItem(_) _, _, _, F, _) => #fault("call to " +String F +String ": too many arguments", 0) ... </tk>
+  rule <tk> #bindArgs(ListItem(_) _, .List, _, _, F, _) => #fault("call to " +String F +String ": too few arguments", 0) ... </tk>
   rule <tk> #bindArgs(.List, .List, C, E, F, RS) => #bindRets(RPS, RS, C, E, F) ... </tk>
        <funcs> ... F |-> fdef(_, RPS, _, _, _, _) ... </funcs>
   rule <tk> #bindRets(ListItem(pdecl(P, _, _, AL)) RPS, ListItem(D:Operand) RS, C, E, F) =>
