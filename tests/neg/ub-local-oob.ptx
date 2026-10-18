@@ -1,0 +1,17 @@
+// expect: above the stack top
+.version 8.0
+.target sm_90
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %p; .reg .b32 %r<4>;
+    ld.param.u64 %o, [po];
+    .local .align 4 .b8 buf[8];
+    mov.u64 %p, buf;
+    add.u64 %p, %p, 8;
+    ld.local.u32 %r0, [%p];
+}
+
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1 >>> (OUT);

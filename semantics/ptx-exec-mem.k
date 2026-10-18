@@ -80,6 +80,24 @@ module PTX-EXEC-MEM
        <pmem> M => memNew(OP, M, A) </pmem>
     requires A >=Int 0
   rule <tk> #mem(badLoc(S), _) => #fault(S, 0) ... </tk>
+  // strict undefined-behaviour mode (`.ub strict;`): a naturally misaligned access, an access outside the allocated global
+  // data (below the first symbol or beyond the allocation top) and an access above the thread's stack top are errors
+  syntax Int ::= memBytes(MemOp) [function, total]
+  rule memBytes(rdOp(N)) => N
+  rule memBytes(wrOp(N, _)) => N
+  rule memBytes(wrRelOp(N, _)) => N
+  rule memBytes(atOp(_, T, _, _)) => bytes(T)
+  rule memBytes(_) => 0 [owise]
+  rule <tk> #mem(loc(S, A), OP) => #fault("misaligned " +String S +String " access of " +String Int2String(memBytes(OP)) +String " bytes", A) ... </tk>
+       <ub> true </ub>
+    requires (memBytes(OP) ==Int 2 orBool memBytes(OP) ==Int 4 orBool memBytes(OP) ==Int 8 orBool memBytes(OP) ==Int 16)
+     andBool A %Int memBytes(OP) =/=Int 0 [priority(20)]
+  rule <tk> #mem(loc("global", A), OP) => #fault("global access outside the allocated data", A) ... </tk>
+       <ub> true </ub> <gtop> G </gtop>
+    requires memBytes(OP) >Int 0 andBool (A <Int 4096 orBool A +Int memBytes(OP) >Int G) [priority(20)]
+  rule <tk> #mem(loc("local", A), OP) => #fault("local access above the stack top", A) ... </tk>
+       <ub> true </ub> <ltop> LT </ltop>
+    requires memBytes(OP) >Int 0 andBool A +Int memBytes(OP) >Int LT [priority(20)]
   rule <tk> #mem(loc(S, A), _) => #fault("invalid " +String S +String " address", A) ... </tk> [owise]
 
   // write-back of a loaded value; sub-word signed loads sign-extend to the

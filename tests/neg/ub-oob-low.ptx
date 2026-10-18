@@ -1,0 +1,15 @@
+// expect: outside the allocated data
+.version 8.0
+.target sm_90
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %p; .reg .b32 %r<4>;
+    ld.param.u64 %o, [po];
+    mov.u64 %p, 64;
+    ld.global.u32 %r0, [%p];
+}
+
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1 >>> (OUT);

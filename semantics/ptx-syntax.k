@@ -177,6 +177,7 @@ module PTX-SYNTAX
                       | ".multimem" Name ".size" Int "{" Names "}" ";"
                       | ".fabric" Int ".size" Int "{" Names "}" ";"
                       | ".memmodel" Name ";"
+                      | ".ub" Name ";"
                       | ".isacheck" ";"
                       | ".append" Name Type "=" "{" InitVals "}" ";"            // extend the most recent buffer (keeps text small)
 
