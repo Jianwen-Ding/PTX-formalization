@@ -1,0 +1,22 @@
+// Independent thread scheduling: lane 0 may see an activemask of 1 (only itself) or of all four lanes, depending on the schedule.
+// Exit code 0 = lane 0 saw only itself.     krun -d build/ptx-mm-kompiled examples/its-activemask.ptx --search --pattern '<exit-code> X:Int </exit-code>'
+.version 8.0
+.target sm_90
+.address_size 64
+.convergence its ;
+.global .align 4 .u32 m0;
+
+.visible .entry k()
+{
+    .reg .b32 %t, %m; .reg .pred %p;
+    mov.u32 %t, %tid.x;
+    activemask.b32 %m;
+    setp.ne.u32 %p, %t, 0;
+    @%p ret;
+    st.global.u32 [m0], %m;
+    ret;
+}
+
+.memmodel relaxed ;
+.launch k <<< 1, 4 >>> ();
+.expect m0 .u32 = { 1 };

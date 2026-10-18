@@ -26,4 +26,5 @@ check litmus-cpasync     0,1     # the copy has not completed yet: stale value r
 check litmus-cpasync-wait 0       # wait_group: the new value is always seen (.expect = 7 holds in every run)
 check litmus-proxy-async  0,1    # no proxy fence: the bulk copy may read the stale value
 check litmus-proxy-async-fence 0 # fence.proxy.async: always the new value
+check its-activemask 0,1         # lane 0 may or may not see the other lanes
 exit $fail

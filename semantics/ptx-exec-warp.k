@@ -150,6 +150,22 @@ module PTX-EXEC-WARP
     requires Op in (SetItem("redux.add") SetItem("redux.min") SetItem("redux.max") SetItem("redux.and") SetItem("redux.or") SetItem("redux.xor"))
 
   // ---------------------------------------------------------------- activemask
+  // `.convergence its;`: independent thread scheduling.  The lanes of a warp are not assumed to be converged: activemask
+  // returns the lanes that have executed this same instruction (same function and pc, same visit count) up to now,
+  // the executing lane included.  Over all schedules (krun --search) every prefix of the arrival order is observable.
+  syntax Int ::= arrMask(Set) [function, total]
+  rule arrMask(SetItem(L:Int) S) => (1 <<Int L) |Int arrMask(S)
+  rule arrMask(.Set) => 0
+  syntax String ::= actSite(String, Int) [function, total]
+  rule actSite(F, PC) => "act@" +String F +String ":" +String Int2String(PC)
+  syntax Map ::= itsArr(Map, Int, String, Int, Map) [function, total]      // arrivals so far, plus this lane
+  rule itsArr(Cs, T, S, _, CS) => arrivals(Cs, mkKey(T, S, 0, CS))[T %Int 32 <- 0]
+  rule <tk> exec(opc("activemask", _, _), ops(D, .Operands), _) => .K ... </tk>
+       <its> true </its> <tid> T </tid> <fn> F </fn> <pc> PC </pc>
+       <regs> R => wr(R, D, arrMask(keys(itsArr(Cs, T, actSite(F, PC), 0, CS)))) </regs>
+       <cseq> CS => CS[seqKey(actSite(F, PC), 0) <- {CS[seqKey(actSite(F, PC), 0)] orDefault 0}:>Int +Int 1] </cseq>
+       <colls> Cs => Cs[mkKey(T, actSite(F, PC), 0, CS) <- coll("act", .List, 0, itsArr(Cs, T, actSite(F, PC), 0, CS), .Map, 0)] </colls>
+    [priority(40)]
   rule <tk> exec(opc("activemask", _, _), ops(D, .Operands), _) => .K ... </tk>
        <tid> T </tid>
        <wlive> WL </wlive>

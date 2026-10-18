@@ -81,6 +81,7 @@ module PTX-HARNESS-BASE
   rule intsL(X:Int , Xs:Ints) => ListItem(X) intsL(Xs)
   rule intsL(X:Int) => ListItem(X)
   rule intsL(.Ints) => .List
+  rule <k> .convergence N ; => .K ... </k> <its> _ => Name2String(N) ==String "its" </its>
   rule <k> .ub N ; => .K ... </k> <ub> _ => Name2String(N) ==String "strict" </ub>
   rule <k> .memmodel N ; => .K ... </k> <mm> _ => Name2String(N) </mm>
   rule <k> .patch N T @ O = { Vs } ; => #patch(Name2String(N), typeOf(T), O, ivList(Vs)) ... </k>

@@ -72,6 +72,7 @@ module PTX-CONFIGURATION
       <gtop> 4096 </gtop>
       <turn> -2 </turn>
       <clusterDims> .Map </clusterDims>       // kernel |-> .reqnctapercluster
+      <its> false </its>                      // independent-thread-scheduling activemask (`.convergence its;`, ptx-exec-warp.k)
       <ub> false </ub>                        // strict undefined-behaviour checking (`.ub strict;`, ptx-exec-mem.k)
       <mm> "sc" </mm>                         // memory model: "sc" (default) or "relaxed" (store buffers, ptx-exec-weak.k)
       <isaver> 0 </isaver> <isasm> 0 </isasm> <isaarch> "" </isaarch> <isachk> false </isachk>   // .version x10, .target sm number/suffix, legality checking (ptx-exec-isa.k)
