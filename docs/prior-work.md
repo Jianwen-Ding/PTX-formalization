@@ -219,3 +219,9 @@ format `tcgen05.mma` kinds f8f6f4 / mxf8f6f4 read; stores of `.b6p2x16` are not 
 signal for destination CTA d goes to the CTA of d's pair whose rank parity equals that of the CTA holding `mbar` (so one barrier of the pair collects the bytes of both halves).
 `cp.reduce.async.bulk.tensor` reduces element-wise (atomically per element) for the full table of the ISA: add (u32 s32 u64 f32 f16 bf16), min / max (u32 s32 u64 s64 f16 bf16),
 inc / dec (u32), and / or / xor (b32 b64), in tile, `.im2col_no_offs` and `.im2col_no_offs::w` modes.  `prefetch.tensor` is a no-op.  Tests: `scripts/gen_tma_red.py`.
+
+## mbarrier .multicast::cluster::32b (PTX ISA 9.4)
+
+`mbarrier.expect_tx`, `mbarrier.complete_tx`, `mbarrier.arrive` and `mbarrier.arrive.expect_tx` with `.multicast::cluster::32b` apply the operation to the mbarrier at the same
+CTA-relative offset in every CTA whose rank bit is set in the 32-bit `ctaMask` (arrive: optional count, then the mask).  Test: `scripts/gen_mbar_mc.py`.
+Not modelled: the conditional phase / payload report of `.layout::v1` mbarriers (`report-on`) used by `.mbarrier::report::*` of the async copies and by fabric operations.

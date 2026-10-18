@@ -12,7 +12,7 @@
 // as its `state`; test_wait/try_wait with state compare against that phase, with .parity
 // against the current phase's parity.  try_wait blocks until the phase completes.
 // Remote operations on shared::cluster addresses use the DSMEM addressing of ptx-exec-cluster.k.
-// Not modelled: .multicast::cluster::32b.
+// .multicast::cluster::32b (expect_tx / complete_tx / arrive{.expect_tx}) applies the operation to the mbarrier at the same CTA-relative offset in every CTA of the 32-bit ctaMask.
 // =============================================================================
 requires "ptx-exec-cluster.k"
 requires "ptx-exec-warp.k"
@@ -64,7 +64,7 @@ module PTX-EXEC-MBAR
        <mbars> MB => MB[mbKey(ea(A, spaceOf(M), C), CT, GD, CD) <- mbTx(mbGet(MB, mbKey(ea(A, spaceOf(M), C), CT, GD, CD)),
                           #if "complete_tx" in M #then 0 -Int rd(N, ty("u", 32), C) #else rd(N, ty("u", 32), C) #fi)] </mbars>
     requires ("expect_tx" in M orBool "complete_tx" in M) andBool notBool "arrive" in M andBool notBool "arrive_drop" in M
-             andBool mbKey(ea(A, spaceOf(M), C), CT, GD, CD) in_keys(MB)
+             andBool mbKey(ea(A, spaceOf(M), C), CT, GD, CD) in_keys(MB) andBool notBool "multicast::cluster::32b" in M
 
   // arrive / arrive_drop [.expect_tx]  state|_ , [addr] {, count | txCount}
   rule <tk> exec(opc("mbarrier", M, _), ops(D, [ A ], Rest:Operands), C) => .K ... </tk>
@@ -74,13 +74,45 @@ module PTX-EXEC-MBAR
             #then mbDrop(mbTx(mbGet(MB, mbKey(ea(A, spaceOf(M), C), CT, GD, CD)), mbTxArg(M, opsList(Rest), C)), mbCountArg(M, opsList(Rest), C))
             #else mbArrive(mbTx(mbGet(MB, mbKey(ea(A, spaceOf(M), C), CT, GD, CD)), mbTxArg(M, opsList(Rest), C)), mbCountArg(M, opsList(Rest), C)) #fi] </mbars>
        <regs> R => wr(R, D, mbState(mbGet(MB, mbKey(ea(A, spaceOf(M), C), CT, GD, CD)))) </regs>
-    requires ("arrive" in M orBool "arrive_drop" in M) andBool mbKey(ea(A, spaceOf(M), C), CT, GD, CD) in_keys(MB)
+    requires ("arrive" in M orBool "arrive_drop" in M) andBool mbKey(ea(A, spaceOf(M), C), CT, GD, CD) in_keys(MB) andBool notBool "multicast::cluster::32b" in M
   syntax Int ::= mbTxArg(Set, List, Ctx) [function, total] | mbCountArg(Set, List, Ctx) [function, total]
   rule mbTxArg(M, L, C) => rd({L[0]}:>Operand, ty("u", 32), C) requires "expect_tx" in M andBool size(L) >Int 0
   rule mbTxArg(_, _, _) => 0 [owise]
   rule mbCountArg(M, _, _) => 1 requires "expect_tx" in M
   rule mbCountArg(M, L, C) => rd({L[0]}:>Operand, ty("u", 32), C) requires notBool "expect_tx" in M andBool size(L) >Int 0
   rule mbCountArg(_, _, _) => 1 [owise]
+
+  // .multicast::cluster::32b
+  syntax List ::= mbMcKeys(Int, Int, Int, Int, Dim3, Dim3) [function, total]      // offset, mask, rank, own CTA, grid, cluster
+  rule mbMcKeys(Off, Mk, R, CT, GD, CD) =>
+       #if (Mk >>Int R) &Int 1 ==Int 1 #then ListItem(mbKey(loc("cluster", ((R +Int 1) <<Int 24) |Int Off), CT, GD, CD)) #else .List #fi mbMcKeys(Off, Mk, R +Int 1, CT, GD, CD)
+    requires R <Int 32 andBool (Mk >>Int R) >Int 0
+  rule mbMcKeys(_, _, _, _, _, _) => .List [owise]
+  syntax Map ::= mbTxKeys(Map, List, Int) [function, total]                       // tx-count += n at every key that exists
+  rule mbTxKeys(MB, ListItem(K:Int) Ks, N) => mbTxKeys(#if K in_keys(MB) #then MB[K <- mbTx(mbGet(MB, K), N)] #else MB #fi, Ks, N)
+  rule mbTxKeys(MB, _, _) => MB [owise]
+  syntax Map ::= mbArrKeys(Map, List, Int, Int) [function, total]                  // expect-tx then arrive (count)
+  rule mbArrKeys(MB, ListItem(K:Int) Ks, Tx, N) => mbArrKeys(#if K in_keys(MB) #then MB[K <- mbArrive(mbTx(mbGet(MB, K), Tx), N)] #else MB #fi, Ks, Tx, N)
+  rule mbArrKeys(MB, _, _, _) => MB [owise]
+  syntax Int ::= mbOff(Loc) [function, total]
+  rule mbOff(loc(_, A)) => A
+  rule mbOff(_) => 0 [owise]
+  syntax Int ::= mbLast(List, Ctx) [function, total]
+  rule mbLast(L, C) => rd({L[size(L) -Int 1]}:>Operand, ty("u", 32), C) requires size(L) >Int 0
+  rule mbLast(_, _) => 0 [owise]
+  syntax List ::= mbDropLast(List) [function, total]
+  rule mbDropLast(ListItem(X) ListItem(Y) L) => ListItem(X) mbDropLast(ListItem(Y) L)
+  rule mbDropLast(_) => .List [owise]
+  rule <tk> exec(opc("mbarrier", M, _), ops([ A ], N, Mk, .Operands), C) => .K ... </tk>
+       <ctaid> CT </ctaid> <gridDim> GD </gridDim> <clusterDim> CD </clusterDim>
+       <mbars> MB => mbTxKeys(MB, mbMcKeys(mbOff(ea(A, spaceOf(M), C)) &Int 16777215, rd(Mk, ty("u", 32), C), 0, CT, GD, CD),
+                              #if "complete_tx" in M #then 0 -Int rd(N, ty("u", 32), C) #else rd(N, ty("u", 32), C) #fi) </mbars>
+    requires ("expect_tx" in M orBool "complete_tx" in M) andBool notBool "arrive" in M andBool "multicast::cluster::32b" in M
+  rule <tk> exec(opc("mbarrier", M, _), ops(_, [ A ], Rest:Operands), C) => .K ... </tk>
+       <ctaid> CT </ctaid> <gridDim> GD </gridDim> <clusterDim> CD </clusterDim>
+       <mbars> MB => mbArrKeys(MB, mbMcKeys(mbOff(ea(A, spaceOf(M), C)) &Int 16777215, mbLast(opsList(Rest), C), 0, CT, GD, CD),
+                               mbTxArg(M, mbDropLast(opsList(Rest)), C), mbCountArg(M, mbDropLast(opsList(Rest)), C)) </mbars>
+    requires "arrive" in M andBool "multicast::cluster::32b" in M
 
   // test_wait / try_wait  waitComplete , [addr], state|parity {, timeHint}
   syntax Bool ::= mbDone(Map, Int, Set, Int) [function, total]       // objects, key, mods, state-or-parity operand value
