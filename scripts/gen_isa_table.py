@@ -26,7 +26,9 @@ def expand(item):
     # alternatives {a/b} or {a, b} or .{a/b}
     parts = re.split(r"(\{[^}]*\})", item)
     opts = []
+    parts_alt = []
     for p in parts:
+        parts_alt.append(p.startswith("{"))
         if p.startswith("{"):
             alts = [a.strip().lstrip(".") for a in re.split(r"[/,]", p[1:-1]) if a.strip()]
             opts.append(alts)
@@ -34,11 +36,13 @@ def expand(item):
             opts.append([p])
     out = []
     for combo in itertools.product(*opts):
-        t = "".join(c if c.startswith(".") or i == 0 else "." + c if not combo[i - 1].endswith(".") and c and not c.startswith(".") else c
-                    for i, c in enumerate(combo))
-        # re-join alternatives that were written as '.{a/b}' (dot before the brace)
-        t = "".join(combo)
-        t = re.sub(r"\.\.", ".", t)
+        t = ""
+        for i, c in enumerate(combo):
+            if parts_alt[i]:
+                t += c if t.endswith(".") else "." + c
+            else:
+                t += c
+        t = re.sub(r"\.\.+", ".", t)
         out.append(t)
     return out
 
@@ -104,7 +108,7 @@ for k, (p, sid) in enumerate(secs):
             if re.search(r"\bfor sm_|\bsm_\d", expr): continue
             for q in parse_expr(expr, sec_op): add(sec_op, q, ver=ver)
             continue
-        m = re.search(r"^(.*?)\s*(?:requires?|is supported on|are supported on|requires)\s+(?:target\s+)?sm_(\d+)([af]?)\s+or higher", sent, re.I)
+        m = re.search(r"^(.*?)\s*(?:requires?|is supported on|are supported on|requires)\s+(?:target\s+)?sm_(\d+)([af]?)(?:\s+or higher|\b)", sent, re.I)
         if m:
             sm = int(m.group(2)); expr = m.group(1).strip()
             if expr.lower() in ("", "target isa notes", "requires"):
@@ -112,7 +116,7 @@ for k, (p, sid) in enumerate(secs):
             elif not re.search(r"\bsm_\d", expr):
                 for q in parse_expr(expr, sec_op): add(sec_op, q, sm=sm, arch=m.group(3) != "")
     # family/architecture-specific lists:  "<expr> (is|are) supported on following ... architectures:" then sm_NNx lines
-    for m in re.finditer(r"([^.\n]*?)\s*(?:is|are)? supported on (?:the )?following (?:family-specific )?architectures:\s*((?:sm_\d+[af]?[^\n]*\n?\s*)+)", t[a:b]):
+    for m in re.finditer(r"([^.\n]*?)\s*(?:is |are )?supported on (?:the )?following (?:family-specific )?architectures:\s*((?:sm_\d+[af]?[^\n]*\n?\s*)+)", t[a:b], re.I):
         sms = [int(x) for x in re.findall(r"sm_(\d+)", m.group(2))]
         if not sms: continue
         expr = m.group(1).strip()

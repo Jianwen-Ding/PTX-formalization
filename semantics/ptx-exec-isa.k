@@ -42,7 +42,7 @@ module PTX-EXEC-ISA
   // row qualifiers "a+b" all present
   syntax Bool ::= qualsHold(String, Set) [function, total]
   rule qualsHold("", _) => true
-  rule qualsHold(Q, N) => Q in N requires findString(Q, "+", 0) <Int 0
+  rule qualsHold(Q, N) => Q in N requires Q =/=String "" andBool findString(Q, "+", 0) <Int 0
   rule qualsHold(Q, N) => substrString(Q, 0, findString(Q, "+", 0)) in N andBool qualsHold(substrString(Q, findString(Q, "+", 0) +Int 1, lengthString(Q)), N)
     requires findString(Q, "+", 0) >=Int 0
 
