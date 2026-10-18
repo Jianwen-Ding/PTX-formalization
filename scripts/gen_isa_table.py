@@ -22,6 +22,9 @@ def expand(item):
     """'cvt.rn{.relu}.{a/b}.f32' -> list of qualifier-tuples (opcode first)"""
     item = item.strip().rstrip(",").strip()
     # optional single qualifiers {.x} are dropped
+    TYPEISH = re.compile(r"^(?:[usbf]\d+|bf16|tf32|pred|e\d.*|ue\d.*|s2f6.*|[a-z0-9]+x\d)$")
+    for opt in re.findall(r"\{\.([A-Za-z0-9_:]+)\}", item):
+        if TYPEISH.match(opt): return []        # an optional *type* changes which forms the sentence covers: ignore such sentences
     item = re.sub(r"\{\.[A-Za-z0-9_:]+\}", "", item)
     # alternatives {a/b} or {a, b} or .{a/b}
     parts = re.split(r"(\{[^}]*\})", item)

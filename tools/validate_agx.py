@@ -101,6 +101,8 @@ test("float_denormal", """
   st.global.f32 [%rd5], %f2; ret; }""",
      [("in", "f32", [0.0] * 30 + [b2f(1), b2f(0x00400000)], False), ("out", "f32", [0.0] * 32, True)])
 
+KNOWN_DIFF = {"float_denormal": "AGX flushes f32 subnormal results to zero (G13 RoundToFloat32Wrapper flush_to_zero=True); PTX keeps them"}
+
 def run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True, env=ENV)
 
@@ -152,6 +154,11 @@ if __name__ == "__main__":
     bad = 0
     for name in args or TESTS:
         ok, why = validate(name, "-v" in sys.argv)
+        if name in KNOWN_DIFF:
+            # the semantics differ by design: the validator must notice
+            print(("KNOWN-DIFF  " if not ok else "UNEXPECTED-MATCH  ") + name + "  (" + KNOWN_DIFF[name] + ")")
+            bad += ok
+            continue
         print(("PASS  " if ok else "FAIL  ") + name + ("" if ok else "  " + why))
         bad += not ok
     sys.exit(1 if bad else 0)

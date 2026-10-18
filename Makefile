@@ -19,7 +19,7 @@ SOURCES  := $(wildcard semantics/*.k)
 SEEDS    ?= 1 2 3 4 5 6 7 8
 FUZZ_N   ?= 256
 
-.PHONY: properties build-agx test-agx isa-examples approx all build build-search build-mm memmodel litmus negative test fuzz examples zluda run clean
+.PHONY: validate-agx properties build-agx test-agx isa-examples approx all build build-search build-mm memmodel litmus negative test fuzz examples zluda run clean
 
 all: build
 
@@ -104,3 +104,7 @@ test-agx: build-agx
 # schedule-independence properties of the example programs (exhaustive search with the reduced definition)
 properties: build-mm
 	python3 scripts/properties.py examples/race.ptx examples/race-atomic.ptx examples/reduce-nobarrier.ptx examples/reduce-search.ptx examples/deadlock.ptx examples/collective-mismatch.ptx || true
+
+# translation validation of the PTX -> AGX lowering (needs build and build-agx)
+validate-agx: build build-agx
+	python3 tools/validate_agx.py

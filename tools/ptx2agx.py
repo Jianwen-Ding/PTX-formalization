@@ -48,7 +48,11 @@ class Lower:
     @staticmethod
     def clean(text):
         text = re.sub(r"//[^\n]*", "", text)
-        body = text[text.index("{", text.index(".entry")) + 1: text.rindex("}")] if ".entry" in text else text
+        i = text.index("{", text.index(".entry")); depth = 0
+        for j in range(i, len(text)):
+            depth += (text[j] == "{") - (text[j] == "}")
+            if depth == 0: break
+        body = text[i + 1: j]
         head = text[text.index(".entry"): text.index("{", text.index(".entry"))]
         lines = []
         for st in re.split(r";|\n", body):
