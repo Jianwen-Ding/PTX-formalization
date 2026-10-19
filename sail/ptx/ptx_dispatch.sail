@@ -5,16 +5,16 @@
  * ============================================================================= */
 
 val exec_prio : (opcode, list(xop)) -> bool
-function exec_prio(o, ops) = exec_misc_prio(o, ops)
+function exec_prio(o, ops) = exec_misc_prio(o, ops) | exec_memq_prio(o, ops)
 
 val exec_specific : (opcode, list(xop)) -> bool
 function exec_specific(o, ops) =
-  exec_alu(o, ops) | exec_mem(o, ops) | exec_ctrl(o, ops) | exec_warp(o, ops) | exec_bits(o, ops)
-  | exec_intx(o, ops) | exec_pred(o, ops) | exec_misc(o, ops) | exec_ext(o, ops)
+  exec_mini(o, ops) | exec_half(o, ops) | exec_alu(o, ops) | exec_mem(o, ops) | exec_ctrl(o, ops) | exec_warp(o, ops) | exec_bits(o, ops)
+  | exec_intx(o, ops) | exec_pred(o, ops) | exec_misc(o, ops) | exec_memq(o, ops) | exec_video(o, ops) | exec_ext(o, ops)
 
 val exec_gx : (opcode, list(xop)) -> bool
 function exec_gx(o, ops) =
-  gx_alu(o, ops) | gx_int(o, ops) | gx_intx(o, ops) | gx_ctrl(o, ops) | gx_sync(o, ops) | gx_misc(o, ops) | gx_ext(o, ops)
+  gx_alu(o, ops) | gx_int(o, ops) | gx_intx(o, ops) | gx_ctrl(o, ops) | gx_sync(o, ops) | gx_misc(o, ops) | gx_half(o, ops) | gx_memq(o, ops) | gx_video(o, ops) | gx_ext(o, ops)
 
 function exec_dispatch(o, ops) = {
   if exec_prio(o, ops) then ()

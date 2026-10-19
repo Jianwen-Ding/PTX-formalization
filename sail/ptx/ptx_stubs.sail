@@ -8,4 +8,3 @@ function harness_ext(d) = false
 function isa_check() = ()
 function cluster_mem(a, op) = None()
 function cluster_exit() = ()
-function transcendental(op, w, a, raw) = { fault(concat_str("not modelled: ", op), 0); FV_NaN() }

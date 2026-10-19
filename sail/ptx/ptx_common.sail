@@ -222,3 +222,6 @@ function winBase(s) = match s { "shared" => SHBASE, "local" => LOCBASE, "param" 
 
 val alignUp : (int, int) -> int
 function alignUp(x, a) = if a > 0 then tdiv_int(x + a - 1, a) * a else x
+
+val is_dec_digit : string -> bool
+function is_dec_digit(c) = c == "0" | c == "1" | c == "2" | c == "3" | c == "4" | c == "5" | c == "6" | c == "7" | c == "8" | c == "9"

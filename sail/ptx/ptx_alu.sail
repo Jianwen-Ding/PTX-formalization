@@ -156,11 +156,21 @@ function cvt(m, d, s, v) = {
 val atomOp : list(string) -> string
 function atomOp(m) = pick(m, [|"add", "exch", "cas", "min", "max", "and", "or", "xor", "inc", "dec"|], "add")
 
-val atomNew : (string, ty, int, int, int) -> int
-function atomNew(op, t, o, b, c) = match op {
+val atomNew1 : (string, ty, int, int, int) -> int
+function atomNew1(op, t, o, b, c) = match op {
   "exch" => b,
   "cas" => if o == b then c else o,
   "inc" => if o >= b then 0 else trunc(o + 1, wid(t)),
   "dec" => if o == 0 | o > b then b else trunc(o - 1, wid(t)),
   _ => bin(op, [||], t, o, b)
+}
+
+/* packed operands (PTX-EXEC-MEMQ, priority 40): lane-wise on the two 16-bit halves */
+val atomNew : (string, ty, int, int, int) -> int
+function atomNew(op, t, o, b, c) = {
+  if t.k == "f16x2" | t.k == "bf16x2" | t.k == "s16x2" | t.k == "u16x2" then {
+    let lt : ty = match t.k { "f16x2" => mkty("f", 16), "bf16x2" => mkty("bf", 16), "s16x2" => mkty("s", 16), _ => mkty("u", 16) };
+    lor_int(atomNew1(op, lt, land_int(o, 65535), land_int(b, 65535), land_int(c, 65535)),
+            shl_int(atomNew1(op, lt, land_int(asr_int(o, 16), 65535), land_int(asr_int(b, 16), 65535), land_int(asr_int(c, 16), 65535)), 16))
+  } else atomNew1(op, t, o, b, c)
 }

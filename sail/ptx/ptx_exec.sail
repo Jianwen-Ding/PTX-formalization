@@ -362,7 +362,7 @@ function exec_ctrl(o, ops) = {
     "brx" => match ops {
       [|i, XS(SN(tb))|] => {
         let idx = rdu32(i);
-        let ts = find_tgts(cur_fn(), tb);
+        let ts = find_tgts(cur_fn(), concat_str("@branchtargets:", tb));
         match str_nth(ts, idx) {
           Some(l) => match label_pc(l) { Some(p) => t_pc[tchk(cur)] = p, None() => fault("brx.idx: index outside the target list", idx) },
           None() => fault("brx.idx: index outside the target list", idx)

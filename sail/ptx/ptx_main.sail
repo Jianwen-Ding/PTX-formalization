@@ -461,8 +461,6 @@ function do_expect(n, t, vs, off) = {
 
 
 /* ---------------------------------------------------------------- the module */
-val is_dec_digit : string -> bool
-function is_dec_digit(c) = c == "0" | c == "1" | c == "2" | c == "3" | c == "4" | c == "5" | c == "6" | c == "7" | c == "8" | c == "9"
 val targetSm : list(string) -> int
 function targetSm(l) = match l {
   [||] => 0,
