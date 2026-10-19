@@ -16,9 +16,6 @@
 val dec_int : int -> string
 function dec_int(n) = dec_str(n)
 
-val pow : (int, int) -> int
-function pow(b, k) = { var r : int = 1; var i : int = 0; while i < k do { r = r * b; i = i + 1 }; r }
-
 /* exact decimal rendering of a binary64 value (a K Float literal) */
 val f64_str : int -> string
 function f64_str(b) = match f64v(b) {

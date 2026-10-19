@@ -92,3 +92,7 @@ function b2i(b) = if b then 1 else 0
 val log2_int : int -> int
 /* floor(log2 n) for n > 0 (K's log2Int) */
 function log2_int(n) = bitlen(n) - 1
+
+/* b^k for k >= 0 */
+val pow : (int, int) -> int
+function pow(b, k) = { var r : int = 1; var i : int = 0; while i < k do { r = r * b; i = i + 1 }; r }
