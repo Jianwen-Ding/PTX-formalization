@@ -34,9 +34,19 @@ def run_one(path, timeout=900):
         os.unlink(name)
     m = re.search(r"EXIT (\d+)", err)
     ex = int(m.group(1)) if m else None
+    if os.sep + "neg" + os.sep in path:
+        # tests/neg: the program must fail (non-zero exit), with the `// expect: text` of the first line in the output
+        first = open(path).readline()
+        want = first[len("// expect: "):].strip() if first.startswith("// expect: ") else ""
+        ok = ex != 0 and (want == "" or want in out + err)
+        return ("PASS" if ok else "FAIL", "" if ok else "exit %s, expected failure %r" % (ex, want), out, time.time() - t0)
     golden = path[:-4] + ".out"
     stuck = re.search(r"stuck: (.*)", err)
     note = stuck.group(1) if stuck else ("crash: " + err.strip()[-300:] if code != 0 or ex is None else "")
+    if os.sep + "zluda" + os.sep in path:
+        # tests/zluda (scripts/run-zluda.py): the program passes when it exits 0 and its output starts with PASS
+        ok = ex == 0 and out.strip().startswith("PASS")
+        return ("PASS" if ok else "FAIL", "" if ok else (note or out.strip().replace("\n", " | ")[:160]), out, time.time() - t0)
     if os.path.exists(golden):
         g = open(golden).read()
         ok = ex == 0 and out.rstrip("\n") == g.rstrip("\n")
@@ -59,27 +69,37 @@ def main(argv):
     tests = args or sorted(os.path.join(ROOT, "tests", f) for f in os.listdir(os.path.join(ROOT, "tests")) if f.endswith(".ptx"))
     with ThreadPoolExecutor(max_workers=jobs) as ex:
         results = list(ex.map(run_one, tests))
-    npass = 0
+    # tests/zluda: only the programs of tests/zluda/EXPECTED_PASS must pass (scripts/run-zluda.py); the others
+    # are reported as XFAIL / XPASS
+    zexp_path = os.path.join(ROOT, "tests", "zluda", "EXPECTED_PASS")
+    zexp = set(open(zexp_path).read().split()) if os.path.exists(zexp_path) else set()
+    npass = nfail = nx = 0
     lines = []
     for t, (st, note, out, dt) in zip(tests, results):
         rel = os.path.relpath(t, ROOT)
+        if os.sep + "zluda" + os.sep in t and os.path.basename(t)[:-4] not in zexp:
+            st = "XPASS" if st == "PASS" else "XFAIL"
         if st == "PASS":
             npass += 1
-        line = "%s  %s%s" % (st, rel, "" if st == "PASS" else "  (%s)" % note)
-        lines.append((rel, st, note, dt))
+        elif st == "FAIL":
+            nfail += 1
+        else:
+            nx += 1
+        line = "%s  %s%s" % (st, rel, "" if st in ("PASS", "XPASS") else "  (%s)" % note)
+        lines.append(line)
         print(line, flush=True)
-        if verbose and st != "PASS":
+        if verbose and st == "FAIL":
             golden = t[:-4] + ".out"
             if os.path.exists(golden):
                 import difflib
                 for d in list(difflib.unified_diff(open(golden).read().splitlines(), out.splitlines(), "golden", "sail", lineterm=""))[:20]:
                     print("      " + d)
-    print("---- %d passed, %d failed" % (npass, len(tests) - npass))
+    summary = "---- %d passed, %d failed%s" % (npass, nfail, ", %d not expected to pass (XFAIL / XPASS)" % nx if nx else "")
+    print(summary)
     if report:
         with open(report, "w") as f:
-            for rel, st, note, dt in lines:
-                f.write("%s\t%s\t%.1f\t%s\n" % (rel, st, dt, note))
-    return 0 if npass == len(tests) else 1
+            f.write("\n".join(lines) + "\n" + summary + "\n")
+    return 0 if nfail == 0 else 1
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

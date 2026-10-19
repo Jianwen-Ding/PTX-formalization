@@ -105,9 +105,16 @@ function exec_alu(o, ops) = {
   }
 }
 
-function movv(ds, vs, t) = match (ds, vs) {
-  (d :: dr, v :: vr) => { wr_sop(d, rd_sop(v, t)); movv(dr, vr, t) },
-  _ => ()
+/* elementwise; every source is read in the instruction's context (the registers before it), as K's
+ * movv(R, Ds, Vs, T, C) reads through C */
+val movw : (list(sop), list(int)) -> unit
+function movw(ds, vs) = match (ds, vs) { (d :: dr, v :: vr) => { wr_sop(d, v); movw(dr, vr) }, _ => () }
+function movv(ds, vs, t) = {
+  var vals : list(int) = [||];
+  var x = vs;
+  var n : int = sop_count(ds);
+  while is_cons(x) & n > 0 do { match x { v :: rest => { vals = pend_append(vals, [|rd_sop(v, t)|]); x = rest; n = n - 1 }, [||] => () } };
+  movw(ds, vals)
 }
 
 /* the #gx ALU rules: BINOPS / UNOPS / TERNOPS on one type */

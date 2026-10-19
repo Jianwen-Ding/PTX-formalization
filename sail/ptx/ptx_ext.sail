@@ -18,4 +18,3 @@ function coll_post_ext(p, vs) = match p {
 }
 function ext_wait_ready2() = false
 function harness_ext(d) = harness_tma(d) | harness_tex(d) | harness_mm(d)
-function isa_check() = ()
