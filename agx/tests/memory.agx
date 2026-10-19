@@ -3,9 +3,9 @@
 .uni u3 = 0;
 .laneid r4;
 imadd r5, r4, 3, 1000;           // 3*lane + 1000
-device_store u32 1 r5, u2_u3, r4, 0;
+device_store u32 1 r5, u2_u3, r4, unsigned, 0;
 mov r6, 77;
-device_load u32 1 r6, u2_u3, r4, 0;
+device_load u32 1 r6, u2_u3, r4, unsigned, 0;
 mov r7, r6;                      // before `wait` the destination still holds the old value
 wait 0;
 simd_shuffle_xor r8, r4, 1;

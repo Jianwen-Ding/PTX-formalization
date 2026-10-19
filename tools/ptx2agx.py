@@ -37,7 +37,7 @@ class Lower:
         self.params = []        # (name, kind)  kind u64 / u32
         self.regs = {}          # ptx register -> agx register number
         self.next = 8
-        self.sym = {}           # u64 register -> ('ptr', param) | ('addr', param, idxreg(str|None), scale, disp)
+        self.sym = {}           # u64 register -> ('ptr', param) | ('idx', reg, scale, disp, sign) | ('addr', param, idxreg(str|None), scale, disp, sign)
         self.cond = {}          # predicate -> (kind, cc, A, B, versions)
         self.ver = {}
         self.out = []
@@ -195,16 +195,16 @@ class Lower:
         if base == "mov" and ty == "u64":
             self.sym[rest[0]] = self.sym[rest[1]]; return
         if base == "cvt" and parts[-2:] == ["u64", "u32"] or (base == "cvt" and parts[1:3] == ["u64", "u32"]):
-            self.sym[rest[0]] = ("idx", rest[1], 1, 0); return
+            self.sym[rest[0]] = ("idx", rest[1], 1, 0, "unsigned"); return
         if base == "mul" and parts[1] == "wide":
-            self.sym[rest[0]] = ("idx", rest[1], int(rest[2]), 0); return
+            self.sym[rest[0]] = ("idx", rest[1], int(rest[2]), 0, "signed" if ty == "s32" else "unsigned"); return
         if base == "add" and ty == "u64":
             a, b = self.sym.get(rest[1]), self.sym.get(rest[2])
             if a and b:
-                if a[0] == "ptr" and b[0] == "idx": self.sym[rest[0]] = ("addr", a[1], b[1], b[2], b[3]); return
-                if b[0] == "ptr" and a[0] == "idx": self.sym[rest[0]] = ("addr", b[1], a[1], a[2], a[3]); return
+                if a[0] == "ptr" and b[0] == "idx": self.sym[rest[0]] = ("addr", a[1], b[1], b[2], b[3], b[4]); return
+                if b[0] == "ptr" and a[0] == "idx": self.sym[rest[0]] = ("addr", b[1], a[1], a[2], a[3], a[4]); return
             if a and a[0] == "addr" and re.fullmatch(r"\d+", rest[2]):
-                self.sym[rest[0]] = ("addr", a[1], a[2], a[3], a[4] + int(rest[2])); return
+                self.sym[rest[0]] = ("addr", a[1], a[2], a[3], a[4] + int(rest[2]), a[5]); return
             raise Reject("64-bit arithmetic: " + st)
         if base in ("ld", "st") and parts[1] == "global":
             return self.memop(base, ty, rest)
@@ -304,15 +304,16 @@ class Lower:
         s = self.sym.get(m.group(1))
         disp = int(m.group(2) or 0)
         if s is None: raise Reject("address register not derived from a pointer parameter")
-        if s[0] == "ptr": s = ("addr", s[1], None, 4, 0)
+        if s[0] == "ptr": s = ("addr", s[1], None, 4, 0, "unsigned")
         if s[0] != "addr": raise Reject("address")
-        _, pidx, idx, scale, d0 = s
+        _, pidx, idx, scale, d0, sign = s
         disp += d0
         if scale not in (1, 2, 4, 8, 16) or scale == 0: raise Reject("scale")
-        # AGX address = base + (index << (log2(4) + shift)); the PTX byte offset is idx*scale + disp
+        # AGX address = base + (ext(index) << (log2(4) + shift)); the PTX byte offset is idx*scale + disp, with idx sign-extended
+        # (mul.wide.s32) or zero-extended (mul.wide.u32, cvt.u64.u32) -> the index-signedness operand of device_load/store
         if scale == 4 and disp % 4 == 0: shift, ireg = 0, idx
         else: raise Reject(f"index scale {scale} / displacement {disp} not expressible as an element index")
-        if idx is None: ireg = None
+        if idx is None: ireg, sign = None, "unsigned"
         elems = disp // 4
         if ireg is None:
             tmp = f"r{self.next_tmp()}"; self.emit(f"mov {tmp}, {elems}")
@@ -321,9 +322,9 @@ class Lower:
         else: tmp = f"r{self.reg(ireg)}"
         pair = f"u{2 * pidx}_u{2 * pidx + 1}"
         if base == "ld":
-            self.emit(f"device_load u32 1 r{self.reg(rest[0])}, {pair}, {tmp}, {shift}"); self.emit("wait 0"); self.define(rest[0])
+            self.emit(f"device_load u32 1 r{self.reg(rest[0])}, {pair}, {tmp}, {sign}, {shift}"); self.emit("wait 0"); self.define(rest[0])
         else:
-            self.emit(f"device_store u32 1 {self.operand(rest[1], ty)}, {pair}, {tmp}, {shift}") if rest[1].startswith("%") else self.imm_store(rest[1], pair, tmp, shift)
+            self.emit(f"device_store u32 1 {self.operand(rest[1], ty)}, {pair}, {tmp}, {sign}, {shift}") if rest[1].startswith("%") else self.imm_store(rest[1], pair, tmp, sign, shift)
 
     def lane(self):
         if self.lane_reg is None:
@@ -381,8 +382,8 @@ class Lower:
             m = re.fullmatch(r"\[\s*(%\w+)\s*(?:\+\s*(\d+))?\s*\]", addr)
             s0 = self.sym.get(m.group(1)) if m else None
             if s0 is None: raise Reject("atomic address")
-            if s0[0] == "ptr": s0 = ("addr", s0[1], None, 4, 0)
-            _, pidx, idxr, scale, d0 = s0
+            if s0[0] == "ptr": s0 = ("addr", s0[1], None, 4, 0, "unsigned")
+            _, pidx, idxr, scale, d0, _ = s0         # device_atomic is modelled with a zero-extended index
             disp = int(m.group(2) or 0) + d0
             if scale != 4 or disp % 4: raise Reject("atomic index scale")
             if idxr is None: idx = str(disp // 4)
@@ -392,8 +393,8 @@ class Lower:
         self.emit("wait 0")
         if d: self.define(d)
 
-    def imm_store(self, imm, pair, tmp, shift):
-        t = f"r{self.next_tmp()}"; self.emit(f"mov {t}, {imm}"); self.emit(f"device_store u32 1 {t}, {pair}, {tmp}, {shift}")
+    def imm_store(self, imm, pair, tmp, sign, shift):
+        t = f"r{self.next_tmp()}"; self.emit(f"mov {t}, {imm}"); self.emit(f"device_store u32 1 {t}, {pair}, {tmp}, {sign}, {shift}")
 
     def next_tmp(self):
         self.next += 1
