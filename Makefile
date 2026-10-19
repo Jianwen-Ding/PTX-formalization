@@ -19,7 +19,8 @@ SOURCES  := $(wildcard semantics/*.k)
 SEEDS    ?= 1 2 3 4 5 6 7 8
 FUZZ_N   ?= 256
 
-.PHONY: validate-agx properties build-agx test-agx isa-examples approx all build build-search build-mm memmodel litmus negative test fuzz examples zluda run clean
+# Sail models (sail/): make sail builds them, make sail-test runs agx/tests and tests/*.ptx on them
+.PHONY: sail sail-test validate-agx properties build-agx test-agx isa-examples approx all build build-search build-mm memmodel litmus negative test fuzz examples zluda run clean
 
 all: build
 
@@ -108,3 +109,9 @@ properties: build-mm
 # translation validation of the PTX -> AGX lowering (needs build and build-agx)
 validate-agx: build build-agx
 	python3 tools/validate_agx.py
+
+sail:
+	$(MAKE) -C sail all
+
+sail-test:
+	$(MAKE) -C sail test

@@ -1,0 +1,37 @@
+// alu.agx restricted to operands that have an encoding (8-bit immediates, 16/32-bit registers), so that the
+// program also runs from its binary form (agxtest.py --binary): the same results as agx/tests/alu.agx
+.laneid r4;
+.all r5 = 100;
+.all r20 = 4294967280;   // -16
+.all r21 = 65535;
+iadd r6, r4, r5;
+isub r7, r5, r4;
+imadd r8, r4, 3, 7;
+bitop 8 r9, r4, 12;
+bitop 14 r10, r4, 3;
+popcount r11, r4;
+bitrev r12, 1;
+ffs r13, 40;
+asr r14, r20, 2;
+iadd r15l, r4, r21;
+mov r16, 0;
+bfi 4 r17, r5, 15, 8;    // insert 0xf at bit 8 of 100
+bfeil 3 r18, 0, r5, 2;   // (100 >> 2) & 7
+imadd r19, r4, r4, r5;   // lane * lane + 100
+stop;
+.run;
+.expectlane 0 r6 = 100;
+.expectlane 31 r6 = 131;
+.expectlane 5 r7 = 95;
+.expectlane 10 r8 = 37;
+.expectlane 13 r9 = 12;
+.expectlane 13 r10 = 15;
+.expectlane 7 r11 = 3;
+.expectall r12 = 2147483648;
+.expectall r13 = 5;
+.expectall r14 = 4294967292;
+.expectlane 3 r15l = 2;
+.expectlane 3 r15 = 2;
+.expectall r17 = 3940;
+.expectall r18 = 1;
+.expectlane 9 r19 = 181
