@@ -5,7 +5,6 @@
  * ============================================================================= */
 
 /* ---------------------------------------------------------------- reading the token stream */
-val tk_ty : unit -> ty
 function tk_ty() = { let k = tok_str(); let w = tok_int(); mkty(k, w) }
 
 val tk_sop : unit -> sop
@@ -282,7 +281,6 @@ function read_func() = {
 }
 
 /* ---------------------------------------------------------------- buffers */
-val do_alloc : (string, ty, int, list(initval)) -> unit
 function do_alloc(n, t, c, vs) = {
   let a = alignUp(gtop, 256);
   gtop = a + max_int(c * bytes(t), 1);
