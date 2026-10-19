@@ -1,0 +1,26 @@
+// device memory index signedness: base (u2_u3) points into the middle of a buffer, the index is negative.
+// `signed` sign-extends the 32-bit index before the shift, `unsigned` zero-extends it (-1 = 0xffffffff is a huge positive offset).
+.uni u2 = 4224;
+.uni u3 = 0;
+.dev 4220 = 111;
+.dev 4216 = 222;
+.laneid r4;
+mov r5, 4294967295;                              // -1
+mov r9, 4294967294;                              // -2
+device_load u32 1 r6, u2_u3, r5, signed, 0;      // 4224 + (-1 << 2) = 4220
+device_load u32 1 r7, u2_u3, r9, signed, 0;      // 4224 + (-2 << 2) = 4216
+device_load u32 1 r12, u2_u3, r5, signed, 1;     // 4224 + (-1 << 3) = 4216 (extra shift)
+device_load u32 1 r8, u2_u3, r5, unsigned, 0;    // 4224 + (0xffffffff << 2): untouched memory
+wait 0;
+isub r10, r4, 64;                                // per-lane index lane - 64 (negative in every lane)
+iadd r11, r4, 500;
+device_store u32 1 r11, u2_u3, r10, signed, 0;   // 4224 + 4 * (lane - 64) = 3968 + 4 * lane
+stop;
+.run;
+.expectall r6 = 111;
+.expectall r7 = 222;
+.expectall r12 = 222;
+.expectall r8 = 0;
+.expectdev 3968 = 500;
+.expectdev 4092 = 531;
+.expectdev 4220 = 111

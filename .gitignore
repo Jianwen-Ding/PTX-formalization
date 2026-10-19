@@ -3,3 +3,4 @@ build/
 .krun-*
 __pycache__/
 tmp.*
+sail_smt_cache

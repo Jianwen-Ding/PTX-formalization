@@ -28,6 +28,7 @@ module AGX-SYNTAX
   syntax ACc    ::= "eq" | "ne" | "ult" | "ule" | "ugt" | "uge" | "slt" | "sle" | "sgt" | "sge"
                  | "feq" | "fne" | "flt" | "fle" | "fgt" | "fge"
   syntax AFmt   ::= "u8" | "u16" | "u32"
+  syntax ASign  ::= "signed" | "unsigned"        // memory index extension (applegpu field Ou: 0 = sign-, 1 = zero-extend)
   syntax AAop   ::= "add" | "min" | "max" | "and" | "or" | "xor" | "xchg"
   syntax AOperand ::= AReg | Int | Float
 
@@ -67,8 +68,8 @@ module AGX-SYNTAX
                  | "simd_shuffle_xor" AReg "," AOperand "," AOperand
                  | "simd_shuffle_up" AReg "," AOperand "," AOperand
                  | "simd_shuffle_down" AReg "," AOperand "," AOperand
-                 | "device_load" AFmt Int AReg "," AUPair "," AOperand "," Int
-                 | "device_store" AFmt Int AReg "," AUPair "," AOperand "," Int
+                 | "device_load" AFmt Int AReg "," AUPair "," AOperand "," ASign "," Int
+                 | "device_store" AFmt Int AReg "," AUPair "," AOperand "," ASign "," Int
                  | "threadgroup_load" AFmt Int AReg "," AOperand "," Int
                  | "threadgroup_store" AFmt Int AReg "," AOperand "," Int
                  | "device_atomic" AAop AReg "," AUPair "," AOperand "," AOperand
@@ -395,7 +396,9 @@ module AGX
 
   // ---------------------------------------------------------------- memory
   // device_load: up to 4 consecutive elements per lane from base (64-bit uniform pair) + (index << (log2 size + shift)); results become
-  // visible at the next `wait` (reading the destination earlier returns the old value)
+  // visible at the next `wait` (reading the destination earlier returns the old value).  The 32-bit index is sign-extended
+  // (`signed`) or zero-extended (`unsigned`) to 64 bits before the shift; the sum wraps modulo 2^64.  Threadgroup accesses have no
+  // signedness field in the encoding and are modelled with a zero-extended index (as before).
   syntax Int ::= fsize(AFmt) [function, total]
   rule fsize(u8) => 1   rule fsize(u16) => 2   rule fsize(u32) => 4
   syntax Int ::= flog(AFmt) [function, total]
@@ -407,33 +410,37 @@ module AGX
   syntax String ::= AUPair2String(AUPair) [function, total, hook(STRING.token2string)]
   rule ubase(U, P) => ({U[upairLo(P)] orDefault 0}:>Int) |Int (({U[upairHi(P)] orDefault 0}:>Int) <<Int 32)
   syntax Int ::= regAdd(AReg, Int) [function]            // register number of the i-th consecutive register is passed around as an Int
-  rule <k> #exec(device_load F N D, P, I, S) => #ld(F, N, D, ubase(U, P), I, S, "dev") ... </k> <upr> U </upr>
-  rule <k> #exec(threadgroup_load F N D, I, S) => #ld(F, N, D, 0, I, S, "tg") ... </k>
-  rule <k> #exec(device_store F N D, P, I, S) => #st(F, N, D, ubase(U, P), I, S, "dev") ... </k> <upr> U </upr>
-  rule <k> #exec(threadgroup_store F N D, I, S) => #st(F, N, D, 0, I, S, "tg") ... </k>
-  syntax KItem ::= #ld(AFmt, Int, AReg, Int, AOperand, Int, String) | #st(AFmt, Int, AReg, Int, AOperand, Int, String)
-  rule <k> #ld(F, N, D, B, I, S, W) => .K ... </k> <gpr> G </gpr> <upr> U </upr> <em> EM </em> <dmem> DM </dmem> <tmem> TM </tmem> <pend> P => P ldAll(G, U, EM, DM, TM, 0, F, N, D, B, I, S, W) </pend>
-  rule <k> #st(F, N, D, B, I, S, W) => .K ... </k> <gpr> G </gpr> <upr> U </upr> <em> EM </em> <dmem> DM => #if W ==String "dev" #then stAll(G, U, EM, DM, 0, F, N, D, B, I, S) #else DM #fi </dmem>
-       <tmem> TM => #if W ==String "tg" #then stAll(G, U, EM, TM, 0, F, N, D, B, I, S) #else TM #fi </tmem>
+  rule <k> #exec(device_load F N D, P, I, X, S) => #ld(F, N, D, ubase(U, P), I, X, S, "dev") ... </k> <upr> U </upr>
+  rule <k> #exec(threadgroup_load F N D, I, S) => #ld(F, N, D, 0, I, unsigned, S, "tg") ... </k>
+  rule <k> #exec(device_store F N D, P, I, X, S) => #st(F, N, D, ubase(U, P), I, X, S, "dev") ... </k> <upr> U </upr>
+  rule <k> #exec(threadgroup_store F N D, I, S) => #st(F, N, D, 0, I, unsigned, S, "tg") ... </k>
+  syntax KItem ::= #ld(AFmt, Int, AReg, Int, AOperand, ASign, Int, String) | #st(AFmt, Int, AReg, Int, AOperand, ASign, Int, String)
+  rule <k> #ld(F, N, D, B, I, X, S, W) => .K ... </k> <gpr> G </gpr> <upr> U </upr> <em> EM </em> <dmem> DM </dmem> <tmem> TM </tmem> <pend> P => P ldAll(G, U, EM, DM, TM, 0, F, N, D, B, I, X, S, W) </pend>
+  rule <k> #st(F, N, D, B, I, X, S, W) => .K ... </k> <gpr> G </gpr> <upr> U </upr> <em> EM </em> <dmem> DM => #if W ==String "dev" #then stAll(G, U, EM, DM, 0, F, N, D, B, I, X, S) #else DM #fi </dmem>
+       <tmem> TM => #if W ==String "tg" #then stAll(G, U, EM, TM, 0, F, N, D, B, I, X, S) #else TM #fi </tmem>
+  // index of lane t extended to 64 bits according to the signedness field
+  syntax Int ::= idxv(Map, Map, Int, AOperand, ASign) [function, total]
+  rule idxv(G, U, T, I, signed) => asext(opv(G, U, T, I, 32), 32)
+  rule idxv(G, U, T, I, unsigned) => opv(G, U, T, I, 32)
   // effective address of lane t
-  syntax Int ::= ea(Map, Map, Int, AFmt, AOperand, Int, Int) [function, total]
-  rule ea(G, U, T, F, I, S, B) => ((B +Int (opv(G, U, T, I, 32) <<Int (flog(F) +Int S))) >>Int flog(F)) <<Int flog(F)      // rounded down to the element size
-  syntax List ::= ldAll(Map, Map, Int, Map, Map, Int, AFmt, Int, AReg, Int, AOperand, Int, String) [function, total]
-  rule ldAll(G, U, EM, DM, TM, T, F, N, D, B, I, S, W) => (#if ((EM >>Int T) &Int 1) ==Int 1 #then ldLane(DM, TM, T, F, N, D, ea(G, U, T, F, I, S, B), 0, W) #else .List #fi)
-        ldAll(G, U, EM, DM, TM, T +Int 1, F, N, D, B, I, S, W) requires T <Int 32
-  rule ldAll(_, _, _, _, _, _, _, _, _, _, _, _, _) => .List [owise]
+  syntax Int ::= ea(Map, Map, Int, AFmt, AOperand, ASign, Int, Int) [function, total]
+  rule ea(G, U, T, F, I, X, S, B) => (((B +Int (idxv(G, U, T, I, X) <<Int (flog(F) +Int S))) &Int 18446744073709551615) >>Int flog(F)) <<Int flog(F)      // rounded down to the element size
+  syntax List ::= ldAll(Map, Map, Int, Map, Map, Int, AFmt, Int, AReg, Int, AOperand, ASign, Int, String) [function, total]
+  rule ldAll(G, U, EM, DM, TM, T, F, N, D, B, I, X, S, W) => (#if ((EM >>Int T) &Int 1) ==Int 1 #then ldLane(DM, TM, T, F, N, D, ea(G, U, T, F, I, X, S, B), 0, W) #else .List #fi)
+        ldAll(G, U, EM, DM, TM, T +Int 1, F, N, D, B, I, X, S, W) requires T <Int 32
+  rule ldAll(_, _, _, _, _, _, _, _, _, _, _, _, _, _) => .List [owise]
   syntax List ::= ldLane(Map, Map, Int, AFmt, Int, AReg, Int, Int, String) [function, total]
   rule ldLane(DM, TM, T, F, N, D, A, K, W) => ListItem(ld(T, regNum(D) +Int K, rdBytes(#if W ==String "dev" #then DM #else TM #fi, A +Int K *Int fsize(F), fsize(F)))) ldLane(DM, TM, T, F, N, D, A, K +Int 1, W) requires K <Int N
   rule ldLane(_, _, _, _, _, _, _, _, _) => .List [owise]
-  syntax Map ::= stAll(Map, Map, Int, Map, Int, AFmt, Int, AReg, Int, AOperand, Int) [function, total]
-  rule stAll(G, U, EM, M, T, F, N, D, B, I, S) => stAll(G, U, EM, #if ((EM >>Int T) &Int 1) ==Int 1 #then stLane(G, M, T, F, N, D, ea(G, U, T, F, I, S, B), 0) #else M #fi, T +Int 1, F, N, D, B, I, S) requires T <Int 32
-  rule stAll(_, _, _, M, _, _, _, _, _, _, _) => M [owise]
+  syntax Map ::= stAll(Map, Map, Int, Map, Int, AFmt, Int, AReg, Int, AOperand, ASign, Int) [function, total]
+  rule stAll(G, U, EM, M, T, F, N, D, B, I, X, S) => stAll(G, U, EM, #if ((EM >>Int T) &Int 1) ==Int 1 #then stLane(G, M, T, F, N, D, ea(G, U, T, F, I, X, S, B), 0) #else M #fi, T +Int 1, F, N, D, B, I, X, S) requires T <Int 32
+  rule stAll(_, _, _, M, _, _, _, _, _, _, _, _) => M [owise]
   syntax Map ::= stLane(Map, Map, Int, AFmt, Int, AReg, Int, Int) [function, total]
   rule stLane(G, M, T, F, N, D, A, K) => stLane(G, wrBytes(M, A +Int K *Int fsize(F), {G[T *Int 256 +Int regNum(D) +Int K] orDefault 0}:>Int, fsize(F)), T, F, N, D, A, K +Int 1) requires K <Int N
   rule stLane(_, M, _, _, _, _, _, _) => M [owise]
   // atomics (abstract: the reverse-engineered documents do not describe the atomic instructions; Metal exposes relaxed 32-bit
   // atomics).  Active lanes perform their read-modify-write one after the other in lane order (one valid serialisation); the old
-  // value is returned like a load, visible at the next `wait`.
+  // value is returned like a load, visible at the next `wait`.  The index is zero-extended (the encoding's signedness field is not modelled).
   syntax AtomRes ::= atomRes(Map, List)
   syntax Int ::= aop(AAop, Int, Int) [function, total]
   rule aop(add, O, V) => (O +Int V) &Int m32()
@@ -446,8 +453,8 @@ module AGX
   syntax AtomRes ::= atomLoop(Map, Map, Int, Int, Map, AAop, AReg, Int, AOperand, AOperand, List) [function, total]
   rule atomLoop(G, U, EM, T, M, OP, D, B, I, V, L) =>
        #if ((EM >>Int T) &Int 1) ==Int 1
-       #then atomLoop(G, U, EM, T +Int 1, wrBytes(M, ea(G, U, T, u32, I, 0, B), aop(OP, rdBytes(M, ea(G, U, T, u32, I, 0, B), 4), opv(G, U, T, V, 32)), 4), OP, D, B, I, V,
-                      L ListItem(ld(T, regNum(D), rdBytes(M, ea(G, U, T, u32, I, 0, B), 4))))
+       #then atomLoop(G, U, EM, T +Int 1, wrBytes(M, ea(G, U, T, u32, I, unsigned, 0, B), aop(OP, rdBytes(M, ea(G, U, T, u32, I, unsigned, 0, B), 4), opv(G, U, T, V, 32)), 4), OP, D, B, I, V,
+                      L ListItem(ld(T, regNum(D), rdBytes(M, ea(G, U, T, u32, I, unsigned, 0, B), 4))))
        #else atomLoop(G, U, EM, T +Int 1, M, OP, D, B, I, V, L) #fi
     requires T <Int 32
   rule atomLoop(_, _, _, _, M, _, _, _, _, _, L) => atomRes(M, L) [owise]
