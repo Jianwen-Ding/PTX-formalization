@@ -16,6 +16,7 @@ val exec_dispatch : (opcode, list(xop)) -> unit
 
 /* other modules' blocking continuations */
 val ext_wait_ready : unit -> bool
+val ext_wait_ready2 : unit -> bool
 val mkCtas : (int, int) -> unit
 
 val isVisible : item -> bool

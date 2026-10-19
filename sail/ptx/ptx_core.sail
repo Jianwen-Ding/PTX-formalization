@@ -118,6 +118,7 @@ function mkLoc(s, a) = {
     else if a >= SHBASE & a < LOCBASE then Loc("shared", a - SHBASE)
     else Loc("global", a)
   } else if s == "const" then Loc("global", a)
+  else if s == "shared_cluster" then Loc("cluster", a)
   else Loc(s, a)
 }
 
@@ -160,6 +161,7 @@ union memop = {
   InsOp : (int, int, int),             /* bit offset, width, value */
   WrOp : (int, int),                   /* bytes, value */
   AtOp : (string, ty, int, int),       /* op, type, b, c */
+  BulkRedOp : (string, ty, int, int),  /* bulkRed(op, element type, bytes, source array) of ptx-exec-bulk.k */
 }
 
 val memBytes : memop -> int
@@ -178,6 +180,15 @@ function mem_apply(sp, a, op) = match op {
     let old = mem_rdn(sp, a, bytes(t));
     mem_wrn(sp, a, bytes(t), atomNew(o, t, old, b, c));
     old
+  },
+  BulkRedOp(o, t, n, v) => {
+    let old = mem_rdn(sp, a, n);
+    let eb = 8 * bytes(t);
+    var r : int = 0;
+    foreach (i from 0 to (tdiv_int(n, bytes(t)) - 1))
+      r = lor_int(r, shl_int(atomNew(o, t, land_int(asr_int(old, eb * i), mask(eb)), land_int(asr_int(v, eb * i), mask(eb)), 0), eb * i));
+    mem_wrn(sp, a, n, r);
+    0
   },
   InsOp(o, w, v) => {
     let old = mem_rdn(sp, a, 1);

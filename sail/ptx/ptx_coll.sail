@@ -251,13 +251,28 @@ function coll_ready(t) = match t_cont[tchk(t)] {
 val collWrite : (list(xop), list(int)) -> unit
 function collWrite(ds, vs) = match (ds, vs) { (d :: dr, v :: vr) => { wr(d, v); collWrite(dr, vr) }, _ => () }
 
+/* the continuation of a collective after its rendezvous (the K items following #coll, e.g.
+ * #ldmFetch / #stmGo): the lane's results are handed to it instead of being written */
+union cpost = {
+  P_none : unit,
+  P_ldm : (string, list(xop)),                    /* space, destinations */
+  P_ldm2 : (string, int, int, int, list(xop)),    /* space, row bytes, kind, format, destinations */
+  P_stm : (loc, int),                              /* row location, matrices */
+}
+register t_post : vector(16384, cpost) = vector_init(P_none())
+val coll_post_ext : (cpost, list(int)) -> unit
+
 val coll_take : unit -> unit
 function coll_take() = {
   let t = tchk(cur);
   match t_cont[t] {
     K_collwait(key, ds) => match find_coll(key) {
       Some(c) => {
-        collWrite(ds, listAt(c.cres, fmod_int(t_tid[t], collW(c.ckind))));
+        let vs = listAt(c.cres, fmod_int(t_tid[t], collW(c.ckind)));
+        match t_post[t] {
+          P_none() => collWrite(ds, vs),
+          p => { t_post[t] = P_none(); coll_post_ext(p, vs) }
+        };
         if c.ctaken + 1 == popc_int(c.cmask) then drop_coll(key) else put_coll({ c with ctaken = c.ctaken + 1 });
         t_cont[t] = K_none()
       },
