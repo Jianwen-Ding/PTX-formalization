@@ -95,6 +95,7 @@ function tern(op, m, t, a, b, c) = {
   if op == "selp" then (if c != 0 then a else b)
   else if isF(t) then fpFma(fmods_of(m), fw(t), a, b, c)
   else if has(m, "wide") then trunc(ival(a, t) * ival(b, t) + c, 2 * wid(t))
+  else if has(m, "hi") & has(m, "sat") then trunc(clamp(asr_int(ival(a, t) * ival(b, t), wid(t)) + ival(c, t), t), wid(t))
   else if has(m, "hi") then trunc(asr_int(ival(a, t) * ival(b, t), wid(t)) + c, wid(t))
   else trunc(ival(a, t) * ival(b, t) + c, wid(t))
 }
@@ -144,11 +145,15 @@ function intRnd(m, d) = pick(m, [|"rni", "rzi", "rmi", "rpi"|], d)
 val cvt : (list(string), ty, ty, int) -> int
 function cvt(m, d, s, v) = {
   let fm = fmods_of(m);
+  /* .ftz applies only to .f32 inputs and results (PTX ISA, cvt: "Modifier .ftz can only be specified when either
+   * .dtype or .atype is .f32 and applies only to single precision (.f32) inputs and results") */
+  let fs = if fw(s) == 32 then fm else { fm with ftz = false };
+  let fd = if fw(d) == 32 then fm else { fm with ftz = false };
   if isF(d) & isF(s) & intRnd(m, "") != "" then
-    post(fm, fw(d), roundW(rndInt(fv(ftzIn(fm, fw(s), v), s), intRnd(m, "")), fw(d)))
-  else if isF(d) & isF(s) then fin(fm, fw(d), fv(ftzIn(fm, fw(s), v), s), false)
-  else if isF(d) then fin(fm, fw(d), fv_of_int(ival(v, s)), false)
-  else if isF(s) then f2i(fv(ftzIn(fm, fw(s), v), s), intRnd(m, "rzi"), d)
+    post(fd, fw(d), roundW(rndInt(fv(ftzIn(fs, fw(s), v), s), intRnd(m, "")), fw(d)))
+  else if isF(d) & isF(s) then fin(fd, fw(d), fv(ftzIn(fs, fw(s), v), s), false)
+  else if isF(d) then fin(fd, fw(d), fv_of_int(ival(v, s)), false)
+  else if isF(s) then f2i(fv(ftzIn(fs, fw(s), v), s), intRnd(m, "rzi"), d)
   else trunc(if has(m, "sat") then clamp(ival(v, s), d) else ival(v, s), wid(d))
 }
 

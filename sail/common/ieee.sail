@@ -219,10 +219,11 @@ function reluF(f) = {
 }
 val clampF : (fmods, fv, int) -> fv
 function clampF(m, f, w) = {
+  /* .relu and .satfinite together: both apply */
+  let r = if m.relu then reluF(f) else f in
   if m.sat then satF(f)
-  else if m.relu then reluF(f)
-  else if m.satfinite & fv_is_inf(f) then fv_max(fv_sign(f), prec(w), ebits(w))
-  else f
+  else if m.satfinite & fv_is_inf(r) then fv_max(fv_sign(r), prec(w), ebits(w))
+  else r
 }
 /* post(M, W, F) of ptx-float.k for a value already rounded to the format */
 val post : (fmods, int, fv) -> int

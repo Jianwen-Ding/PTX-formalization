@@ -57,9 +57,13 @@ function exec_alu(o, ops) = {
       if ntys(o) != 1 then false
       else {
         let t = ty1(o);
-        if n == 3 then { wrP(xop_nth(ops, 0), cmp(cmpOp(m), t, rd(xop_nth(ops, 1), t), rd(xop_nth(ops, 2), t)), "none", 0); true }
+        /* .ftz: subnormal float inputs compare as sign-preserving zeros */
+        let fz = has(m, "ftz") & isF(t);
+        let x = if fz then flushB(rd(xop_nth(ops, 1), t), fw(t)) else rd(xop_nth(ops, 1), t);
+        let y = if fz then flushB(rd(xop_nth(ops, 2), t), fw(t)) else rd(xop_nth(ops, 2), t);
+        if n == 3 then { wrP(xop_nth(ops, 0), cmp(cmpOp(m), t, x, y), "none", 0); true }
         else if n == 4 then {
-          wrP(xop_nth(ops, 0), cmp(cmpOp(m), t, rd(xop_nth(ops, 1), t), rd(xop_nth(ops, 2), t)), boolOp(m), rdp(xop_nth(ops, 3)));
+          wrP(xop_nth(ops, 0), cmp(cmpOp(m), t, x, y), boolOp(m), rdp(xop_nth(ops, 3)));
           true
         } else false
       }

@@ -122,7 +122,10 @@ module PTX-ALU
   rule tern("mad", M, T, A, B, C) => trunc(ival(A, T) *Int ival(B, T) +Int C, 2 *Int wid(T))
     requires notBool isF(T) andBool "wide" in M
   rule tern("mad", M, T, A, B, C) => trunc(((ival(A, T) *Int ival(B, T)) >>Int wid(T)) +Int C, wid(T))
-    requires notBool isF(T) andBool "hi" in M
+    requires notBool isF(T) andBool "hi" in M andBool notBool "sat" in M
+  // mad.hi.sat.s32: the sum saturates to the signed 32-bit range
+  rule tern("mad", M, T, A, B, C) => trunc(clamp(((ival(A, T) *Int ival(B, T)) >>Int wid(T)) +Int ival(C, T), T), wid(T))
+    requires notBool isF(T) andBool "hi" in M andBool "sat" in M
   rule tern("mad", M, T, A, B, C) => trunc(ival(A, T) *Int ival(B, T) +Int C, wid(T))
     requires notBool isF(T) andBool notBool "wide" in M andBool notBool "hi" in M
 
@@ -184,13 +187,18 @@ module PTX-ALU
   //  int   -> float: exact, then rounded;  float -> int: rounded to integral (default .rzi),
   //                  NaN -> 0, saturating;  int -> int: sign/zero extension, optional .sat
   syntax Int ::= cvt(Set, Ty, Ty, Int) [function]          // modifiers, dst, src, bits
-  rule cvt(M, D, S, V) => post(M, fw(D), roundFloat(rndInt(fv(ftzIn(M, fw(S), V), S), intRnd(M, "")), prec(fw(D)), ebits(fw(D))))
+  // .ftz applies only to .f32 inputs and results (PTX ISA, cvt: "Modifier .ftz can only be specified when either .dtype or
+  // .atype is .f32 and applies only to single precision (.f32) inputs and results")
+  syntax Set ::= ftz32(Set, Ty) [function, total]
+  rule ftz32(M, T) => M requires fw(T) ==Int 32
+  rule ftz32(M, _) => M -Set SetItem("ftz") [owise]
+  rule cvt(M, D, S, V) => post(ftz32(M, D), fw(D), roundFloat(rndInt(fv(ftzIn(ftz32(M, S), fw(S), V), S), intRnd(M, "")), prec(fw(D)), ebits(fw(D))))
     requires isF(D) andBool isF(S) andBool intRnd(M, "") =/=String ""
-  rule cvt(M, D, S, V) => fpFin(M, fw(D), roundFloat(fv(ftzIn(M, fw(S), V), S), WP, WEXP), 0)
+  rule cvt(M, D, S, V) => fpFin(ftz32(M, D), fw(D), roundFloat(fv(ftzIn(ftz32(M, S), fw(S), V), S), WP, WEXP), 0)
     requires isF(D) andBool isF(S) andBool intRnd(M, "") ==String ""
-  rule cvt(M, D, S, V) => fpFin(M, fw(D), Int2Float(ival(V, S), WP, WEXP), 0)
+  rule cvt(M, D, S, V) => fpFin(ftz32(M, D), fw(D), Int2Float(ival(V, S), WP, WEXP), 0)
     requires isF(D) andBool notBool isF(S)
-  rule cvt(M, D, S, V) => f2i(fv(ftzIn(M, fw(S), V), S), intRnd(M, "rzi"), D)
+  rule cvt(M, D, S, V) => f2i(fv(ftzIn(ftz32(M, S), fw(S), V), S), intRnd(M, "rzi"), D)
     requires notBool isF(D) andBool isF(S)
   rule cvt(M, D, S, V) => trunc(#if "sat" in M #then clamp(ival(V, S), D) #else ival(V, S) #fi, wid(D))
     requires notBool isF(D) andBool notBool isF(S)

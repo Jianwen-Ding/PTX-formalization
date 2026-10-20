@@ -28,14 +28,15 @@ def rnd_float(w):
 
 def maxfin(d): return R.inf_bits(0, d) - 1
 def conv_ff(b, s, d, mode, ftz, relu, sat, satfin):
-    if ftz: b = R.flush(b, s)
+    # .ftz applies only to .f32 inputs and results (PTX ISA, cvt)
+    if ftz and s == 32: b = R.flush(b, s)
     k, v, sg = R.classify(b, s)
     cw = R.CW[d]
     if k == 'nan': out = R.canon_nan(d)
     elif k == 'inf': out = R.inf_bits(sg, d)
     elif k == 'zero': out = R.zero_bits(sg, d)
     else: out = (sg << (cw - 1)) | R.round_mag(v, 0, mode, sg, d)
-    if ftz: out = R.flush(out, d)
+    if ftz and d == 32: out = R.flush(out, d)
     kk, vv, ss = R.classify(out, d)
     if satfin and kk == 'inf': out = (ss << (cw - 1)) | maxfin(d)
     if relu and kk != 'nan' and ss: out = 0
