@@ -192,8 +192,12 @@ def applegpu_text(toks):
         return "wait", [str(T.int())]
     if c == "TG_BARRIER":
         return "threadgroup_barrier", []
+    if c == "MEMORY_BARRIER":
+        return "memory_barrier", [str(T.int()), str(T.int()), str(T.int())]
     if c == "STOP":
         return "stop", []
+    if c == "TRAP":
+        return "trap", []
     raise ValueError(c)
 
 def norm(s):
@@ -256,7 +260,7 @@ FCCS = list(FCC)
 def rinstr():
     c = R.choice(["MOVI", "MOVR", "GET_SR", "IADD", "IMADD", "BITOP", "BFI", "BFEIL", "ASR", "IUNOP", "FBIN", "FMADD", "RCP",
                   "ICMPSEL", "FCMPSEL", "STACKOP", "POP_EXEC", "JMP", "BALLOT", "SHUFFLE", "DEVMEM", "TGMEM", "DEVATOM",
-                  "TGATOM", "WAIT", "TG_BARRIER", "STOP"])
+                  "TGATOM", "WAIT", "TG_BARRIER", "STOP", "MEMORY_BARRIER", "TRAP"])
     if c == "MOVI":
         d = rdst()
         return ["MOV"] + d + ["I", R.randrange(1 << (16 if d[2] in (1, 2) else 32))]
@@ -340,6 +344,8 @@ def rinstr():
         return ["TGATOM", R.choice(list(AOP))] + d + base + idx + ["R", 0, R.randrange(128), 0, 0, 0, 0, 0]
     if c == "WAIT":
         return ["WAIT", R.randrange(2)]
+    if c == "MEMORY_BARRIER":
+        return ["MEMORY_BARRIER", R.randrange(4), R.randrange(4), R.randrange(16)]
     return [c]
 
 # ------------------------------------------------------------------ checks
@@ -348,7 +354,7 @@ MODELLED = {"mov_imm", "get_sr", "iadd", "isub", "iadd.sat", "isub.sat", "imadd"
             "rcp", "stop", "jmp_exec_any", "jmp_exec_none", "pop_exec", "if_icmp", "if_fcmp", "while_icmp", "while_fcmp",
             "else_icmp", "else_fcmp", "icmpsel", "fcmpsel", "icmp_ballot", "fcmp_ballot", "simd_shuffle", "simd_shuffle_down",
             "simd_shuffle_up", "simd_shuffle_xor", "wait", "device_load", "device_store", "threadgroup_load",
-            "threadgroup_store", "threadgroup_barrier", "atomic", "threadgroup_atomic"}
+            "threadgroup_store", "threadgroup_barrier", "atomic", "threadgroup_atomic", "memory_barrier", "trap"}
 
 def desc_name(word):
     for o in applegpu.instruction_descriptors:

@@ -236,7 +236,10 @@ def schemas():
         lambda c, g: _tgatom(c, g))
     add("wait", [("n", [0, 1])], lambda c, g: ["WAIT", c["n"]])
     add("threadgroup_barrier", [], lambda c, g: ["TG_BARRIER"])
+    add("memory_barrier", [("a", [0, 1, 2, 3]), ("b", [0, 1, 2, 3]), ("c", list(range(16)))],
+        lambda c, g: ["MEMORY_BARRIER", c["a"], c["b"], c["c"]])
     add("stop", [], lambda c, g: ["STOP"])
+    add("trap", [], lambda c, g: ["TRAP"])
     return S
 
 
@@ -498,6 +501,8 @@ def form_key(t):
             return "threadgroup_atomic %s %s, %s, %s" % (t[1], d, b, x)
         if c == "WAIT":
             return "wait %d" % t[1]
+        if c == "MEMORY_BARRIER":
+            return "memory_barrier %d, %d, %d" % (t[1], t[2], t[3])
         return c.lower()
     except (IndexError, KeyError):
         return c.lower() + " ?"

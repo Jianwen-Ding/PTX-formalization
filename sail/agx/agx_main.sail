@@ -105,6 +105,8 @@ function rd_instr() = match tok_str() {
   "TGATOM" => { let o = rd_aop(); let d = rd_adst(); let b = rd_op(); let i = rd_op(); let v = rd_op(); TGATOM(o, d, b, i, v) },
   "WAIT" => WAIT(tok_int()),
   "TG_BARRIER" => TG_BARRIER(),
+  "MEMORY_BARRIER" => { let a = tok_int(); let b = tok_int(); let c = tok_int(); MEMORY_BARRIER(a, b, c) },
+  "TRAP" => TRAP(),
   _ => STOP()
 }
 
@@ -289,6 +291,6 @@ function main() = {
     };
     if status == ST_fault then finished = true
   };
-  let st : string = match status { ST_loading => "loading", ST_running => "running", ST_stopped => "stopped", ST_fault => "fault" };
+  let st : string = match status { ST_loading => "loading", ST_running => "running", ST_stopped => "stopped", ST_trapped => "trapped", ST_fault => "fault" };
   print_endline(concat_str("STATUS ", concat_str(st, concat_str(" EXIT ", concat_str(dec_str(exit_code), concat_str(" MSG ", msg))))))
 }

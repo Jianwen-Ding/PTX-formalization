@@ -104,7 +104,10 @@ union ast = {
   TGATOM : (aaop, option(areg), aop, aop, aop),
   WAIT : int,
   TG_BARRIER : unit,
+  /* memory_barrier a, b, c (applegpu MemoryBarrierInstructionDesc) */
+  MEMORY_BARRIER : (int, int, int),
   STOP : unit,
+  TRAP : unit,
 }
 
 /* constructors for plain registers */

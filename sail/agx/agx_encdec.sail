@@ -110,6 +110,8 @@ let C_TGSTORE = cls(42, 6, 8, 15, [|(0, 4, 9), (5, 2, 1)|])
 let C_TGBARRIER = cls(43, 2, 2, 15, [|(0, 8, 104)|])
 let C_ATOMIC = cls(44, 8, 8, 15, [|(0, 6, 21)|])
 let C_TGATOMIC = cls(45, 6, 10, 15, [|(0, 6, 25)|])
+let C_MEMBAR = cls(46, 2, 2, 15, [|(0, 8, 245)|])
+let C_TRAP = cls(47, 2, 2, 15, [|(0, 16, 8)|])
 
 /* the classes in applegpu's matching order (the first matching descriptor wins) */
 let all_classes : list(icls) = [|C_MOVI16, C_MOVI32, C_GETSR, C_IADD, C_IMADD, C_BFI, C_BFEIL, C_ASR,
@@ -117,7 +119,8 @@ let all_classes : list(icls) = [|C_MOVI16, C_MOVI32, C_GETSR, C_IADD, C_IMADD, C
   C_RCP, C_STOP, C_JMPANY, C_JMPNONE, C_POPEXEC, C_IFICMP, C_IFFCMP, C_WHILEICMP, C_WHILEFCMP,
   C_ELSEICMP, C_ELSEFCMP, C_ICMPSEL, C_FCMPSEL, C_ICMPBALLOT, C_FCMPBALLOT, C_SHUF, C_SHUFDOWN,
   C_SHUFUP, C_SHUFXOR, C_WAIT, C_DEVLOAD, C_DEVSTORE, C_TGLOAD, C_TGSTORE, C_TGBARRIER, C_ATOMIC,
-  C_TGATOMIC|]
+  C_TGATOMIC, C_MEMBAR, C_TRAP|]
+/* memory_barrier (byte 0xf5) and trap (0x0008) match no earlier class: adding them changes no other decoding */
 
 val put_consts : (int, list((int, int, int))) -> int
 function put_consts(w, l) = match l {
@@ -853,7 +856,9 @@ function agx_encode(i) = match i {
   TGATOM(op, d, b, i, v) => e_tgatom(op, d, b, i, v),
   WAIT(n) => e_wait(n),
   TG_BARRIER() => e_plain(C_TGBARRIER),
-  STOP() => e_plain(C_STOP)
+  MEMORY_BARRIER(a, b, c) => { start_enc(); finish(C_MEMBAR, fput(fput(fput(0, 10, 2, a), 8, 2, b), 12, 4, c)) },
+  STOP() => e_plain(C_STOP),
+  TRAP() => e_plain(C_TRAP)
 }
 
 /* decode the instruction at the start of an 80-bit window (applegpu's first matching descriptor) */
@@ -916,6 +921,8 @@ function agx_decode(win) = {
       else if k.cid == C_TGBARRIER.cid then Some(TG_BARRIER())
       else if k.cid == C_ATOMIC.cid then d_devatom(w)
       else if k.cid == C_TGATOMIC.cid then d_tgatom(w)
+      else if k.cid == C_MEMBAR.cid then Some(MEMORY_BARRIER(fget(w, 10, 2), fget(w, 8, 2), fget(w, 12, 4)))
+      else if k.cid == C_TRAP.cid then Some(TRAP())
       else None()
     }
   }
@@ -962,6 +969,8 @@ mapping clause encdec = forwards (TGATOM(_) as i) if is_some_int(agx_encode(i)) 
 mapping clause encdec = forwards (WAIT(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (TG_BARRIER(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (STOP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (MEMORY_BARRIER(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (TRAP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = backwards w if is_some_ast(agx_decode(unsigned(w))) => the_ast(agx_decode(unsigned(w)))
 end encdec
 

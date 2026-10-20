@@ -255,8 +255,12 @@ def llvm_text(toks):
         return "wait %d" % T.int()
     if c == "TG_BARRIER":
         return "threadgroup_barrier"
+    if c == "MEMORY_BARRIER":
+        return "memory_barrier %d, %d, %d" % (T.int(), T.int(), T.int())
     if c == "STOP":
         return "stop"
+    if c == "TRAP":
+        return "trap"
     raise ValueError(c)
 
 

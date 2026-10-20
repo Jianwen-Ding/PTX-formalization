@@ -205,8 +205,12 @@ def instr(stmt):
         return ["WAIT", intv(ops[0])]
     if mnem == "threadgroup_barrier":
         return ["TG_BARRIER"]
+    if mnem == "memory_barrier":
+        want(3); return ["MEMORY_BARRIER", intv(ops[0]), intv(ops[1]), intv(ops[2])]
     if mnem == "stop":
         return ["STOP"]
+    if mnem == "trap":
+        return ["TRAP"]
     raise ParseError("unknown instruction %r" % stmt)
 
 def directive(stmt):

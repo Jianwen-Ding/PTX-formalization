@@ -284,6 +284,8 @@ mapping clause assembly = DEVATOM(o, d, p, i, sg, v, g) <-> "device_atomic" ^ sp
 mapping clause assembly = TGATOM(o, d, b, i, v) <-> "threadgroup_atomic" ^ spc() ^ asm_aop(o) ^ spc() ^ asm_adst(d) ^ comma() ^ asm_op(i) ^ comma() ^ asm_op(v) ^ asm_tgbase(b)
 mapping clause assembly = WAIT(n) <-> "wait" ^ spc() ^ asm_int(n)
 mapping clause assembly = TG_BARRIER() <-> "threadgroup_barrier"
+mapping clause assembly = MEMORY_BARRIER(a, b, c) <-> "memory_barrier" ^ spc() ^ asm_int(a) ^ comma() ^ asm_int(b) ^ comma() ^ asm_int(c)
 mapping clause assembly = STOP() <-> "stop"
+mapping clause assembly = TRAP() <-> "trap"
 
 end assembly

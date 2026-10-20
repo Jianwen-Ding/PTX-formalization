@@ -509,6 +509,25 @@ function clause execute(STOP()) = status = ST_stopped
 
 function clause execute(TG_BARRIER()) = ()
 
+/* memory_barrier: one SIMD group in lock step with one sequential memory, so the barriers order nothing that is
+ * not already ordered (the cross-core and cross-group ordering they provide is not modelled).  Only the seven
+ * encodings the LLVM backend emits ran on the hardware (G14C, Apple-M2-Playground 2026-10-18-fence-cost and
+ * 2026-10-11-memory-ordering: f596, f533, f59a, f59e, f503, f599, f59d); the model stops with an error on the others. */
+val barrier_measured : (int, int, int) -> bool
+function barrier_measured(a, b, c) = {
+  /* the second byte b | a << 2 | c << 4 of the encodings: 96 33 9a 9e 03 99 9d */
+  let x = b + 4 * a + 16 * c;
+  x == 150 | x == 51 | x == 154 | x == 158 | x == 3 | x == 153 | x == 157
+}
+
+function clause execute(MEMORY_BARRIER(a, b, c)) =
+  if not_bool(barrier_measured(a, b, c)) then fatal("memory_barrier with an unmeasured encoding")
+
+/* trap (0x0008): PROVISIONAL.  What the hardware does when it executes `trap` has not been measured
+ * (AGX-Performance-Simulator task B21); the model ends execution with its own status `trapped`, so that a test
+ * can tell it from `stop`. */
+function clause execute(TRAP()) = { status = ST_trapped; msg = "trap" }
+
 /* ---------------------------------------------------------------- ballots */
 function clause execute(BALLOT(isf, cc, d, a, b)) = {
   var r : int = 0;
