@@ -174,6 +174,30 @@ Not modelled, or left undefined (the model stops with an error rather than guess
   Device atomics cover every op but `end11`..`end15` and every mode; `umin64` / `umax64` without destination at even
   indices, `fadd` with a destination (the forms the model defines).
 
+### PTX differential tests (`sail/ptx/gen`)
+
+* `ptxgen.py OUT -s SEED`: one kernel per instruction form of the Sail PTX model (arithmetic, conversions, half and
+  packed types, integer, video, atomics, compares, carry chains), with edge-case and random inputs and `.expect`
+  values computed by the model.
+* `ptxdiff.py OUT --mode strict|default|both`: runs them through ZLUDA (`zoc`) and `agx_run`, and classes each form as
+  pass, fail, approx (an `.approx` instruction within its tolerance), nan-unspecified, crash or rejected.
+* `sail/difftest.sh SEED` runs both halves (AGX and PTX).
+
+Seed 1, 2026-10-20 (1578 forms, simulator main b3bbae1). In strict mode, 1535 pass, 17 fail and 2 crash; 7 are
+rejected. The default mode is not exact by design (bf16 NaN payloads, denormals). ZLUDA then fixed:
+* `cvt.sat` from unsigned to wider signed types;
+* `cnot`;
+* `ex2.approx` and `tanh.approx` on f16x2 / bf16 / bf16x2;
+* f16 <-> bf16 `cvt` flushing bf16 subnormals.
+
+On the failing files that leaves 7 strict failures:
+* the NaN payload of `atom.add.f32` (a hardware question, AGX-Performance-Simulator `tasks/ptx-re-blockers.md` B3);
+* `.ftz` + `.sat` on negative subnormal results (ZLUDA flushes before saturating, giving -0; the model gives +0);
+* `min.ftz.f32` of a negative and a positive subnormal (+0 instead of -0; B11 asks how the compares treat
+  denormals);
+* `div.approx.f32` special cases;
+* 1-ulp `tanh.approx.f16` results that are outside the tolerance.
+
 ## PTX (`sail/ptx`)
 
 ```
