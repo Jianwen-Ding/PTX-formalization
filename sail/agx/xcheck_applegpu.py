@@ -28,6 +28,18 @@ FCC = {"feq": "eq", "flt": "lt", "fgt": "gt", "fltn": "ltn", "fge": "gte", "fle"
        "fnlt": "nlt", "fngt": "ngt", "fnltn": "nltn", "fnge": "ngte", "fnle": "nlte", "fngtn": "ngtn"}
 AOP = {"add": "add", "sub": "sub", "xchg": "xchg", "min": "umin", "imin": "imin", "max": "umax", "imax": "imax",
        "and": "and", "or": "or", "xor": "xor"}
+# device atomics: the applegpu op name of the Sail op (op 1 / op 3 with bit 45 keep applegpu's names; ops 11-15 print
+# as numbers), and the ops whose value applegpu prints as a register pair (all of op 3)
+DEV_AOP = dict(AOP, cmpxchg="cmpxchg", fadd="sub", umin64="cmpxchg", umax64="cmpxchg",
+               **{"end%d" % n: str(n) for n in range(11, 16)})
+DEV_PAIR = ("cmpxchg", "umin64", "umax64")
+# the modes the Sail encoder accepts for each device atomic op (agx_encdec.sail devatom_code)
+DEV_MODES = dict({o: (0, 1, 2, 3) for o in AOP}, sub=(0, 2), cmpxchg=(0, 2), fadd=(1, 3), umin64=(3,), umax64=(1,),
+                 **{"end%d" % n: (0,) for n in range(11, 16)})
+
+def u5_of_mode(m):
+    """applegpu's u5 (bits 45-46) from the AST mode (bit 0 = bit 45, bit 1 = bit 46 clear)"""
+    return (m & 1) | ((1 - (m >> 1)) << 1)
 MASKS = {a: ('x' if a & 1 else '') + ('y' if a & 2 else '') + ('z' if a & 4 else '') + ('w' if a & 8 else '') for a in range(16)}
 
 def fimm_value(n):
@@ -181,9 +193,9 @@ def applegpu_text(toks):
         return ("threadgroup_store" if st else "threadgroup_load"), [F, MASKS[mask], tuple_text(r, bin(mask).count("1")), b, i]
     if c == "DEVATOM":
         o = T.next(); dk = T.next(); d = reg_text(*rd_reg(T)) if dk == "S" else "None"
-        pf, lo, hi = T.int(), T.int(), T.int(); i = rd_op(T); sg = T.int(); v = rd_op(T); g = T.int()
+        pf, lo, hi = T.int(), T.int(), T.int(); i = rd_op(T); sg = T.int(); v = rd_op(T); g = T.int(); m = T.int()
         base = "%s%d_%s%d" % ("u" if pf else "r", lo, "u" if pf else "r", hi)
-        return "atomic", [AOP[o], str(g), d, base, i, "signed" if sg else "unsigned", v, "1", "0", "1", "4", "2"]
+        return "atomic", [DEV_AOP[o], str(g), d, base, i, "signed" if sg else "unsigned", v, "1", "0", "1", "4", str(u5_of_mode(m))]
     if c == "TGATOM":
         o = T.next(); dk = T.next(); d = reg_text(*rd_reg(T)) if dk == "S" else "None"
         b = rd_op(T); i = rd_op(T); v = rd_op(T)
@@ -192,8 +204,12 @@ def applegpu_text(toks):
         return "wait", [str(T.int())]
     if c == "TG_BARRIER":
         return "threadgroup_barrier", []
+    if c == "MEMORY_BARRIER":
+        return "memory_barrier", [str(T.int()), str(T.int()), str(T.int())]
     if c == "STOP":
         return "stop", []
+    if c == "TRAP":
+        return "trap", []
     raise ValueError(c)
 
 def norm(s):
@@ -256,7 +272,7 @@ FCCS = list(FCC)
 def rinstr():
     c = R.choice(["MOVI", "MOVR", "GET_SR", "IADD", "IMADD", "BITOP", "BFI", "BFEIL", "ASR", "IUNOP", "FBIN", "FMADD", "RCP",
                   "ICMPSEL", "FCMPSEL", "STACKOP", "POP_EXEC", "JMP", "BALLOT", "SHUFFLE", "DEVMEM", "TGMEM", "DEVATOM",
-                  "TGATOM", "WAIT", "TG_BARRIER", "STOP"])
+                  "TGATOM", "WAIT", "TG_BARRIER", "STOP", "MEMORY_BARRIER", "TRAP"])
     if c == "MOVI":
         d = rdst()
         return ["MOV"] + d + ["I", R.randrange(1 << (16 if d[2] in (1, 2) else 32))]
@@ -332,7 +348,9 @@ def rinstr():
         d = ["S", 0, R.randrange(128), 0, 0, 0, 0, 0] if R.random() < 0.8 else ["N"]
         lo = R.randrange(127)
         idx = ["I", R.randrange(-32768, 32768)] if R.random() < 0.5 else ["R", 0, R.randrange(128), 0, 0, 0, 0, 0]
-        return ["DEVATOM", R.choice(list(AOP))] + d + [R.randrange(2), lo, lo + 1] + idx + [R.randrange(2)] + ["R", 0, R.randrange(128), 0, 0, 0, 0, 0] + [R.randrange(2)]
+        o = R.choice(list(DEV_AOP))
+        v = ["R", 0, R.randrange(127), 3, 0, 0, 0, 0] if o in DEV_PAIR else ["R", 0, R.randrange(128), 0, 0, 0, 0, 0]
+        return ["DEVATOM", o] + d + [R.randrange(2), lo, lo + 1] + idx + [R.randrange(2)] + v + [R.randrange(2), R.choice(DEV_MODES[o])]
     if c == "TGATOM":
         d = ["S", 0, R.randrange(124), R.choice((0, 1, 2)), 0, 0, 0, 0] if R.random() < 0.8 else ["N"]
         base = ["I", 0] if R.random() < 0.4 else ["R"] + [R.randrange(2), R.randrange(128), R.choice((1, 2)), 0, 0, 0, 0]
@@ -340,6 +358,8 @@ def rinstr():
         return ["TGATOM", R.choice(list(AOP))] + d + base + idx + ["R", 0, R.randrange(128), 0, 0, 0, 0, 0]
     if c == "WAIT":
         return ["WAIT", R.randrange(2)]
+    if c == "MEMORY_BARRIER":
+        return ["MEMORY_BARRIER", R.randrange(4), R.randrange(4), R.randrange(16)]
     return [c]
 
 # ------------------------------------------------------------------ checks
@@ -348,7 +368,7 @@ MODELLED = {"mov_imm", "get_sr", "iadd", "isub", "iadd.sat", "isub.sat", "imadd"
             "rcp", "stop", "jmp_exec_any", "jmp_exec_none", "pop_exec", "if_icmp", "if_fcmp", "while_icmp", "while_fcmp",
             "else_icmp", "else_fcmp", "icmpsel", "fcmpsel", "icmp_ballot", "fcmp_ballot", "simd_shuffle", "simd_shuffle_down",
             "simd_shuffle_up", "simd_shuffle_xor", "wait", "device_load", "device_store", "threadgroup_load",
-            "threadgroup_store", "threadgroup_barrier", "atomic", "threadgroup_atomic"}
+            "threadgroup_store", "threadgroup_barrier", "atomic", "threadgroup_atomic", "memory_barrier", "trap"}
 
 def desc_name(word):
     for o in applegpu.instruction_descriptors:
@@ -436,15 +456,15 @@ def main(argv):
     if "-s" in argv:
         seed = int(argv[argv.index("-s") + 1])
     R.seed(seed)
-    # the agx/tests instructions with an encoding
+    # the agx/tests and sail/agx/tests instructions with an encoding
     tests = []
-    tdir = os.path.join(agxtest.ROOT, "agx", "tests")
-    for f in sorted(os.listdir(tdir)):
-        for kind, toks, _ in agxtest.statements(open(os.path.join(tdir, f)).read()):
-            if kind == "I" and not (toks[1] == "JMP" and toks[3] == "JL"):
-                tests.append(toks[1:])
+    for tdir in (os.path.join(agxtest.ROOT, "agx", "tests"), os.path.join(HERE, "tests")):
+        for f in sorted(os.listdir(tdir)):
+            for kind, toks, _ in agxtest.statements(open(os.path.join(tdir, f)).read()):
+                if kind == "I" and not (toks[1] == "JMP" and toks[3] == "JL"):
+                    tests.append(toks[1:])
     ok, bad, noenc = check_encode(tests, verbose)
-    print("encode (agx/tests): %d agree with applegpu, %d mismatches, %d without encoding" % (ok, bad, noenc))
+    print("encode (agx/tests, sail/agx/tests): %d agree with applegpu, %d mismatches, %d without encoding" % (ok, bad, noenc))
     rnd = [rinstr() for _ in range(n)]
     ok2, bad2, noenc2 = check_encode(rnd, verbose)
     print("encode (%d random instructions): %d agree with applegpu, %d mismatches, %d without encoding" % (n, ok2, bad2, noenc2))

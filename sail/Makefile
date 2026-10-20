@@ -8,7 +8,7 @@ AGX_SRCS := common/prelude.sail common/ints.sail common/lists.sail common/ieee.s
 PTX_SRCS := common/prelude.sail common/ints.sail common/lists.sail common/ieee.sail $(wildcard ptx/*.sail)
 JOBS ?= 2
 
-.PHONY: all agx ptx test test-agx test-ptx test-ptx-extra report xcheck-agx clean
+.PHONY: all agx ptx test test-agx test-ptx test-ptx-extra report xcheck-agx difftest clean
 
 all: agx ptx
 
@@ -45,6 +45,10 @@ test-agx: agx
 # bit layouts against dougallj/applegpu (APPLEGPU=/path/to/applegpu)
 xcheck-agx: agx
 	PYTHONDONTWRITEBYTECODE=1 python3 agx/xcheck_applegpu.py -n 3000
+
+# differential tests generated from the models (LLVM MC, agx_run, ZLUDA): SEED=n
+difftest:
+	bash difftest.sh $(or $(SEED),1)
 
 clean:
 	rm -rf agx/build ptx/build

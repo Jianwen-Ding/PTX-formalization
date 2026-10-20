@@ -1,0 +1,10 @@
+// A form the model leaves undefined: device_atomic fadd without a destination (red.add.f32) was not run on the
+// hardware (Apple-M2-Playground 2026-10-17-atomic-variants, "Open"), so the model stops with an error
+.uni u4 = 196608;
+.uni u5 = 0;
+.all r5 = 1065353216;
+device_atomic fadd _, u4_u5, 0, r5;
+stop;
+.run;
+.expectstatus fault;
+.expectmsg red.add.f32

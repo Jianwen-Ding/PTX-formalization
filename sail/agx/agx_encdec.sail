@@ -1,5 +1,5 @@
 /* =============================================================================
- * AGX (G13) binary encodings: `mapping clause encdec`.
+ * AGX (G13 / G14) binary encodings: `mapping clause encdec`.
  *
  * Bit layouts follow dougallj/applegpu (applegpu.py instruction and operand descriptors).  An
  * instruction word is little-endian; `encdec` maps an AST to its word zero-extended to 80 bits
@@ -110,6 +110,8 @@ let C_TGSTORE = cls(42, 6, 8, 15, [|(0, 4, 9), (5, 2, 1)|])
 let C_TGBARRIER = cls(43, 2, 2, 15, [|(0, 8, 104)|])
 let C_ATOMIC = cls(44, 8, 8, 15, [|(0, 6, 21)|])
 let C_TGATOMIC = cls(45, 6, 10, 15, [|(0, 6, 25)|])
+let C_MEMBAR = cls(46, 2, 2, 15, [|(0, 8, 245)|])
+let C_TRAP = cls(47, 2, 2, 15, [|(0, 16, 8)|])
 
 /* the classes in applegpu's matching order (the first matching descriptor wins) */
 let all_classes : list(icls) = [|C_MOVI16, C_MOVI32, C_GETSR, C_IADD, C_IMADD, C_BFI, C_BFEIL, C_ASR,
@@ -117,7 +119,8 @@ let all_classes : list(icls) = [|C_MOVI16, C_MOVI32, C_GETSR, C_IADD, C_IMADD, C
   C_RCP, C_STOP, C_JMPANY, C_JMPNONE, C_POPEXEC, C_IFICMP, C_IFFCMP, C_WHILEICMP, C_WHILEFCMP,
   C_ELSEICMP, C_ELSEFCMP, C_ICMPSEL, C_FCMPSEL, C_ICMPBALLOT, C_FCMPBALLOT, C_SHUF, C_SHUFDOWN,
   C_SHUFUP, C_SHUFXOR, C_WAIT, C_DEVLOAD, C_DEVSTORE, C_TGLOAD, C_TGSTORE, C_TGBARRIER, C_ATOMIC,
-  C_TGATOMIC|]
+  C_TGATOMIC, C_MEMBAR, C_TRAP|]
+/* memory_barrier (byte 0xf5) and trap (0x0008) match no earlier class: adding them changes no other decoding */
 
 val put_consts : (int, list((int, int, int))) -> int
 function put_consts(w, l) = match l {
@@ -495,9 +498,11 @@ function fmt_code(f) = match f { F_U8 => 0, F_U16 => 1, F_U32 => 2 }
 val code_fmt : int -> afmt
 function code_fmt(n) = match n { 0 => F_U8, 1 => F_U16, 2 => F_U32, _ => { dec_err = true; F_U32 } }
 
+/* the op field of the ten 32-bit operations (both atomics); the device-only forms are rejected here */
 val atom_code : aaop -> int
 function atom_code(o) = match o {
-  A_add => 0, A_sub => 1, A_xchg => 2, A_umin => 4, A_imin => 5, A_umax => 6, A_imax => 7, A_and => 8, A_or => 9, A_xor => 10
+  A_add => 0, A_sub => 1, A_xchg => 2, A_umin => 4, A_imin => 5, A_umax => 6, A_imax => 7, A_and => 8, A_or => 9, A_xor => 10,
+  _ => { enc_err = true; 0 }
 }
 val code_atom : int -> aaop
 function code_atom(n) = match n {
@@ -636,9 +641,13 @@ function e_fmadd(h, sat, d, a, b, c) = {
           else e_flt(e_flt(e_flt(w0, a, 16, 58), b, 28, 56), c, 40, 54);
   finish(if h then C_FMADD16 else C_FMADD32, w)
 }
+/* bits 52 and 53 of the 8-byte form are rejected: on G14C bit 53 selects a 10-byte form with a lane offset for A,
+ * and bit 52 changes the fmadd32 operation (Apple-M2-Playground 2026-10-11-fmadd-lane-offset, 2026-10-18-fma-b52);
+ * neither is modelled (sail/README.md) */
 val d_fmadd : (bool, int) -> option(ast)
 function d_fmadd(h, w) = {
   start_dec();
+  dchk(fget(w, 52, 2) == 0);
   let d = d_dst(w, 60, not_bool(h), false);
   if h then fin_dec(FMADD(h, bit_int(w, 6), d, d_flt16(w, 16, 58), d_flt16(w, 28, 56), d_flt16(w, 40, 54)))
   else fin_dec(FMADD(h, bit_int(w, 6), d, d_flt(w, 16, 58), d_flt(w, 28, 56), d_flt(w, 40, 54)))
@@ -767,32 +776,82 @@ function d_tgmem(st, w) = {
   fin_dec(TGMEM(st, code_fmt(fget(w, 24, 4)), fget(w, 36, 4), d_memreg(w, 9, 60, 8), d_tgbase(w), d_tgidx(w), 0))
 }
 
-/* device atomic: op (6,4), g (30), R (10,6)+(40,2) flag 47, base, index, Ou (25), S (48, 8);
- * the unidentified fields hold the values applegpu observed: u1 (26) = 1, u2 (28,2) = 0, u3 (31) = 1,
- * u4 (42,3) = 4, u5 (45,2) = 2 */
-val e_devatom : (aaop, option(areg), apair, aop, bool, aop, int) -> option(int)
-function e_devatom(op, d, p, i, sgn, v, g) = {
+/* device atomic: op (6,4), g (30), R (10,6)+(40,2) flag 47, base, index, Ou (25), S (48, 8), bits 45-46;
+ * the other unidentified fields hold the values applegpu observed: u1 (26) = 1, u2 (28,2) = 0, u3 (31) = 1,
+ * u4 (42,3) = 4.
+ * Bits 45-46 (applegpu u5; G14C, Apple-M2-Playground 2026-10-17-atomic-variants) as the AST's mode, the LLVM
+ * backend's operand: mode = b45 | (1 - b46) << 1, so Mesa's G14 encoding (b45 = 0, b46 = 1) is mode 0.
+ *   op 1: b45 = 0 sub, b45 = 1 fadd (b46 free; the backend emits b46 = 1, mode 1)
+ *   op 3: b45 = 0 cmpxchg (b46 free); b45 = 1: b46 = 0 umin64 (mode 3), b46 = 1 umax64 (mode 1)
+ *   ops 0, 2, 4-10: the same operation for every mode (b45 is Mesa's multi-die coherency bit)
+ *   ops 11-15: end11 .. end15, measured only at Mesa's values (mode 0); other modes are rejected
+ * cmpxchg / umin64 / umax64 read the register pair S, S + 1 (applegpu prints S as a pair for op 3). */
+val devatom_code : (aaop, int) -> int
+function devatom_code(op, m) = {
+  let ok : bool = match op {
+    A_sub => land_int(m, 1) == 0, A_cmpxchg => land_int(m, 1) == 0, A_fadd => land_int(m, 1) == 1,
+    A_umin64 => m == 3, A_umax64 => m == 1,
+    A_end11 => m == 0, A_end12 => m == 0, A_end13 => m == 0, A_end14 => m == 0, A_end15 => m == 0,
+    _ => true
+  };
+  if not_bool(ok) | m < 0 | m > 3 then enc_err = true;
+  match op {
+    A_cmpxchg => 3, A_fadd => 1, A_umin64 => 3, A_umax64 => 3,
+    A_end11 => 11, A_end12 => 12, A_end13 => 13, A_end14 => 14, A_end15 => 15,
+    _ => atom_code(op)
+  }
+}
+
+val code_devatom : (int, int) -> aaop
+function code_devatom(n, m) = {
+  let b45 = land_int(m, 1) == 1;
+  match n {
+    1 => if b45 then A_fadd else A_sub,
+    3 => if not_bool(b45) then A_cmpxchg else if m == 3 then A_umin64 else A_umax64,
+    11 => { dchk(m == 0); A_end11 }, 12 => { dchk(m == 0); A_end12 }, 13 => { dchk(m == 0); A_end13 },
+    14 => { dchk(m == 0); A_end14 }, 15 => { dchk(m == 0); A_end15 },
+    _ => code_atom(n)
+  }
+}
+
+/* the forms whose value is a register pair */
+val devatom_pair : aaop -> bool
+function devatom_pair(op) = op == A_cmpxchg | op == A_umin64 | op == A_umax64
+
+val e_devatom : (aaop, option(areg), apair, aop, bool, aop, int, int) -> option(int)
+function e_devatom(op, d, p, i, sgn, v, g, m) = {
   start_enc();
-  var w : int = fput(fput(fput(0, 6, 4, atom_code(op)), 30, 1, g), 25, 1, if sgn then 0 else 1);
+  let c = devatom_code(op, m);
+  var w : int = fput(fput(fput(0, 6, 4, c), 30, 1, g), 25, 1, if sgn then 0 else 1);
   match d {
     Some(r) => { if r.file != GPR | r.view != 0 | not_bool(nomods(r)) | r.hint != HNone then enc_err = true; w = fput(fput2(w, 10, 6, 40, 2, 2 * r.num), 47, 1, 1) },
     None() => ()
   };
-  match op_reg32(v) { Some(r) => w = fput(w, 48, 8, 2 * r.num), None() => enc_err = true };
+  if devatom_pair(op) then {
+    match v {
+      OReg(r) => { if r.file != GPR | r.view != 3 | not_bool(nomods(r)) | r.hint != HNone then enc_err = true; w = fput(w, 48, 8, 2 * r.num) },
+      _ => enc_err = true
+    }
+  } else {
+    match op_reg32(v) { Some(r) => w = fput(w, 48, 8, 2 * r.num), None() => enc_err = true }
+  };
   w = e_memidx(e_membase(w, p), i);
-  w = fput(fput(fput(fput(fput(w, 26, 1, 1), 28, 2, 0), 31, 1, 1), 42, 3, 4), 45, 2, 2);
+  w = fput(fput(fput(fput(w, 26, 1, 1), 28, 2, 0), 31, 1, 1), 42, 3, 4);
+  w = fput(fput(w, 45, 1, land_int(m, 1)), 46, 1, 1 - fget(m, 1, 1));
   finish(C_ATOMIC, w)
 }
 val d_devatom : int -> option(ast)
 function d_devatom(w) = {
   start_dec();
-  dchk(fget(w, 26, 1) == 1 & fget(w, 28, 2) == 0 & fget(w, 31, 1) == 1 & fget(w, 42, 3) == 4 & fget(w, 45, 2) == 2);
+  dchk(fget(w, 26, 1) == 1 & fget(w, 28, 2) == 0 & fget(w, 31, 1) == 1 & fget(w, 42, 3) == 4);
+  let m = fget(w, 45, 1) + 2 * (1 - fget(w, 46, 1));
   let rv = fget2(w, 10, 6, 40, 2);
   let d : option(areg) = if bit_int(w, 47) then { dchk(not_bool(bit_int(rv, 0))); Some(mkreg(GPR, shr_int(rv, 1), 0, HNone)) } else { dchk(rv == 0); None() };
   let sv = fget(w, 48, 8);
   dchk(not_bool(bit_int(sv, 0)));
-  let op = code_atom(fget(w, 6, 4));
-  fin_dec(DEVATOM(op, d, d_membase(w), d_memidx(w), not_bool(bit_int(w, 25)), OReg(mkreg(GPR, shr_int(sv, 1), 0, HNone)), fget(w, 30, 1)))
+  let op = code_devatom(fget(w, 6, 4), m);
+  let v = mkreg(GPR, shr_int(sv, 1), if devatom_pair(op) then 3 else 0, HNone);
+  fin_dec(DEVATOM(op, d, d_membase(w), d_memidx(w), not_bool(bit_int(w, 25)), OReg(v), fget(w, 30, 1), m))
 }
 
 /* threadgroup atomic: op (24,4), R (9,6)+(60,2) flag 8, present 38, base, index, S (64, 8);
@@ -845,11 +904,13 @@ function agx_encode(i) = match i {
   SHUFFLE(k, d, a, b) => e_shuf(k, d, a, b),
   DEVMEM(st, f, m, r, p, i, sg, s, g, u6) => e_devmem(st, f, m, r, p, i, sg, s, g, u6),
   TGMEM(st, f, m, r, b, i, s) => e_tgmem(st, f, m, r, b, i, s),
-  DEVATOM(op, d, p, i, sg, v, g) => e_devatom(op, d, p, i, sg, v, g),
+  DEVATOM(op, d, p, i, sg, v, g, m) => e_devatom(op, d, p, i, sg, v, g, m),
   TGATOM(op, d, b, i, v) => e_tgatom(op, d, b, i, v),
   WAIT(n) => e_wait(n),
   TG_BARRIER() => e_plain(C_TGBARRIER),
-  STOP() => e_plain(C_STOP)
+  MEMORY_BARRIER(a, b, c) => { start_enc(); finish(C_MEMBAR, fput(fput(fput(0, 10, 2, a), 8, 2, b), 12, 4, c)) },
+  STOP() => e_plain(C_STOP),
+  TRAP() => e_plain(C_TRAP)
 }
 
 /* decode the instruction at the start of an 80-bit window (applegpu's first matching descriptor) */
@@ -912,6 +973,8 @@ function agx_decode(win) = {
       else if k.cid == C_TGBARRIER.cid then Some(TG_BARRIER())
       else if k.cid == C_ATOMIC.cid then d_devatom(w)
       else if k.cid == C_TGATOMIC.cid then d_tgatom(w)
+      else if k.cid == C_MEMBAR.cid then Some(MEMORY_BARRIER(fget(w, 10, 2), fget(w, 8, 2), fget(w, 12, 4)))
+      else if k.cid == C_TRAP.cid then Some(TRAP())
       else None()
     }
   }
@@ -958,6 +1021,8 @@ mapping clause encdec = forwards (TGATOM(_) as i) if is_some_int(agx_encode(i)) 
 mapping clause encdec = forwards (WAIT(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (TG_BARRIER(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (STOP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (MEMORY_BARRIER(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (TRAP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = backwards w if is_some_ast(agx_decode(unsigned(w))) => the_ast(agx_decode(unsigned(w)))
 end encdec
 

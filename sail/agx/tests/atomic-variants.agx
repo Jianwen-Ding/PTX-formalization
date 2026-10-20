@@ -1,0 +1,115 @@
+// G14C device atomics (Apple-M2-Playground novel-results/2026-10-17-atomic-variants): cmpxchg, the float32 add
+// (op 1 + bit 45), 64-bit unsigned min / max (op 3 + bit 45), the coherency bit on the other ops, and memory_barrier.
+// Lanes are serialised in lane order (the K model's convention).  Registers r4..r35 and the buffer at u4_u5 only, so
+// that simcheck.py --tests can run the same program on agx_run.
+.uni u4 = 196608;
+.uni u5 = 0;
+.laneid r4;
+.all r5 = 0;
+.all r6 = 1065353216;                     // 1.0
+// float add, every lane on word 0: 32 * 1.0, the old values 0.0, 1.0, ... in lane order
+device_store u32 1 r5, u4_u5, 0, unsigned, 0;
+device_atomic fadd r7, u4_u5, 0, r6;
+wait 0;
+device_load u32 1 r8, u4_u5, 0, unsigned, 0;
+wait 0;
+// float add edge cases, one word per lane (index lane + 8): old r13, addend r15
+iadd r12, r4, 8;
+device_store u32 1 r13, u4_u5, r12, unsigned, 0;
+device_atomic fadd r14, u4_u5, r12, r15;
+wait 0;
+device_load u32 1 r16, u4_u5, r12, unsigned, 0;
+wait 0;
+// cmpxchg, one word per lane (index lane + 48, holding lane): new r18 = lane + 100, compare r19 = lane & ~1
+iadd r17, r4, 48;
+device_store u32 1 r4, u4_u5, r17, unsigned, 0;
+iadd r18, r4, 100;
+asr r19, r4, 1;
+iadd r19, 0, r19, lsl 1;
+device_atomic cmpxchg r20, u4_u5, r17, r18_r19;
+wait 0;
+device_load u32 1 r21, u4_u5, r17, unsigned, 0;
+wait 0;
+// cmpxchg on one word (index 80, 0): lane t swaps t for t + 1, so in lane order every lane succeeds
+mov r22, 0;
+device_store u32 1 r22, u4_u5, 80, unsigned, 0;
+iadd r22, r4, 1;
+mov r23, r4;
+device_atomic cmpxchg r24, u4_u5, 80, r22_r23;
+wait 0;
+device_load u32 1 r25, u4_u5, 80, unsigned, 0;
+wait 0;
+// umin64 at word index 2 * lane + 128 (8-byte aligned): memory 0x80000000_<lane>, source 0x00000001_00000005;
+// unsigned, so every lane changes memory (a signed min would keep it) and the flag is 1
+imadd r26, r4, 2, 128;
+mov r27, r4;
+mov r28, 2147483648;
+device_store u32 2 r27, u4_u5, r26, unsigned, 0;
+mov r29, 5;
+mov r30, 1;
+device_atomic umin64 r31, u4_u5, r26, r29_r30;
+wait 0;
+device_load u32 2 r32, u4_u5, r26, unsigned, 0;
+wait 0;
+// umax64 at word index 2 * lane + 192: memory 2 * lane, source 31: lanes 0-15 change memory (flag 1), the others not
+iadd r9, r26, 64;
+iadd r27, r4, r4;
+mov r28, 0;
+device_store u32 2 r27, u4_u5, r9, unsigned, 0;
+mov r29, 31;
+mov r30, 0;
+device_atomic umax64 r10, u4_u5, r9, r29_r30;
+wait 0;
+device_load u32 1 r11, u4_u5, r9, unsigned, 0;
+wait 0;
+// coherency bit (mode 1: bit 45) and bit 46 clear (mode 2) on add: the same 32-bit add
+device_store u32 1 r5, u4_u5, 255, unsigned, 0;
+device_atomic add r34, u4_u5, 255, r4, mode=1;
+wait 0;
+device_atomic add _, u4_u5, 255, r4, mode=2;
+memory_barrier 1, 2, 9;
+memory_barrier 0, 3, 3;
+device_load u32 1 r35, u4_u5, 255, unsigned, 0;
+wait 0;
+stop;
+.lane 0 r13 = 1;                  .lane 0 r15 = 0;            // denormal input: +0 + +0 = +0
+.lane 1 r13 = 2139095040;         .lane 1 r15 = 4286578688;   // inf + -inf: canonical NaN
+.lane 2 r13 = 2141192192;         .lane 2 r15 = 1065353216;   // signalling NaN + 1.0: canonical NaN
+.lane 3 r13 = 8388608;            .lane 3 r15 = 2155872257;   // FLT_MIN - (FLT_MIN + ulp) = -2^-149: flushed to -0
+.lane 4 r13 = 1065353216;         .lane 4 r15 = 864026624;    // 1.0 + 2^-24: tie, to even (1.0)
+.lane 5 r13 = 1065353217;         .lane 5 r15 = 864026624;    // (1 + ulp) + half ulp: tie, to even (1 + 2 ulp)
+.lane 6 r13 = 2147483648;         .lane 6 r15 = 2147483648;   // -0 + -0 = -0
+.lane 7 r13 = 2155872255;         .lane 7 r15 = 0;            // -denormal (-0) + +0 = +0
+.run;
+.expectlane 0 r7 = 0;
+.expectlane 1 r7 = 1065353216;
+.expectlane 31 r7 = 1106771968;          // 31.0
+.expectall r8 = 1107296256;              // 32.0
+.expectlane 0 r14 = 1;                   // the old word, as stored
+.expectlane 0 r16 = 0;
+.expectlane 1 r16 = 2143289344;
+.expectlane 2 r16 = 2143289344;
+.expectlane 2 r14 = 2141192192;
+.expectlane 3 r16 = 2147483648;
+.expectlane 4 r16 = 1065353216;
+.expectlane 5 r16 = 1065353218;
+.expectlane 6 r16 = 2147483648;
+.expectlane 7 r16 = 0;
+.expectlane 9 r16 = 0;
+.expectlane 6 r20 = 6;
+.expectlane 7 r20 = 7;
+.expectlane 6 r21 = 106;                 // compare matched: new value
+.expectlane 7 r21 = 7;                   // compare failed: unchanged
+.expectlane 0 r24 = 0;
+.expectlane 31 r24 = 31;
+.expectall r25 = 32;
+.expectall r31 = 1;                      // memory changed
+.expectall r32 = 5;
+.expectall r33 = 1;
+.expectlane 15 r10 = 1;
+.expectlane 16 r10 = 0;
+.expectlane 15 r11 = 31;
+.expectlane 16 r11 = 32;
+.expectlane 0 r34 = 0;
+.expectlane 31 r34 = 465;                // 0 + 1 + ... + 30
+.expectall r35 = 992                     // two adds of 0 + ... + 31

@@ -27,10 +27,14 @@ module PTX-EXEC-ALU
   rule wrP(R, P:Name | Q:Name, V, BO, X) =>
        R[Name2String(P) <- bop(V, BO, X)][Name2String(Q) <- bop(1 -Int V, BO, X)]
   rule wrP(R, D, V, BO, X) => wr(R, D, bop(V, BO, X)) [owise]
+  // .ftz: subnormal float inputs compare as sign-preserving zeros
+  syntax Int ::= setpIn(Set, Ty, Int) [function, total]
+  rule setpIn(M, T, V) => ftzIn(M, fw(T), V) requires isF(T)
+  rule setpIn(_, _, V) => V [owise]
   rule <tk> exec(opc("setp", M, ListItem(T)), ops(D, A, B, .Operands), C) => .K ... </tk>
-       <regs> R => wrP(R, D, cmp(cmpOp(M), T, rd(A, T, C), rd(B, T, C)), "none", 0) </regs>
+       <regs> R => wrP(R, D, cmp(cmpOp(M), T, setpIn(M, T, rd(A, T, C)), setpIn(M, T, rd(B, T, C))), "none", 0) </regs>
   rule <tk> exec(opc("setp", M, ListItem(T)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
-       <regs> R => wrP(R, D, cmp(cmpOp(M), T, rd(A, T, C), rd(B, T, C)), boolOp(M), rd(X, ty("p", 1), C)) </regs>
+       <regs> R => wrP(R, D, cmp(cmpOp(M), T, setpIn(M, T, rd(A, T, C)), setpIn(M, T, rd(B, T, C))), boolOp(M), rd(X, ty("p", 1), C)) </regs>
 
   // mov, including vector pack/unpack: mov.b64 %rd, {%r0, %r1}
   rule <tk> exec(opc("mov", _, ListItem(T)), ops(D, A, .Operands), C) => .K ... </tk>

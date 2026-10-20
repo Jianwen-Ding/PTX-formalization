@@ -54,7 +54,9 @@ function rd_fmt() = match tok_str() { "u8" => F_U8, "u16" => F_U16, _ => F_U32 }
 val rd_aop : unit -> aaop
 function rd_aop() = match tok_str() {
   "add" => A_add, "sub" => A_sub, "xchg" => A_xchg, "min" => A_umin, "imin" => A_imin, "max" => A_umax,
-  "imax" => A_imax, "and" => A_and, "or" => A_or, _ => A_xor
+  "imax" => A_imax, "and" => A_and, "or" => A_or, "xor" => A_xor, "cmpxchg" => A_cmpxchg, "fadd" => A_fadd,
+  "umin64" => A_umin64, "umax64" => A_umax64, "end11" => A_end11, "end12" => A_end12, "end13" => A_end13,
+  "end14" => A_end14, _ => A_end15
 }
 
 val rd_adst : unit -> option(areg)
@@ -101,10 +103,12 @@ function rd_instr() = match tok_str() {
     DEVMEM(st, f, m, r, p, i, sg, s, g, u6)
   },
   "TGMEM" => { let st = rd_bool(); let f = rd_fmt(); let m = tok_int(); let r = rd_reg(); let b = rd_op(); let i = rd_op(); let s = tok_int(); TGMEM(st, f, m, r, b, i, s) },
-  "DEVATOM" => { let o = rd_aop(); let d = rd_adst(); let p = rd_pair(); let i = rd_op(); let sg = rd_bool(); let v = rd_op(); let g = tok_int(); DEVATOM(o, d, p, i, sg, v, g) },
+  "DEVATOM" => { let o = rd_aop(); let d = rd_adst(); let p = rd_pair(); let i = rd_op(); let sg = rd_bool(); let v = rd_op(); let g = tok_int(); let m = tok_int(); DEVATOM(o, d, p, i, sg, v, g, m) },
   "TGATOM" => { let o = rd_aop(); let d = rd_adst(); let b = rd_op(); let i = rd_op(); let v = rd_op(); TGATOM(o, d, b, i, v) },
   "WAIT" => WAIT(tok_int()),
   "TG_BARRIER" => TG_BARRIER(),
+  "MEMORY_BARRIER" => { let a = tok_int(); let b = tok_int(); let c = tok_int(); MEMORY_BARRIER(a, b, c) },
+  "TRAP" => TRAP(),
   _ => STOP()
 }
 
@@ -206,6 +210,13 @@ function directive(d) = match d {
     let a = tok_int(); let v = tok_int();
     if rdBytes(SP_DEV, a, 4) != land_int(v, 4294967295) then fatal(concat_str("expectdev ", concat_str(dec_str(a), concat_str(" got ", dec_str(rdBytes(SP_DEV, a, 4))))))
   },
+  "dumpdev" => {
+    /* print n bytes of device memory from address a as hex (differential tests) */
+    let a = tok_int(); let n = tok_int();
+    var s : string = "";
+    foreach (i from 0 to (n - 1)) { s = concat_str(s, sdrop(hex_str(mem_rd(SP_DEV, a + i) + 256), 3)) };
+    print_endline(concat_str("DEVMEM ", concat_str(dec_str(a), concat_str(" ", s))))
+  },
   "expectmask" => { let v = tok_int(); if unsigned(em) != v then fatal(concat_str("exec mask is ", dec_str(unsigned(em)))) },
   _ => fatal(concat_str("unknown directive ", d))
 }
@@ -222,9 +233,11 @@ function hex_word(w, n) = {
   s
 }
 
-/* print each instruction, its encoding, and check that decoding the encoding gives it back */
+/* print each instruction, its encoding, and check that decoding the encoding gives it back (jump labels are
+ * resolved first, so the check can come before or after `.run`) */
 val check_encodings : unit -> unit
 function check_encodings() = {
+  resolve();
   foreach (i from 0 to (ncode - 1)) {
     let a = get_code(i);
     let s = assembly_forwards(a);
@@ -280,6 +293,6 @@ function main() = {
     };
     if status == ST_fault then finished = true
   };
-  let st : string = match status { ST_loading => "loading", ST_running => "running", ST_stopped => "stopped", ST_fault => "fault" };
+  let st : string = match status { ST_loading => "loading", ST_running => "running", ST_stopped => "stopped", ST_trapped => "trapped", ST_fault => "fault" };
   print_endline(concat_str("STATUS ", concat_str(st, concat_str(" EXIT ", concat_str(dec_str(exit_code), concat_str(" MSG ", msg))))))
 }

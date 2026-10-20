@@ -56,12 +56,14 @@ module PTX-FLOAT
   rule reluF(F) => fc(0.0, F) requires notBool isNaN(F) andBool (F <Float fc(0.0, F) orBool (F ==Float fc(0.0, F) andBool signFloat(F)))
   rule reluF(F) => F [owise]
   syntax Float ::= clampF(Set, Float) [function, total]
+  // .relu and .satfinite together: both apply
   rule clampF(M, F) => satF(F) requires "sat" in M
-  rule clampF(M, F) => reluF(F) requires "relu" in M
-  rule clampF(M, F) => #if signFloat(F) #then --Float maxValueFloat(precisionFloat(F), exponentBitsFloat(F))
+  rule clampF(M, F) => satFin(M, #if "relu" in M #then reluF(F) #else F #fi) [owise]
+  syntax Float ::= satFin(Set, Float) [function, total]
+  rule satFin(M, F) => #if signFloat(F) #then --Float maxValueFloat(precisionFloat(F), exponentBitsFloat(F))
                        #else maxValueFloat(precisionFloat(F), exponentBitsFloat(F)) #fi
     requires "satfinite" in M andBool isInfinite(F)
-  rule clampF(_, F) => F [owise]
+  rule satFin(_, F) => F [owise]
   syntax Int ::= post(Set, Int, Float) [function, total]
   rule post(M, W, F) => ftzOut(M, W, encodeF(clampF(M, F), W))
 

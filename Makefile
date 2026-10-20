@@ -20,7 +20,7 @@ SEEDS    ?= 1 2 3 4 5 6 7 8
 FUZZ_N   ?= 256
 
 # Sail models (sail/): make sail builds them, make sail-test runs agx/tests and tests/*.ptx on them
-.PHONY: sail sail-test validate-agx properties build-agx test-agx isa-examples approx all build build-search build-mm memmodel litmus negative test fuzz examples zluda run clean
+.PHONY: sail sail-test difftest validate-agx properties build-agx test-agx isa-examples approx all build build-search build-mm memmodel litmus negative test fuzz examples zluda run clean
 
 all: build
 
@@ -115,3 +115,6 @@ sail:
 
 sail-test:
 	$(MAKE) -C sail test
+
+difftest:
+	$(MAKE) -C sail difftest

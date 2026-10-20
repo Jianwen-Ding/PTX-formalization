@@ -3,8 +3,10 @@
 
 Parses agx/tests/*.agx (the assembly dialect of agx/agx.k), serializes the program into the token
 stream that sail/agx/agx_main.sail reads, runs the model and reports PASS / FAIL like
-scripts/run-agx.sh: a test passes when the run ends in status `stopped` with exit code 0 (every
-.expect* directive held).
+scripts/run-agx.sh: a test passes when the run ends in status `stopped` (or the status a
+`.expectstatus S` directive names, e.g. `trapped`) with exit code 0 (every .expect* directive held);
+`.expectstatus fault` expects the model to stop with an error (exit code 1), for forms it does not define;
+`.expectmsg TEXT` requires TEXT in the final message.
 
   agxtest.py [tests...]          run the tests (default: agx/tests/*.agx)
   agxtest.py --roundtrip [...]   also check, for every instruction, that the assembly printed by the
@@ -20,6 +22,9 @@ EXE = os.environ.get("AGX_SAIL", os.path.join(HERE, "build", "agx"))
 CCS = ["eq", "ne", "ult", "ule", "ugt", "uge", "slt", "sle", "sgt", "sge", "feq", "fne", "flt", "fle", "fgt", "fge",
        "seq", "sne", "fltn", "fgtn", "fnequ", "fnlt", "fngt", "fnle", "fnge", "fnltn", "fngtn"]
 AOPS = ["add", "sub", "xchg", "min", "imin", "max", "imax", "and", "or", "xor"]
+# device atomics only: the G14C forms of bits 45-46 and ops 11-15 (agx_types.sail aaop); default mode (bits 45-46)
+DEV_AOPS = AOPS + ["cmpxchg", "fadd", "umin64", "umax64", "end11", "end12", "end13", "end14", "end15"]
+ATOM_MODE_DEFAULT = {"fadd": 1, "umax64": 1, "umin64": 3}
 FMTS = ["u8", "u16", "u32"]
 
 class ParseError(Exception):
@@ -182,15 +187,20 @@ def instr(stmt):
                 raise ParseError("bad trailing operands in %r" % stmt)
         return ["TGMEM", int(mnem.endswith("store")), pre[0], mask_field(pre[1])] + reg(ops[0]) + base + op(ops[1]) + [intv(ops[2])]
     if mnem in ("device_atomic", "threadgroup_atomic"):
-        if len(pre) != 1 or pre[0] not in AOPS:
+        if len(pre) != 1 or pre[0] not in (DEV_AOPS if mnem == "device_atomic" else AOPS):
             raise ParseError("bad atomic op in %r" % stmt)
         dst = ["N"] if ops[0] == "_" else ["S"] + reg(ops[0])
         if mnem == "device_atomic":
             want(4)
             extra = ops[4:]
-            if any(x not in ("signed", "g1") for x in extra):
-                raise ParseError("bad trailing operands in %r" % stmt)
-            return ["DEVATOM", pre[0]] + dst + pair(ops[1]) + op(ops[2]) + [int("signed" in extra)] + op(ops[3]) + [int("g1" in extra)]
+            mode = ATOM_MODE_DEFAULT.get(pre[0], 0)
+            for x in extra:
+                if x.startswith("mode="):
+                    mode = intv(x[5:])
+                elif x not in ("signed", "g1"):
+                    raise ParseError("bad trailing operands in %r" % stmt)
+            return ["DEVATOM", pre[0]] + dst + pair(ops[1]) + op(ops[2]) + [int("signed" in extra)] + op(ops[3]) + \
+                [int("g1" in extra), mode]
         want(3)
         base = ["I", 0]
         for x in ops[3:]:
@@ -203,8 +213,12 @@ def instr(stmt):
         return ["WAIT", intv(ops[0])]
     if mnem == "threadgroup_barrier":
         return ["TG_BARRIER"]
+    if mnem == "memory_barrier":
+        want(3); return ["MEMORY_BARRIER", intv(ops[0]), intv(ops[1]), intv(ops[2])]
     if mnem == "stop":
         return ["STOP"]
+    if mnem == "trap":
+        return ["TRAP"]
     raise ParseError("unknown instruction %r" % stmt)
 
 def directive(stmt):
@@ -223,6 +237,10 @@ def directive(stmt):
         if d == "expectlane": return ["D", "expectlane", intv(t[1])] + reg(t[2]) + [intv(t[4])]
         if d == "expectdev": return ["D", "expectdev", intv(t[1]), intv(t[3])]
         if d == "expectmask": return ["D", "expectmask", intv(t[1])]
+        # the final status the run must end in (default: stopped); checked by this driver, not sent to the model
+        if d == "expectstatus" and len(t) == 2 and re.match(r"^[a-z]+$", t[1]): return ["S", t[1]]
+        # text the final message must contain (with .expectstatus fault: which error)
+        if d == "expectmsg" and len(t) >= 2: return ["S", "msg", stmt.split(None, 1)[1]]
     except IndexError:
         pass
     raise ParseError("bad directive %r" % stmt)
@@ -241,7 +259,8 @@ def statements(text):
             if not s:
                 continue
         if s.startswith("."):
-            out.append(("D", directive(s), s))
+            d = directive(s)
+            out.append(("S" if d[0] == "S" else "D", d, s))
         else:
             out.append(("I", ["I"] + instr(s), s))
     return out
@@ -263,14 +282,24 @@ def status_of(out):
             return m.group(1), int(m.group(2)), m.group(3)
     return None, None, ""
 
+def expected_status(prog):
+    s = [toks[1] for kind, toks, _ in prog if kind == "S" and toks[1] != "msg"]
+    return s[-1] if s else "stopped"
+
+def msg_ok(prog, msg):
+    return all(toks[2] in msg for kind, toks, _ in prog if kind == "S" and toks[1] == "msg")
+
 def run_test(path, roundtrip=False):
     prog = statements(open(path).read())
-    lines = [toks for _, toks, _ in prog]
+    lines = [toks for kind, toks, _ in prog if kind != "S"]
+    want = expected_status(prog)
     if roundtrip:
-        lines.append(["X"])
+        # the encoding check (X) before the run, so that it also covers programs whose run ends in a fault
+        run_at = [i for i, l in enumerate(lines) if l[:2] == ["D", "run"]]
+        lines.insert(run_at[0] if run_at else len(lines), ["X"])
     code, out, err = run_tokens(lines)
     st, ex, msg = status_of(out)
-    ok = code == 0 and st == "stopped" and ex == 0
+    ok = code == 0 and st == want and ex == (1 if want == "fault" else 0) and msg_ok(prog, msg)
     notes = []
     if roundtrip:
         instrs = [(toks, src) for kind, toks, src in prog if kind == "I"]
@@ -322,7 +351,7 @@ def run_binary(path):
     """encode the program with the Sail model, then run it again from its binary encoding (decoded by
     encdec): only for programs whose instructions all have an encoding"""
     prog = statements(open(path).read())
-    code, out, err = run_tokens([t for _, t, _ in prog] + [["X"]])
+    code, out, err = run_tokens([t for k, t, _ in prog if k in ("I", "L")] + [["X"]])
     printed = [l for l in out.splitlines() if l.startswith(("ENC ", "NOENC "))]
     if any(l.startswith("NOENC") for l in printed):
         return None
@@ -333,11 +362,12 @@ def run_binary(path):
             if not placed:
                 lines.append(["C", len(blob), int.from_bytes(blob, "little")])
                 placed = True
-        else:
+        elif kind != "S":
             lines.append(toks)
     code, out, err = run_tokens(lines)
     st, ex, msg = status_of(out)
-    return code == 0 and st == "stopped" and ex == 0, len(blob), msg
+    want = expected_status(prog)
+    return code == 0 and st == want and ex == (1 if want == "fault" else 0) and msg_ok(prog, msg), len(blob), msg
 
 def main(argv):
     if "--binary" in argv:

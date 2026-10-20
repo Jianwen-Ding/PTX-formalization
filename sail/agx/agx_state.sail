@@ -17,7 +17,8 @@ register em : bits(32)
 /* program counter: index into `code` */
 register pc : int
 
-enum astatus = { ST_loading, ST_running, ST_stopped, ST_fault }
+/* ST_trapped: execution ended by `trap` (provisional, see agx_exec.sail) */
+enum astatus = { ST_loading, ST_running, ST_stopped, ST_trapped, ST_fault }
 register status : astatus
 register exit_code : int
 register msg : string

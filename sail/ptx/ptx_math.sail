@@ -278,7 +278,10 @@ function transcendental(op, w, a, raw) = {
     "lg2" => div_r(log_r(x, w), log_r(FV_Fin(false, 2, 0), w), w),
     "ex2" => exp2_r(x, w),
     "tanh" => {
-      if not_bool(fv_is_nan(x)) & fv_cmp(fv_abs(x), FV_Fin(false, 20, 0)) < 0 then {
+      /* tanh(NaN) = NaN; below 2^-12 tanh(x) = x within 2^-24 (the difference of exponentials cancels) */
+      if fv_is_nan(x) then FV_NaN()
+      else if fv_cmp(fv_abs(x), FV_Fin(false, 1, -12)) < 0 then x
+      else if fv_cmp(fv_abs(x), FV_Fin(false, 20, 0)) < 0 then {
         let e1 = exp_r(x, w);
         let e2 = exp_r(fv_neg(x), w);
         div_r(addsub_r(e1, fv_neg(e2), w), addsub_r(e1, e2, w), w)

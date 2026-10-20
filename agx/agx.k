@@ -6,8 +6,12 @@
 // kept in the low half of r0 (r0l), exactly as the documents describe.  Instructions with semantics written out in the documents
 // (mov, get_sr, iadd, imadd, bitop, bfi, asr, popcount, bitrev, ffs, fadd, fmul, fmadd, icmpsel, fcmpsel, if/else/while
 // compares, pop_exec, jumps, ballots, shuffles, wait) follow them; the memory instructions follow the prose descriptions.
-// Anything the documents leave as TODO is not modelled.  Float arithmetic reuses the IEEE core of the PTX semantics (PTX-FLOAT):
-// f32 results flush subnormals to zero (RoundToFloat32Wrapper(flush_to_zero=True)); f16 results do not.
+// Anything the documents leave as TODO is not modelled.  Where the documents and the hardware differ, the model follows the
+// hardware as recorded by the AGX-Performance-Simulator test suite (M2 Max), whose simulator the differential test of
+// sail/agx/gen/simcheck.py compares the Sail model of this file with.  Float arithmetic reuses the IEEE core of the PTX
+// semantics (PTX-FLOAT): sources are binary16 (16-bit registers) or binary32 (32-bit registers, subnormals read as zero in
+// the 32-bit forms); results are rounded once: binary32 results below 2^-126 become zeros before rounding, binary16
+// results keep subnormals, NaNs are 0x7fc00000 / 0x7e00.
 //
 // Assembly dialect (statements end with ';', labels start with an upper-case letter):
 //     r5 = 32-bit register, r5l / r5h = 16-bit halves, u3 = uniform register; `.discard` / `.cache` hints are accepted and ignored.
@@ -281,25 +285,65 @@ module AGX
   rule opFn(laneI(TT, "bitop", D, A, B), G, U, T) => bitopv(TT, opv(G, U, T, A, db(D)), opv(G, U, T, B, db(D)), db(D))
   rule opFn(laneI3(M, "bfi", D, A, B, C), G, U, T) => bfiv(M, opv(G, U, T, A, 32), opv(G, U, T, B, 32), opv(G, U, T, C, 32))
   rule opFn(laneI3(M, "bfeil", D, A, B, C), G, U, T) => ((opv(G, U, T, A, 32) &Int ~Int (#if M ==Int 0 #then 4294967295 #else amask(M) #fi)) |Int ((opv(G, U, T, B, 32) >>Int (opv(G, U, T, C, 32) &Int 127)) &Int (#if M ==Int 0 #then 4294967295 #else amask(M) #fi))) &Int 4294967295
-  rule opFn(lane2("asr", D, A, B), G, U, T) => (asext(opv(G, U, T, A, db(D)), db(D)) >>Int (opv(G, U, T, B, db(D)) &Int 127)) &Int amask(db(D))
+  // asr sign-extends A at its own size (applegpu: sign_extend(a, A.thread_bit_size))
+  rule opFn(lane2("asr", D, A, B), G, U, T) => (asext(opv(G, U, T, A, osz(A)), osz(A)) >>Int (opv(G, U, T, B, 32) &Int 127)) &Int amask(db(D))
   rule opFn(lane1("popcount", D, A), G, U, T) => popc(opv(G, U, T, A, 32), 0)
   rule opFn(lane1("bitrev", D, A), G, U, T) => brev(opv(G, U, T, A, 32), 0, 0)
   rule opFn(lane1("ffs", D, A), G, U, T) => ffsv(opv(G, U, T, A, 32), 31)
-  rule opFn(lane2("fadd", D, A, B), G, U, T) => fpAdd(FZ(), 32, opv(G, U, T, A, 32), opv(G, U, T, B, 32))
-  rule opFn(lane2("fmul", D, A, B), G, U, T) => fpMul(FZ(), 32, opv(G, U, T, A, 32), opv(G, U, T, B, 32))
-  rule opFn(lane3("fmadd", D, A, B, C), G, U, T) => fpFma(FZ(), 32, opv(G, U, T, A, 32), opv(G, U, T, B, 32), opv(G, U, T, C, 32))
-  rule opFn(lane2("fadd16", D, A, B), G, U, T) => fpAdd(.Set, 16, opv(G, U, T, A, 16), opv(G, U, T, B, 16))
-  rule opFn(lane2("fmul16", D, A, B), G, U, T) => fpMul(.Set, 16, opv(G, U, T, A, 16), opv(G, U, T, B, 16))
-  rule opFn(lane3("fmadd16", D, A, B, C), G, U, T) => fpFma(.Set, 16, opv(G, U, T, A, 16), opv(G, U, T, B, 16), opv(G, U, T, C, 16))
-  rule opFn(lane1("rcp", D, A), G, U, T) => fpDiv(FZ(), 32, 1065353216, opv(G, U, T, A, 32))
-  rule opFn(lane5(S, D, A, B, X, Y), G, U, T) => #if cmpv(S, opv(G, U, T, A, 32), opv(G, U, T, B, 32)) #then opv(G, U, T, X, db(D)) #else opv(G, U, T, Y, db(D)) #fi
-  rule opFn(lane2("shuf", D, A, B), G, U, T) => #if opv(G, U, T, B, 32) <Int 32 #then val(G, U, opv(G, U, T, B, 32), srcReg(A)) #else 0 #fi
-  rule opFn(lane2("shufxor", D, A, B), G, U, T) => val(G, U, T xorInt (opv(G, U, T, B, 32) &Int 31), srcReg(A))
-  rule opFn(lane2("shufup", D, A, B), G, U, T) => #if T -Int opv(G, U, T, B, 32) >=Int 0 #then val(G, U, T -Int opv(G, U, T, B, 32), srcReg(A)) #else val(G, U, T, srcReg(A)) #fi
-  rule opFn(lane2("shufdown", D, A, B), G, U, T) => #if T +Int opv(G, U, T, B, 32) <Int 32 #then val(G, U, T +Int opv(G, U, T, B, 32), srcReg(A)) #else val(G, U, T, srcReg(A)) #fi
+  // float arithmetic: the exact result of the source values (fvalK: 16-bit registers binary16, 32-bit registers
+  // binary32 with subnormals read as zero in the 32-bit forms), rounded once into the destination (agxRes)
+  rule opFn(lane2("fadd", D, A, B), G, U, T) => agxRes(fvalK(G, U, T, A, false) +Float fvalK(G, U, T, B, false), D)
+  rule opFn(lane2("fmul", D, A, B), G, U, T) => agxRes(fvalK(G, U, T, A, false) *Float fvalK(G, U, T, B, false), D)
+  rule opFn(lane3("fmadd", D, A, B, C), G, U, T) => agxRes(fvalK(G, U, T, A, false) *Float fvalK(G, U, T, B, false) +Float fvalK(G, U, T, C, false), D)
+  rule opFn(lane2("fadd16", D, A, B), G, U, T) => agxRes(fvalK(G, U, T, A, true) +Float fvalK(G, U, T, B, true), D)
+  rule opFn(lane2("fmul16", D, A, B), G, U, T) => agxRes(fvalK(G, U, T, A, true) *Float fvalK(G, U, T, B, true), D)
+  rule opFn(lane3("fmadd16", D, A, B, C), G, U, T) => agxRes(fvalK(G, U, T, A, true) *Float fvalK(G, U, T, B, true) +Float fvalK(G, U, T, C, true), D)
+  // rcp: the correctly rounded binary32 reciprocal (fp32 subnormal sources read as zero, results below 2^-126 flushed);
+  // a 16-bit destination receives that binary32 value rounded to binary16
+  rule opFn(lane1("rcp", D, A), G, U, T) => agxRes(rcpK(fvalK(G, U, T, A, false)), D)
+  rule opFn(lane5(S, D, A, B, X, Y), G, U, T) => #if cmpl(S, G, U, T, A, B) #then opv(G, U, T, X, db(D)) #else opv(G, U, T, Y, db(D)) #fi
+  // shuffles (applegpu simd_shuffle*): every quad takes the OR q of the low two index bits of its four lanes (active or
+  // not) and permutes its lanes by q; lane T with index I reads element T & 3 of the quad of lane T + I (down), T - I (up),
+  // T xor I (xor), or lane q of quad I >> 2 (idx); its own A when that lane is outside the SIMD-group
+  rule opFn(lane2("shuf", D, A, B), G, U, T) => #if opv(G, U, T, B, 32) <Int 32
+        #then opv(G, U, 4 *Int (opv(G, U, T, B, 32) >>Int 2) +Int quadOr(G, U, opv(G, U, T, B, 32) >>Int 2, B), A, 32)
+        #else opv(G, U, T, A, 32) #fi
+  rule opFn(lane2("shufxor", D, A, B), G, U, T) => #if (T xorInt opv(G, U, T, B, 32)) <Int 32
+        #then opv(G, U, 4 *Int ((T xorInt opv(G, U, T, B, 32)) >>Int 2) +Int ((T &Int 3) xorInt quadOr(G, U, (T xorInt opv(G, U, T, B, 32)) >>Int 2, B)), A, 32)
+        #else opv(G, U, T, A, 32) #fi
+  rule opFn(lane2("shufup", D, A, B), G, U, T) => #if T -Int opv(G, U, T, B, 32) >=Int 0
+        #then opv(G, U, 4 *Int ((T -Int opv(G, U, T, B, 32)) >>Int 2) +Int (((T &Int 3) -Int quadOr(G, U, (T -Int opv(G, U, T, B, 32)) >>Int 2, B) +Int 4) &Int 3), A, 32)
+        #else opv(G, U, T, A, 32) #fi
+  rule opFn(lane2("shufdown", D, A, B), G, U, T) => #if T +Int opv(G, U, T, B, 32) <Int 32
+        #then opv(G, U, 4 *Int ((T +Int opv(G, U, T, B, 32)) >>Int 2) +Int (((T &Int 3) +Int quadOr(G, U, (T +Int opv(G, U, T, B, 32)) >>Int 2, B)) &Int 3), A, 32)
+        #else opv(G, U, T, A, 32) #fi
   rule opFn(_, _, _, _) => 0 [owise]
-  syntax AReg ::= srcReg(AOperand) [function]
-  rule srcReg(R:AReg) => R
+  syntax Int ::= quadOr(Map, Map, Int, AOperand) [function, total]      // OR of the low two index bits of quad Q's lanes
+  rule quadOr(G, U, Q, B) => (opv(G, U, 4 *Int Q, B, 32) |Int opv(G, U, 4 *Int Q +Int 1, B, 32) |Int opv(G, U, 4 *Int Q +Int 2, B, 32)
+                              |Int opv(G, U, 4 *Int Q +Int 3, B, 32)) &Int 3
+
+  // ---------------------------------------------------------------- float sources and results
+  // the value of a float source: 16-bit registers are binary16, 32-bit registers binary32 (subnormals read as zero unless
+  // H, the 16-bit forms), literals rounded to the operation's format (binary16 when H), integers the bits at that format;
+  // widened to the exact working precision of PTX-FLOAT
+  syntax Float ::= fvalK(Map, Map, Int, AOperand, Bool) [function, total]
+  rule fvalK(G, U, T, R:AReg, H) => roundFloat(#if regBits(R) ==Int 16 #then decodeF(val(G, U, T, R), 16)
+                                    #else decodeF(#if H #then val(G, U, T, R) #else flushB(val(G, U, T, R), 32) #fi, 32) #fi, WP, WEXP)
+  rule fvalK(_, _, _, F:Float, H) => roundFloat(decodeF(encodeF(F, #if H #then 16 #else 32 #fi), #if H #then 16 #else 32 #fi), WP, WEXP)
+  rule fvalK(_, _, _, I:Int, H) => roundFloat(decodeF(I &Int amask(#if H #then 16 #else 32 #fi), #if H #then 16 #else 32 #fi), WP, WEXP)
+  // a result written to D: binary16 for a 16-bit destination (nearest even, subnormals kept, NaN 0x7e00); binary32
+  // otherwise, where a non-zero value of magnitude below 2^-126 becomes a zero of its sign before rounding, NaN 0x7fc00000
+  syntax Int ::= agxRes(Float, AReg) [function, total]
+  rule agxRes(V, D) => #if regBits(D) ==Int 16 #then 32256 #else 2143289344 #fi requires isNaN(V)
+  rule agxRes(V, D) => encodeF(roundFloat(V, 11, 5), 16) requires notBool isNaN(V) andBool regBits(D) ==Int 16
+  rule agxRes(V, D) => #if signFloat(V) #then 2147483648 #else 0 #fi
+    requires notBool isNaN(V) andBool regBits(D) =/=Int 16 andBool V =/=Float fc(0.0, V) andBool absFloat(V) <Float roundFloat(decodeF(8388608, 32), WP, WEXP)
+  rule agxRes(V, D) => encodeF(roundFloat(V, 24, 8), 32) [owise]
+  syntax Float ::= rcpK(Float) [function, total]
+  rule rcpK(X) => X requires isNaN(X)
+  rule rcpK(X) => roundFloat(decodeF(fpDiv(.Set, 32, 1065353216, encodeF(roundFloat(X, 24, 8), 32)), 32), WP, WEXP)
+    requires notBool isNaN(X) andBool absFloat(X) <=Float roundFloat(decodeF(2122317824, 32), WP, WEXP)   // |X| <= 2^126
+  rule rcpK(X) => #if signFloat(X) #then --Float fc(0.0, X) #else fc(0.0, X) #fi [owise]                // 1/x below 2^-126
   // get_sr needs the special-register map: handled with a dedicated rule
   rule <k> #exec(get_sr D, N) => .K ... </k> <gpr> G => srLoop(G, S, EM, 0, D, N) </gpr> <srs> S </srs> <em> EM </em> [priority(40)]
   syntax Map ::= srLoop(Map, Map, Int, Int, AReg, Int) [function, total]
@@ -310,10 +354,12 @@ module AGX
   syntax Int ::= asext(Int, Int) [function, total]
   rule asext(V, W) => #if V &Int (1 <<Int (W -Int 1)) ==Int 0 #then V &Int amask(W) #else (V &Int amask(W)) -Int (1 <<Int W) #fi
   syntax Int ::= bitopv(Int, Int, Int, Int) [function, total]
+  // truth tables 0011 and 1100 give A on the hardware (applegpu: UNDEFINED, result = a)
+  rule bitopv(TT, A, B, W) => A &Int amask(W) requires TT ==Int 3 orBool TT ==Int 12
   rule bitopv(TT, A, B, W) => (#if (TT &Int 1) =/=Int 0 #then (~Int A) &Int (~Int B) #else 0 #fi
                            |Int #if (TT &Int 2) =/=Int 0 #then A &Int (~Int B) #else 0 #fi
                            |Int #if (TT &Int 4) =/=Int 0 #then (~Int A) &Int B #else 0 #fi
-                           |Int #if (TT &Int 8) =/=Int 0 #then A &Int B #else 0 #fi) &Int amask(W)
+                           |Int #if (TT &Int 8) =/=Int 0 #then A &Int B #else 0 #fi) &Int amask(W) requires TT =/=Int 3 andBool TT =/=Int 12
   syntax Int ::= bfiv(Int, Int, Int, Int) [function, total]
   rule bfiv(M, A, B, C) => ((A &Int ~Int ((#if M ==Int 0 #then 4294967295 #else amask(M) #fi) <<Int (C &Int 127))) |Int ((B &Int (#if M ==Int 0 #then 4294967295 #else amask(M) #fi)) <<Int (C &Int 127))) &Int 4294967295
   syntax Int ::= popc(Int, Int) [function, total] | brev(Int, Int, Int) [function, total] | ffsv(Int, Int) [function, total]
@@ -323,20 +369,31 @@ module AGX
   rule brev(_, _, R) => R [owise]
   rule ffsv(V, I) => #if I <Int 0 #then 4294967295 #else #if (V >>Int I) &Int 1 ==Int 1 #then I #else ffsv(V, I -Int 1) #fi #fi
 
-  // comparison conditions (integer: unsigned / signed views of the 32-bit values; float: ordered comparisons on f32 bits)
-  syntax Bool ::= cmpv(String, Int, Int) [function, total]
-  rule cmpv(S, A, B) => A ==Int B requires endsWith(S, "eq") andBool notBool startsWith(S, "f")
-  rule cmpv(S, A, B) => A =/=Int B requires endsWith(S, "ne") andBool notBool startsWith(S, "f")
-  rule cmpv(S, A, B) => A <Int B requires endsWith(S, "ult")
-  rule cmpv(S, A, B) => A <=Int B requires endsWith(S, "ule")
-  rule cmpv(S, A, B) => A >Int B requires endsWith(S, "ugt")
-  rule cmpv(S, A, B) => A >=Int B requires endsWith(S, "uge")
-  rule cmpv(S, A, B) => asext(A, 32) <Int asext(B, 32) requires endsWith(S, "slt")
-  rule cmpv(S, A, B) => asext(A, 32) <=Int asext(B, 32) requires endsWith(S, "sle")
-  rule cmpv(S, A, B) => asext(A, 32) >Int asext(B, 32) requires endsWith(S, "sgt")
-  rule cmpv(S, A, B) => asext(A, 32) >=Int asext(B, 32) requires endsWith(S, "sge")
-  rule cmpv(S, A, B) => fcmpv(S, decodeF(A, 32), decodeF(B, 32)) requires startsWith(S, "fcmpsel") orBool startsWith(S, "f")
-  rule cmpv(_, _, _) => false [owise]
+  // comparison conditions of lane T.  Integer conditions compare the sources at their own sizes (unsigned values, or
+  // sign-extended at each operand's size for the signed ones), for both instruction kinds; the float conditions of float
+  // instructions compare the float values (fp32 subnormals read as zero, as on the hardware); `eq` / `ne` never hold on
+  // float instructions; `feq` / `fne` on integer instructions compare the 32-bit views
+  syntax Int ::= osz(AOperand) [function, total]
+  rule osz(R:AReg) => regBits(R)
+  rule osz(_) => 32 [owise]
+  syntax Bool ::= isFC(String) [function, total]
+  rule isFC(S) => endsWith(S, "feq") orBool endsWith(S, "fne") orBool endsWith(S, "flt") orBool endsWith(S, "fle")
+                  orBool endsWith(S, "fgt") orBool endsWith(S, "fge")
+  syntax Bool ::= cmpl(String, Map, Map, Int, AOperand, AOperand) [function, total]
+  rule cmpl(S, G, U, T, A, B) => fcmpv(S, fvalK(G, U, T, A, false), fvalK(G, U, T, B, false)) requires isFC(S) andBool startsWith(S, "f")
+  rule cmpl(S, G, U, T, A, B) => cmpv(S, opv(G, U, T, A, 32), osz(A), opv(G, U, T, B, 32), osz(B)) [owise]
+  syntax Bool ::= cmpv(String, Int, Int, Int, Int) [function, total]   // condition, A, size of A, B, size of B
+  rule cmpv(S, A, _, B, _) => A ==Int B requires endsWith(S, "eq") andBool notBool startsWith(S, "f")
+  rule cmpv(S, A, _, B, _) => A =/=Int B requires endsWith(S, "ne") andBool notBool startsWith(S, "f")
+  rule cmpv(S, A, _, B, _) => A <Int B requires endsWith(S, "ult")
+  rule cmpv(S, A, _, B, _) => A <=Int B requires endsWith(S, "ule")
+  rule cmpv(S, A, _, B, _) => A >Int B requires endsWith(S, "ugt")
+  rule cmpv(S, A, _, B, _) => A >=Int B requires endsWith(S, "uge")
+  rule cmpv(S, A, AS, B, BS) => asext(A, AS) <Int asext(B, BS) requires endsWith(S, "slt")
+  rule cmpv(S, A, AS, B, BS) => asext(A, AS) <=Int asext(B, BS) requires endsWith(S, "sle")
+  rule cmpv(S, A, AS, B, BS) => asext(A, AS) >Int asext(B, BS) requires endsWith(S, "sgt")
+  rule cmpv(S, A, AS, B, BS) => asext(A, AS) >=Int asext(B, BS) requires endsWith(S, "sge")
+  rule cmpv(_, _, _, _, _) => false [owise]
   syntax Bool ::= fcmpv(String, Float, Float) [function, total]
   rule fcmpv(S, X, Y) => false requires isNaN(X) orBool isNaN(Y)
   rule fcmpv(S, X, Y) => X ==Float Y requires notBool (isNaN(X) orBool isNaN(Y)) andBool endsWith(S, "feq")
@@ -370,12 +427,12 @@ module AGX
   rule stkNew(V, "else", C, N) => #if V ==Int 0 #then N #else #if V ==Int 1 #then (#if C #then 0 #else 1 #fi) #else V #fi #fi
   rule stkNew(V, _, _, _) => V [owise]
   syntax Map ::= stk(Map, Map, Int, String, String, AOperand, AOperand, Int) [function, total]
-  rule stk(G, U, T, K, S, A, B, N) => stk(G[T *Int 256 <- ({G[T *Int 256] orDefault 0}:>Int &Int 4294901760) |Int stkNew(r0l(G, T), K, K ==String "pop" orBool cmpv(S, opv(G, U, T, A, 32), opv(G, U, T, B, 32)), N)],
+  rule stk(G, U, T, K, S, A, B, N) => stk(G[T *Int 256 <- ({G[T *Int 256] orDefault 0}:>Int &Int 4294901760) |Int stkNew(r0l(G, T), K, K ==String "pop" orBool cmpl(S, G, U, T, A, B), N)],
                                           U, T +Int 1, K, S, A, B, N) requires T <Int 32
   rule stk(G, _, _, _, _, _, _, _) => G [owise]
   // the new execution mask is computed from the new r0l values: lane t is active iff r0l == 0
   syntax Int ::= stkEm(Map, Map, Int, String, String, AOperand, AOperand, Int, Int) [function, total]
-  rule stkEm(G, U, T, K, S, A, B, N, EM) => stkEm(G, U, T +Int 1, K, S, A, B, N, EM |Int (#if stkNew(r0l(G, T), K, K ==String "pop" orBool cmpv(S, opv(G, U, T, A, 32), opv(G, U, T, B, 32)), N) ==Int 0 #then 1 <<Int T #else 0 #fi)) requires T <Int 32
+  rule stkEm(G, U, T, K, S, A, B, N, EM) => stkEm(G, U, T +Int 1, K, S, A, B, N, EM |Int (#if stkNew(r0l(G, T), K, K ==String "pop" orBool cmpl(S, G, U, T, A, B), N) ==Int 0 #then 1 <<Int T #else 0 #fi)) requires T <Int 32
   rule stkEm(_, _, _, _, _, _, _, _, EM) => EM [owise]
 
   rule <k> #exec(jmp_exec_any L) => .K ... </k> <em> EM </em> <labels> ... L |-> P ... </labels> <pc> PC => #if EM =/=Int 0 #then P #else PC #fi </pc>
@@ -388,7 +445,7 @@ module AGX
   rule <k> #exec(fcmp_ballot C D, A, B) => .K ... </k> <gpr> G => bcast(G, EM, 0, D, ballot(G, U, EM, 0, "fcmpsel " +String ccName(C), A, B, 0)) </gpr> <upr> U </upr> <em> EM </em>
   syntax Int ::= ballot(Map, Map, Int, Int, String, AOperand, AOperand, Int) [function, total]
   rule ballot(G, U, EM, T, S, A, B, R) => ballot(G, U, EM, T +Int 1, S, A, B,
-        R |Int #if ((EM >>Int T) &Int 1) ==Int 1 andBool cmpv(S, opv(G, U, T, A, 32), opv(G, U, T, B, 32)) #then 1 <<Int T #else 0 #fi) requires T <Int 32
+        R |Int #if ((EM >>Int T) &Int 1) ==Int 1 andBool cmpl(S, G, U, T, A, B) #then 1 <<Int T #else 0 #fi) requires T <Int 32
   rule ballot(_, _, _, _, _, _, _, R) => R [owise]
   syntax Map ::= bcast(Map, Int, Int, AReg, Int) [function, total]
   rule bcast(G, EM, T, D, V) => bcast(#if ((EM >>Int T) &Int 1) ==Int 1 #then put(G, T, D, V) #else G #fi, EM, T +Int 1, D, V) requires T <Int 32
@@ -411,33 +468,52 @@ module AGX
   rule ubase(U, P) => ({U[upairLo(P)] orDefault 0}:>Int) |Int (({U[upairHi(P)] orDefault 0}:>Int) <<Int 32)
   syntax Int ::= regAdd(AReg, Int) [function]            // register number of the i-th consecutive register is passed around as an Int
   rule <k> #exec(device_load F N D, P, I, X, S) => #ld(F, N, D, ubase(U, P), I, X, S, "dev") ... </k> <upr> U </upr>
-  rule <k> #exec(threadgroup_load F N D, I, S) => #ld(F, N, D, 0, I, unsigned, S, "tg") ... </k>
+  rule <k> #exec(threadgroup_load F N D, I, _) => #ld(F, N, D, 0, I, unsigned, 0, "tg") ... </k>
   rule <k> #exec(device_store F N D, P, I, X, S) => #st(F, N, D, ubase(U, P), I, X, S, "dev") ... </k> <upr> U </upr>
-  rule <k> #exec(threadgroup_store F N D, I, S) => #st(F, N, D, 0, I, unsigned, S, "tg") ... </k>
+  rule <k> #exec(threadgroup_store F N D, I, _) => #st(F, N, D, 0, I, unsigned, 0, "tg") ... </k>
   syntax KItem ::= #ld(AFmt, Int, AReg, Int, AOperand, ASign, Int, String) | #st(AFmt, Int, AReg, Int, AOperand, ASign, Int, String)
   rule <k> #ld(F, N, D, B, I, X, S, W) => .K ... </k> <gpr> G </gpr> <upr> U </upr> <em> EM </em> <dmem> DM </dmem> <tmem> TM </tmem> <pend> P => P ldAll(G, U, EM, DM, TM, 0, F, N, D, B, I, X, S, W) </pend>
-  rule <k> #st(F, N, D, B, I, X, S, W) => .K ... </k> <gpr> G </gpr> <upr> U </upr> <em> EM </em> <dmem> DM => #if W ==String "dev" #then stAll(G, U, EM, DM, 0, F, N, D, B, I, X, S) #else DM #fi </dmem>
-       <tmem> TM => #if W ==String "tg" #then stAll(G, U, EM, TM, 0, F, N, D, B, I, X, S) #else TM #fi </tmem>
+  rule <k> #st(F, N, D, B, I, X, S, W) => .K ... </k> <gpr> G </gpr> <upr> U </upr> <em> EM </em> <dmem> DM => #if W ==String "dev" #then stEl(G, U, EM, DM, 0, F, N, D, B, I, X, S, W) #else DM #fi </dmem>
+       <tmem> TM => #if W ==String "tg" #then stEl(G, U, EM, TM, 0, F, N, D, B, I, X, S, W) #else TM #fi </tmem>
   // index of lane t extended to 64 bits according to the signedness field
   syntax Int ::= idxv(Map, Map, Int, AOperand, ASign) [function, total]
   rule idxv(G, U, T, I, signed) => asext(opv(G, U, T, I, 32), 32)
   rule idxv(G, U, T, I, unsigned) => opv(G, U, T, I, 32)
   // effective address of lane t
   syntax Int ::= ea(Map, Map, Int, AFmt, AOperand, ASign, Int, Int) [function, total]
+  // threadgroup accesses: byte 4 * size * index (the index counts four-element vectors; 16-bit index) + size * element
+  // (hardware test suite of AGX-Performance-Simulator); the shift operand has no threadgroup encoding and is ignored
+  syntax Int ::= eaw(Map, Map, Int, AFmt, AOperand, ASign, Int, Int, String) [function, total]
+  rule eaw(G, U, T, F, I, _, _, B, "tg") => B +Int 4 *Int fsize(F) *Int opv(G, U, T, I, 16)
+  rule eaw(G, U, T, F, I, X, S, B, _) => ea(G, U, T, F, I, X, S, B) [owise]
   rule ea(G, U, T, F, I, X, S, B) => (((B +Int (idxv(G, U, T, I, X) <<Int (flog(F) +Int S))) &Int 18446744073709551615) >>Int flog(F)) <<Int flog(F)      // rounded down to the element size
   syntax List ::= ldAll(Map, Map, Int, Map, Map, Int, AFmt, Int, AReg, Int, AOperand, ASign, Int, String) [function, total]
-  rule ldAll(G, U, EM, DM, TM, T, F, N, D, B, I, X, S, W) => (#if ((EM >>Int T) &Int 1) ==Int 1 #then ldLane(DM, TM, T, F, N, D, ea(G, U, T, F, I, X, S, B), 0, W) #else .List #fi)
+  rule ldAll(G, U, EM, DM, TM, T, F, N, D, B, I, X, S, W) => (#if ((EM >>Int T) &Int 1) ==Int 1 #then ldLane(DM, TM, T, F, N, D, eaw(G, U, T, F, I, X, S, B, W), 0, W) #else .List #fi)
         ldAll(G, U, EM, DM, TM, T +Int 1, F, N, D, B, I, X, S, W) requires T <Int 32
   rule ldAll(_, _, _, _, _, _, _, _, _, _, _, _, _, _) => .List [owise]
   syntax List ::= ldLane(Map, Map, Int, AFmt, Int, AReg, Int, Int, String) [function, total]
-  rule ldLane(DM, TM, T, F, N, D, A, K, W) => ListItem(ld(T, regNum(D) +Int K, rdBytes(#if W ==String "dev" #then DM #else TM #fi, A +Int K *Int fsize(F), fsize(F)))) ldLane(DM, TM, T, F, N, D, A, K +Int 1, W) requires K <Int N
+  rule ldLane(DM, TM, T, F, N, D, A, K, W) => ListItem(ld(T, mcode(D, K), rdBytes(#if W ==String "dev" #then DM #else TM #fi, A +Int K *Int fsize(F), fsize(F)))) ldLane(DM, TM, T, F, N, D, A, K +Int 1, W) requires K <Int N
   rule ldLane(_, _, _, _, _, _, _, _, _) => .List [owise]
-  syntax Map ::= stAll(Map, Map, Int, Map, Int, AFmt, Int, AReg, Int, AOperand, ASign, Int) [function, total]
-  rule stAll(G, U, EM, M, T, F, N, D, B, I, X, S) => stAll(G, U, EM, #if ((EM >>Int T) &Int 1) ==Int 1 #then stLane(G, M, T, F, N, D, ea(G, U, T, F, I, X, S, B), 0) #else M #fi, T +Int 1, F, N, D, B, I, X, S) requires T <Int 32
-  rule stAll(_, _, _, M, _, _, _, _, _, _, _, _) => M [owise]
-  syntax Map ::= stLane(Map, Map, Int, AFmt, Int, AReg, Int, Int) [function, total]
-  rule stLane(G, M, T, F, N, D, A, K) => stLane(G, wrBytes(M, A +Int K *Int fsize(F), {G[T *Int 256 +Int regNum(D) +Int K] orDefault 0}:>Int, fsize(F)), T, F, N, D, A, K +Int 1) requires K <Int N
-  rule stLane(_, M, _, _, _, _, _, _) => M [owise]
+  // the j-th element uses register j of the tuple at D: the 32-bit registers D + j, or for a 16-bit D the 16-bit registers
+  // that follow it (r5h, r6l, ...); mcode numbers them (32-bit: the register number, 16-bit: 1024 + the half index).  Loads
+  // write the element zero-extended to a 32-bit register or truncated to a 16-bit one; stores write the low bytes.
+  syntax Int ::= mcode(AReg, Int) [function, total]
+  rule mcode(D, K) => #if regHalf(D) ==Int 0 #then regNum(D) +Int K #else 1024 +Int 2 *Int regNum(D) +Int regHalf(D) -Int 1 +Int K #fi
+  syntax Int ::= mget(Map, Int, Int) [function, total]
+  rule mget(G, T, C) => {G[T *Int 256 +Int C] orDefault 0}:>Int requires C <Int 1024
+  rule mget(G, T, C) => ({G[T *Int 256 +Int ((C -Int 1024) >>Int 1)] orDefault 0}:>Int >>Int (16 *Int ((C -Int 1024) &Int 1))) &Int m16() [owise]
+  // stores: element by element, each over all active lanes; device stores go from the highest lane down (the lowest
+  // lane's value stays when lanes store to the same bytes), threadgroup stores from the lowest lane up
+  syntax Map ::= stEl(Map, Map, Int, Map, Int, AFmt, Int, AReg, Int, AOperand, ASign, Int, String) [function, total]
+  rule stEl(G, U, EM, M, K, F, N, D, B, I, X, S, W) => stEl(G, U, EM, stLanes(G, U, EM, M, #if W ==String "dev" #then 31 #else 0 #fi, K, F, D, B, I, X, S, W),
+                                                          K +Int 1, F, N, D, B, I, X, S, W) requires K <Int N
+  rule stEl(_, _, _, M, _, _, _, _, _, _, _, _, _) => M [owise]
+  syntax Map ::= stLanes(Map, Map, Int, Map, Int, Int, AFmt, AReg, Int, AOperand, ASign, Int, String) [function, total]
+  rule stLanes(G, U, EM, M, T, K, F, D, B, I, X, S, W) =>
+       stLanes(G, U, EM, #if ((EM >>Int T) &Int 1) ==Int 1 #then wrBytes(M, eaw(G, U, T, F, I, X, S, B, W) +Int K *Int fsize(F), mget(G, T, mcode(D, K)), fsize(F)) #else M #fi,
+               #if W ==String "dev" #then T -Int 1 #else T +Int 1 #fi, K, F, D, B, I, X, S, W)
+    requires T >=Int 0 andBool T <Int 32
+  rule stLanes(_, _, _, M, _, _, _, _, _, _, _, _, _) => M [owise]
   // atomics (abstract: the reverse-engineered documents do not describe the atomic instructions; Metal exposes relaxed 32-bit
   // atomics).  Active lanes perform their read-modify-write one after the other in lane order (one valid serialisation); the old
   // value is returned like a load, visible at the next `wait`.  The index is zero-extended (the encoding's signedness field is not modelled).
@@ -461,9 +537,19 @@ module AGX
   rule <k> #exec(device_atomic OP D, P, I, V) => .K ... </k> <gpr> G </gpr> <upr> U </upr> <em> EM </em>
        <dmem> M => memOf(atomLoop(G, U, EM, 0, M, OP, D, ubase(U, P), I, V, .List)) </dmem>
        <pend> L => L pendOf(atomLoop(G, U, EM, 0, M, OP, D, ubase(U, P), I, V, .List)) </pend>
-  rule <k> #exec(threadgroup_atomic OP D, I, V) => .K ... </k> <gpr> G </gpr> <upr> U </upr> <em> EM </em>
-       <tmem> M => memOf(atomLoop(G, U, EM, 0, M, OP, D, 0, I, V, .List)) </tmem>
-       <pend> L => L pendOf(atomLoop(G, U, EM, 0, M, OP, D, 0, I, V, .List)) </pend>
+  // threadgroup atomics: the word at byte 16 * index (a threadgroup access with 32-bit elements); the old values are
+  // written when the instruction completes (applegpu: threadgroup atomics have no wait group)
+  rule <k> #exec(threadgroup_atomic OP D, I, V) => .K ... </k> <gpr> G => applyLd(G, pendOf(tgAtomLoop(G, U, EM, 0, M, OP, D, I, V, .List))) </gpr>
+       <upr> U </upr> <em> EM </em>
+       <tmem> M => memOf(tgAtomLoop(G, U, EM, 0, M, OP, D, I, V, .List)) </tmem>
+  syntax AtomRes ::= tgAtomLoop(Map, Map, Int, Int, Map, AAop, AReg, AOperand, AOperand, List) [function, total]
+  rule tgAtomLoop(G, U, EM, T, M, OP, D, I, V, L) =>
+       #if ((EM >>Int T) &Int 1) ==Int 1
+       #then tgAtomLoop(G, U, EM, T +Int 1, wrBytes(M, 16 *Int opv(G, U, T, I, 16), aop(OP, rdBytes(M, 16 *Int opv(G, U, T, I, 16), 4), opv(G, U, T, V, 32)), 4),
+                        OP, D, I, V, L ListItem(ld(T, regNum(D), rdBytes(M, 16 *Int opv(G, U, T, I, 16), 4))))
+       #else tgAtomLoop(G, U, EM, T +Int 1, M, OP, D, I, V, L) #fi
+    requires T <Int 32
+  rule tgAtomLoop(_, _, _, _, M, _, _, _, _, L) => atomRes(M, L) [owise]
   syntax Map ::= memOf(AtomRes) [function, total]
   rule memOf(atomRes(M, _)) => M
   syntax List ::= pendOf(AtomRes) [function, total]
@@ -473,6 +559,9 @@ module AGX
   rule <k> #exec(wait _) => .K ... </k> <gpr> G => applyLd(G, P) </gpr> <pend> P => .List </pend>
   syntax APendLd ::= ld(Int, Int, Int)
   syntax Map ::= applyLd(Map, List) [function, total]
-  rule applyLd(G, ListItem(ld(T, R, V)) Rest) => applyLd(G[T *Int 256 +Int R <- V &Int m32()], Rest)
+  rule applyLd(G, ListItem(ld(T, R, V)) Rest) => applyLd(G[T *Int 256 +Int R <- V &Int m32()], Rest) requires R <Int 1024
+  rule applyLd(G, ListItem(ld(T, C, V)) Rest) => applyLd(G[T *Int 256 +Int ((C -Int 1024) >>Int 1) <-
+       #if (C -Int 1024) &Int 1 ==Int 0 #then ({G[T *Int 256 +Int ((C -Int 1024) >>Int 1)] orDefault 0}:>Int &Int 4294901760) |Int (V &Int m16())
+       #else ({G[T *Int 256 +Int ((C -Int 1024) >>Int 1)] orDefault 0}:>Int &Int m16()) |Int ((V &Int m16()) <<Int 16) #fi], Rest) requires C >=Int 1024
   rule applyLd(G, _) => G [owise]
 endmodule

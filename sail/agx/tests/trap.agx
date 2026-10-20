@@ -1,0 +1,11 @@
+// trap (0x0008): PROVISIONAL.  Its effect on the hardware is not measured (AGX-Performance-Simulator task B21); the
+// model ends execution with the status `trapped`
+.laneid r4;
+iadd r5, r4, 1;
+trap;
+mov r5, 0;                                         // not reached
+stop;
+.run;
+.expectlane 3 r5 = 4;
+.expectstatus trapped;
+.expectmsg trap
