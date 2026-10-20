@@ -102,9 +102,11 @@ module PTX-ALU
   rule un("clz",  _, T, A) => clz(A, wid(T))
   rule un("brev", _, T, A) => brev(A, wid(T))
 
+  // tanh(NaN) = NaN; below 2^-12 tanh(x) = x within 2^-24 (the difference of exponentials cancels there)
   syntax Float ::= tanhF(Float) [function]
+  rule tanhF(F) => F requires isNaN(F) orBool absFloat(F) <Float fc(0.000244140625, F)
   rule tanhF(F) => (expFloat(F) -Float expFloat(--Float F)) /Float (expFloat(F) +Float expFloat(--Float F))
-    requires absFloat(F) <Float fc(20.0, F)
+    requires notBool isNaN(F) andBool absFloat(F) >=Float fc(0.000244140625, F) andBool absFloat(F) <Float fc(20.0, F)
   rule tanhF(F) => #if signFloat(F) #then fc(-1.0, F) #else fc(1.0, F) #fi [owise]
 
   // ------------------------------------------------------------ ternary ops
