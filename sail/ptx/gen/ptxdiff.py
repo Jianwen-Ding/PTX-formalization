@@ -227,8 +227,13 @@ def main(argv=None):
                 for i, (v, info) in sorted(res.items()):
                     if v == "fail":
                         vs = set()
+                        nout = max(1, len(re.findall(r"st\.global\.\w+ \[%rd3", split_kernels(text)[1][i][1])))
                         for (k, want, got) in info:
-                            vs.add(approx_ok(names[i], want, got) or ("nan-unspecified" if nan_unspecified(names[i], want, got) else None))
+                            ins = inputs.get(i, [])[(k // nout) * nin[i]:(k // nout + 1) * nin[i]]
+                            r = approx_ok(names[i], want, got)
+                            if r is None and re.match(r"(sin|cos)\.approx", names[i]) and ins and abs(fvalue(ins[0], "f32")) > 3.1416:
+                                r = "approx-range"     # the PTX ISA bounds the error only on [-pi, pi]
+                            vs.add(r or ("nan-unspecified" if nan_unspecified(names[i], want, got) else None))
                         if None not in vs:
                             v = "approx-subnormal" if "approx-subnormal" in vs else (vs.pop() if len(vs) == 1 else "approx")
                     if v == "fail" and mode == "default":
