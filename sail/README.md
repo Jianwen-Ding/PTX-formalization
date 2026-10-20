@@ -13,7 +13,7 @@ make -C sail xcheck-agx   # AGX bit layouts against dougallj/applegpu (APPLEGPU=
 | Directory | Contents |
 |---|---|
 | `common/` | shared Sail: integer helpers (`ints.sail`: K's `&Int`, `|Int`, `xorInt`, shifts on unbounded integers), list helpers, the IEEE-754 core of `semantics/ptx-float.k` (`ieee.sail`), and the C runtime (`io.c`: token reader of the drivers, sparse byte memories) |
-| `agx/` | the AGX (Apple G13) model of `agx/agx.k`: AST, execution, `encdec` binary encodings, `assembly` mapping, driver |
+| `agx/` | the AGX (Apple G13, with the G14C device-atomic forms) model of `agx/agx.k`: AST, execution, `encdec` binary encodings, `assembly` mapping, driver |
 | `ptx/` | the PTX model of `semantics/*.k` |
 
 ## AGX (`sail/agx`)
@@ -33,7 +33,8 @@ visible at the next `wait`); status / exit code / message.
 (f32, results flushed to zero) and `fadd16 fmul16 fmadd16`, `rcp`, `icmpsel fcmpsel`,
 `if/else/while_{i,f}cmp`, `pop_exec`, `jmp_exec_any/none`, `icmp_ballot fcmp_ballot`,
 `simd_shuffle{,_xor,_up,_down}`, `device_load/store` (with the `signed|unsigned` index operand),
-`threadgroup_load/store`, `device_atomic threadgroup_atomic`, `wait`, `threadgroup_barrier`, `stop`.
+`threadgroup_load/store`, `device_atomic threadgroup_atomic`, `wait`, `threadgroup_barrier`, `memory_barrier`,
+`stop`, `trap` (see "G14C additions" below).
 Every instruction follows the corresponding K rule (lane loop over the pre-instruction state, `opv`
 operand views, the exact `cmpv` condition semantics including its treatment of integer conditions
 on float compares, `stkNew` stack arithmetic over all lanes, loads captured at issue and written at
@@ -54,7 +55,8 @@ every instruction above: `mov_imm` (16/32-bit), `mov` (bitop alias), `get_sr`, `
 `imadd/imsub`, `bitop`, `bfi`, `bfeil`, `asr`, `popcount`, `bitrev`, `ffs`, `fadd32/16`, `fmul32/16`,
 `fmadd32/16`, `rcp`, `icmpsel`, `fcmpsel`, `if/else/while_icmp/fcmp`, `pop_exec`,
 `jmp_exec_any/none`, `icmp_ballot`, `fcmp_ballot`, the four shuffles, `device_load/store`,
-`threadgroup_load/store`, `atomic`, `threadgroup_atomic`, `wait`, `threadgroup_barrier`, `stop`.
+`threadgroup_load/store`, `atomic`, `threadgroup_atomic`, `wait`, `threadgroup_barrier`, `memory_barrier`, `stop`,
+`trap`.
 Short / long forms are chosen like applegpu (long iff a bit beyond the short form is set).  Operand
 forms that applegpu's pseudo-code calls UNDEFINED (odd register numbers for 32-bit operands, ...) or
 that are ambiguous are rejected by the decoder, so `encdec` is a bijection on what it accepts.
@@ -63,8 +65,10 @@ Checks:
 * `agxtest.py` runs `agx/tests/*.agx` (all pass) and `sail/agx/tests/*.agx`; `--roundtrip` prints
   every instruction with the `assembly` mapping, parses the text again and compares, and encodes
   each encodable instruction, decodes the encoding (from a window with garbage after it) and
-  compares; `--binary` reruns the fully encodable programs from their binary encoding.
-* `xcheck_applegpu.py` encodes the test instructions and 3000 random instructions with the Sail
+  compares; `--binary` reruns the fully encodable programs from their binary encoding.  A test passes when the run
+  ends in `stopped`, or in the status named by `.expectstatus` (`trapped`, or `fault` for a form the model leaves
+  undefined, with `.expectmsg TEXT` naming the error).
+* `xcheck_applegpu.py` encodes the test instructions (`agx/tests`, `sail/agx/tests`) and 3000 random instructions with the Sail
   model and disassembles them with applegpu (all agree), and decodes 3000 random words with both
   (every word that the Sail model decodes disassembles identically in applegpu).  One applegpu
   disassembler issue is accounted for: `CmpselSrcDesc.decode` drops bit 8 of a uniform register
@@ -77,7 +81,7 @@ threadgroup `shift`, immediate atomic values, non-adjacent `uA_uB` pairs, K's `f
 not-equal; the hardware's inverted `eq` is `fnequ`), and conditions without a hardware code on
 `icmpsel`/`fcmpsel` (no inversion bit there).  Decoder rejections: the r0l cache hint of the stack
 instructions, the `kill` bit of `mov_imm`, values of unidentified atomic fields other than those
-applegpu observed, and the device-access shift value 3 (applegpu's notes suggest it acts as 2,
+applegpu observed, bits 52 and 53 of the 8-byte `fmadd32`/`fmadd16` (below), and the device-access shift value 3 (applegpu's notes suggest it acts as 2,
 unconfirmed; agx.k adds the shift as given, so the value is rejected in both directions and every
 encodable access means the same in agx.k, this model and the hardware notes).
 
@@ -98,6 +102,64 @@ one ulp; `simcheck.py` runs `agx_run` without its recorded tables); the model's 
 hardware reads 0 / drops stores beyond the allocation); reading a load destination before its `wait` gives the old
 value in the model, while `agx_run` completes wait-group-0 loads at once (not observed on the hardware).
 
+### G14C additions
+
+Measured on an Apple M2 Max (driver-reported G14C B1) in Apple-M2-Playground; the model has no chip parameter, so
+**bits 45-46 of the device atomic mean what they mean on G14C** (on G13X Mesa sets bit 45 as a multi-die coherency
+bit; whether `sub` / `cmpxchg` change meaning there is open, there was no G13X device).
+
+* **Device atomic bits 45-46** (`novel-results/2026-10-17-atomic-variants`, 74 dispatch pairs, 0 faults).  The AST's
+  `mode` is the LLVM backend's operand (`AGXAtomicMode`): bit 0 = bit 45, bit 1 = bit 46 clear, so 0 is Mesa's G14
+  encoding (b45 = 0, b46 = 1).  Assembly: `device_atomic OP D, base, index, S[, signed][, g1][, mode=N]`, `mode=` only
+  when it differs from the op's default (1 for `fadd` and `umax64`, 3 for `umin64`, 0 otherwise).
+
+  | op field | b45 = 0 | b45 = 1, b46 = 0 | b45 = 1, b46 = 1 |
+  |---|---|---|---|
+  | 0, 2, 4-10 | the 32-bit op | same op | same op |
+  | 1 | `sub` | `fadd` | `fadd` (the backend's form, mode 1) |
+  | 3 | `cmpxchg` | `umin64` (mode 3) | `umax64` (mode 1) |
+  | 11-15 | `end11`..`end15` (mode 0 only) | rejected (not run) | rejected (not run) |
+
+  * `cmpxchg`: 32-bit compare-and-swap; S is the pair `rN_rN+1`, rN the new value, rN+1 the compare value; D receives
+    the old word.
+  * `fadd`: float32 add, round to nearest even, denormal inputs and results flushed to sign-preserving zero, every NaN
+    result 0x7fc00000 (2,048 edge and rounding pairs; this is PTX `atom.add.f32`); D receives the old word.
+  * `umin64` / `umax64`: unsigned min / max of the 64-bit word at base + 4 * index (the index counts 32-bit words) with
+    the pair S (lo), S+1 (hi); with a destination D receives 1 if memory changed, else 0 (not the old value).
+  * `end11`..`end15`: no memory effect; the SIMD group ends, inactive lanes included, and earlier stores have landed.
+    In this one-SIMD-group model that is the model's `stop`.
+  * As for the other atomics, active lanes are serialised in lane order and returned values become visible at `wait`
+    (the K model's convention; on the hardware the order varies between runs, 1,024-lane contention tests found one
+    serial chain).
+* **`memory_barrier a, b, c`** (2 bytes, `0xf5 | b << 8 | a << 10 | c << 12`, applegpu `MemoryBarrierInstructionDesc`
+  and the LLVM backend's `MEMORY_BARRIER_g13`).  Every field value encodes; with one SIMD group and one sequential
+  memory the model executes it as a no-op.  Only the seven encodings the backend emits ran on the hardware
+  (`2026-10-18-fence-cost`, `2026-10-11-memory-ordering`: f596, f533, f59a, f59e, f503, f599, f59d); the model stops
+  with an error on the others.
+* **`trap`** (0x0008, applegpu and the backend's `TRAP_g13`).  **Provisional**: what it does when executed is not
+  measured (AGX-Performance-Simulator task B21; `agx_run` treats it as `stop`).  The model ends execution with its own
+  status `trapped` and the message `trap`, so tests can tell it from `stop` (`.expectstatus trapped`).
+* **fmadd bits 52 and 53** (`2026-10-11-fmadd-lane-offset`, `2026-10-18-fmadd-followups`, `2026-10-18-fma-b52`): bit 53
+  of the 8-byte form selects a 10-byte form whose bits 75-79 are a lane offset for A, and bit 52 changes the fmadd32
+  operation.  The decoder rejects both bits (it used to accept and ignore them).  The lane form is not modelled: which
+  value lanes 16..16+k-1 read depends on the following instruction (`wait` or ALU) and on the distance to the write of
+  A, and is not deterministic at any tested distance; with a `wait` after it, lanes 0..k-1 occasionally read non-zero
+  values; the grouped forms (bits 72 / 73) of fmadd32 read undefined values outside the group and were measured only
+  with k = 1; bit 74, bits 72 + 73 together and fmadd16 lane forms under a mask are not established.
+
+Not modelled, or left undefined (the model stops with an error rather than guess):
+* `fadd` without a destination (`red.add.f32`): not run on the hardware.
+* `umin64` / `umax64` with a destination when the source equals the memory word (no tested lane had equal values), and
+  at an address that is not 8-byte aligned (the hardware tests used even indices with aligned bases).  64-bit min / max
+  under contention and with a register base were not measured either; the model treats them like the other atomics.
+* Threadgroup atomics keep the ten 32-bit operations (no threadgroup float add was found among 19 gap bits; its
+  `cmpxchg` and ops 11-15 are not modelled).
+* The 31 undecoded opcodes with low bits `0b11` (`2026-10-11-opcode-descriptions`): 6-byte true no-ops, but only for
+  the tested operand bytes, so the decoder does not accept them (a disassembler must still skip 6 bytes); likewise
+  the 16 "ends" opcodes, 0x18 and 0x78.  The 0x78 barrier (4 aligned SIMD groups) is not modelled.
+* The ordering memory barriers and fences provide between cores, SIMD groups and threadgroups: the model has one SIMD
+  group and one sequential memory.
+
 ### Differential tests (`sail/agx/gen`)
 
 * `agxgen.py`: instruction generator over the Sail AST: every instruction schema, each dimension (operand kinds
@@ -108,7 +170,9 @@ value in the model, while `agx_run` completes wait-group-0 loads at once (not ob
   instructions and random words the Sail model decodes.
 * `simcheck.py`: random programs (ALU, nested if/else/while with exec-mask jumps, device/threadgroup memory and
   atomics), encoded by the Sail model, run on the Sail model and on `agx_run`; final registers and memory compared.
-  `--tests` also runs Sail-dialect tests (`sail/agx/tests/hw-semantics.agx`) on `agx_run`.
+  `--tests` also runs Sail-dialect tests (`sail/agx/tests/hw-semantics.agx`, `atomic-variants.agx`) on `agx_run`.
+  Device atomics cover every op but `end11`..`end15` and every mode; `umin64` / `umax64` without destination at even
+  indices, `fadd` with a destination (the forms the model defines).
 
 ## PTX (`sail/ptx`)
 
