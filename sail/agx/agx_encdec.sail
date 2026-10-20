@@ -636,9 +636,13 @@ function e_fmadd(h, sat, d, a, b, c) = {
           else e_flt(e_flt(e_flt(w0, a, 16, 58), b, 28, 56), c, 40, 54);
   finish(if h then C_FMADD16 else C_FMADD32, w)
 }
+/* bits 52 and 53 of the 8-byte form are rejected: on G14C bit 53 selects a 10-byte form with a lane offset for A,
+ * and bit 52 changes the fmadd32 operation (Apple-M2-Playground 2026-10-11-fmadd-lane-offset, 2026-10-18-fma-b52);
+ * neither is modelled (sail/README.md) */
 val d_fmadd : (bool, int) -> option(ast)
 function d_fmadd(h, w) = {
   start_dec();
+  dchk(fget(w, 52, 2) == 0);
   let d = d_dst(w, 60, not_bool(h), false);
   if h then fin_dec(FMADD(h, bit_int(w, 6), d, d_flt16(w, 16, 58), d_flt16(w, 28, 56), d_flt16(w, 40, 54)))
   else fin_dec(FMADD(h, bit_int(w, 6), d, d_flt(w, 16, 58), d_flt(w, 28, 56), d_flt(w, 40, 54)))
