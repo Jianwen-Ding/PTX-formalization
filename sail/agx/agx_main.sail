@@ -206,6 +206,13 @@ function directive(d) = match d {
     let a = tok_int(); let v = tok_int();
     if rdBytes(SP_DEV, a, 4) != land_int(v, 4294967295) then fatal(concat_str("expectdev ", concat_str(dec_str(a), concat_str(" got ", dec_str(rdBytes(SP_DEV, a, 4))))))
   },
+  "dumpdev" => {
+    /* print n bytes of device memory from address a as hex (differential tests) */
+    let a = tok_int(); let n = tok_int();
+    var s : string = "";
+    foreach (i from 0 to (n - 1)) { s = concat_str(s, sdrop(hex_str(mem_rd(SP_DEV, a + i) + 256), 3)) };
+    print_endline(concat_str("DEVMEM ", concat_str(dec_str(a), concat_str(" ", s))))
+  },
   "expectmask" => { let v = tok_int(); if unsigned(em) != v then fatal(concat_str("exec mask is ", dec_str(unsigned(em)))) },
   _ => fatal(concat_str("unknown directive ", d))
 }

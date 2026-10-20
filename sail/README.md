@@ -81,10 +81,34 @@ applegpu observed, and the device-access shift value 3 (applegpu's notes suggest
 unconfirmed; agx.k adds the shift as given, so the value is rejected in both directions and every
 encodable access means the same in agx.k, this model and the hardware notes).
 
-Known semantic differences from the hardware descriptions (the model follows `agx.k`): shuffles are
-plain lane reads (applegpu describes a quad-based formulation), a 16-bit destination of an f32
-operation takes the low half of the f32 result (applegpu rounds to f16), and `fcmpsel`/ballot
-compares read registers without flushing f32 subnormals.
+Semantics follow the hardware where applegpu's descriptions and the hardware differ, as recorded by the
+AGX-Performance-Simulator test suite (M2 Max; its functional simulator `agx_run` matches all 2670 recorded cases) and
+checked by the differential test below; `agx/agx.k` was changed in the same way: sources keep their own size (`asr`
+sign-extends A at its size, integer compares extend each operand at its size, also for `seq`/`sne`), truth tables
+`0011`/`1100` give A, float sources of 16-bit registers are binary16 and fp32 subnormal sources read as zero in the
+32-bit forms and compares, binary32 results below 2^-126 become zeros before rounding, a 16-bit destination of a 32-bit
+form receives the exact result rounded to binary16, NaNs are canonical (0x7fc00000 / 0x7e00), `.sat` maps NaN and -0
+to +0, shuffles move values between quads (applegpu's formulation), memory register tuples of 16-bit registers are
+consecutive halves, device stores keep the lowest lane's value on conflicts, threadgroup accesses address byte
+`base + 4 * size * index + size * element` and threadgroup atomics `base + 16 * index` with their result written
+without a wait.
+
+Remaining, documented differences: `rcp` is the correctly rounded reciprocal (the hardware's approximation is within
+one ulp; `simcheck.py` runs `agx_run` without its recorded tables); the model's threadgroup memory has no size (the
+hardware reads 0 / drops stores beyond the allocation); reading a load destination before its `wait` gives the old
+value in the model, while `agx_run` completes wait-group-0 loads at once (not observed on the hardware).
+
+### Differential tests (`sail/agx/gen`)
+
+* `agxgen.py`: instruction generator over the Sail AST: every instruction schema, each dimension (operand kinds
+  r32/r16l/r16h/r64/u32/u16l/u16h/immediates/float immediates, hints, `.sx`/`.abs`/`.neg`, conditions, opcodes,
+  saturation, shifts, formats, masks, signedness, wait groups, push counts) one factor at a time, plus random forms.
+* `mccheck.py`: the LLVM AGX MC layer against `encdec`: applegpu disassembly of the Sail bytes, `llvm-mc --disassemble`
+  (length, text, re-encoding) and `llvm-mc` assembly of the expected text, for the generated forms, random
+  instructions and random words the Sail model decodes.
+* `simcheck.py`: random programs (ALU, nested if/else/while with exec-mask jumps, device/threadgroup memory and
+  atomics), encoded by the Sail model, run on the Sail model and on `agx_run`; final registers and memory compared.
+  `--tests` also runs Sail-dialect tests (`sail/agx/tests/hw-semantics.agx`) on `agx_run`.
 
 ## PTX (`sail/ptx`)
 

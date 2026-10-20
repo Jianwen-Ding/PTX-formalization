@@ -116,42 +116,72 @@ function fcmpv(cc, x, y) = {
   }
 }
 
-/* cmpv(S, A, B) of agx.k, where S is "icmpsel <cc>" or "fcmpsel <cc>".  The K rules select on the
- * suffix of S: integer conditions compare the unsigned / signed 32-bit views (for both
- * instruction kinds), `eq` / `ne` hold only for integer instructions, the f-conditions compare
- * the binary32 values (false on NaN) for float instructions; for integer instructions `feq` and
- * `fne` end in "eq" / "ne" and compare as integers, the other f-conditions are false. */
-val cmpv : (bool, acc, int, int) -> bool
-function cmpv(isf, cc, a, b) = match cc {
-  CC_eq => not_bool(isf) & a == b,
-  CC_ne => not_bool(isf) & a != b,
-  CC_seq => a == b,
-  CC_sne => a != b,
-  CC_ult => a < b,
-  CC_ule => a <= b,
-  CC_ugt => a > b,
-  CC_uge => a >= b,
-  CC_slt => sext_int(a, 32) < sext_int(b, 32),
-  CC_sle => sext_int(a, 32) <= sext_int(b, 32),
-  CC_sgt => sext_int(a, 32) > sext_int(b, 32),
-  CC_sge => sext_int(a, 32) >= sext_int(b, 32),
-  _ => {
-    if isf then fcmpv(cc, decodeF(a, 32), decodeF(b, 32))
-    else match cc { CC_feq => a == b, CC_fne => a != b, _ => false }
-  }
+/* integer value of a source: its view zero-extended (sign-extended with `.sx`); immediates 32-bit */
+val op_size : aop -> int
+function op_size(a) = match a { OReg(r) => view_bits(r), _ => 32 }
+
+/* float value of a source (applegpu / hardware): 16-bit registers are binary16, 32-bit registers
+ * binary32 (subnormals read as zero when daz, i.e. outside the 16-bit forms), float literals rounded
+ * to the operation's format (binary32 when daz, else binary16; exact for the 8-bit float immediates of
+ * the encodings), integer immediates (K dialect only) the bits at that format; then abs / neg */
+val fval : (int, aop, bool) -> fv
+function fval(t, a, daz) = match a {
+  OReg(r) => {
+    let b = rval(t, { r with sx = false });
+    let v : fv = match r.view {
+      0 => decodeF(if daz then flushB(b, 32) else b, 32),
+      3 => decodeF(b, 64),
+      _ => decodeF(b, 16)
+    };
+    let v1 = if r.fabs then fv_abs(v) else v;
+    if r.fneg then fv_neg(v1) else v1
+  },
+  OFImm(f) => { let w : int = if daz then 32 else 16 in decodeF(encodeF(f64v(f), w), w) },
+  OImm(i) => { let w : int = if daz then 32 else 16 in decodeF(land_int(i, mask_int(w)), w) }
 }
 
-/* the compared values of lane t: 32-bit views (float operands with their modifiers) */
+/* condition codes on integers: unsigned / signed (sign-extended at each operand's size) */
+val icmpv : (acc, int, int, int, int) -> bool
+function icmpv(cc, a, asz, b, bsz) = match cc {
+  CC_eq => a == b, CC_ne => a != b,
+  CC_seq => sext_int(a, asz) == sext_int(b, bsz), CC_sne => sext_int(a, asz) != sext_int(b, bsz),
+  CC_ult => a < b, CC_ule => a <= b, CC_ugt => a > b, CC_uge => a >= b,
+  CC_slt => sext_int(a, asz) < sext_int(b, bsz),
+  CC_sle => sext_int(a, asz) <= sext_int(b, bsz),
+  CC_sgt => sext_int(a, asz) > sext_int(b, bsz),
+  CC_sge => sext_int(a, asz) >= sext_int(b, bsz),
+  _ => false
+}
+
+val is_fcc : acc -> bool
+function is_fcc(cc) = match cc {
+  CC_feq => true, CC_fne => true, CC_flt => true, CC_fle => true, CC_fgt => true, CC_fge => true,
+  CC_fltn => true, CC_fgtn => true, CC_fnequ => true, CC_fnlt => true, CC_fngt => true, CC_fnle => true,
+  CC_fnge => true, CC_fnltn => true, CC_fngtn => true, _ => false
+}
+
+/* the comparison of lane t (cmpv of agx.k).  Integer conditions compare the sources at their own
+ * sizes (applegpu IConditionDesc: unsigned values, or sign-extended for the signed conditions), for
+ * both instruction kinds; float conditions on float instructions compare the float values (fval:
+ * fp32 subnormals read as zero, as on the hardware).  K dialect only: `eq` / `ne` never hold on
+ * float instructions, and `feq` / `fne` on integer instructions compare the 32-bit views. */
 val cmp_lane : (int, bool, acc, aop, aop) -> bool
-function cmp_lane(t, isf, cc, a, b) =
-  if isf then cmpv(isf, cc, fopv(t, a, 32), fopv(t, b, 32)) else cmpv(isf, cc, opv(t, a, 32), opv(t, b, 32))
+function cmp_lane(t, isf, cc, a, b) = {
+  if is_fcc(cc) then {
+    if isf then fcmpv(cc, fval(t, a, true), fval(t, b, true))
+    else match cc { CC_feq => opv(t, a, 32) == opv(t, b, 32), CC_fne => opv(t, a, 32) != opv(t, b, 32), _ => false }
+  } else if isf & (cc == CC_eq | cc == CC_ne) then false
+  else icmpv(cc, opv(t, a, 32), op_size(a), opv(t, b, 32), op_size(b))
+}
 
 /* ---------------------------------------------------------------- integer helpers */
 val asext : (int, int) -> int
 function asext(v, w) = sext_int(v, w)
 
+/* truth tables 0011 and 1100 (B and not B by the table) give A on the hardware (applegpu: UNDEFINED,
+ * result = a) */
 val bitopv : (int, int, int, int) -> int
-function bitopv(tt, a, b, w) = {
+function bitopv(tt, a, b, w) = if tt == 12 | tt == 3 then land_int(a, amask(w)) else {
   let r0 = if land_int(tt, 1) != 0 then land_int(lnot_int(a), lnot_int(b)) else 0;
   let r1 = if land_int(tt, 2) != 0 then land_int(a, lnot_int(b)) else 0;
   let r2 = if land_int(tt, 4) != 0 then land_int(lnot_int(a), b) else 0;
@@ -204,10 +234,27 @@ val op_bits : aop -> int
 function op_bits(a) = match a { OReg(r) => view_bits(r), _ => 16 }
 
 /* ---------------------------------------------------------------- float helpers */
-val fz : bool -> fmods
-function fz(sat) = { fm_ftz with sat = sat }
-val nofz : bool -> fmods
-function nofz(sat) = { fm_rn with sat = sat }
+/* .sat: clamp to [0, 1]; NaN and zeros give +0 */
+val agx_sat : fv -> fv
+function agx_sat(v) = {
+  if fv_is_nan(v) | fv_is_zero(v) | fv_sign(v) then FV_Fin(false, 0, 0)
+  else if fv_lt(fv_one(), v) then fv_one()
+  else v
+}
+
+/* a result (exact value) written to D: binary16 for a 16-bit destination (round to nearest even,
+ * subnormals kept, NaN 0x7e00); binary32 otherwise, where a non-zero value of magnitude below 2^-126
+ * becomes a zero of its sign before rounding, and NaN is 0x7fc00000 */
+val fres : (fv, bool, areg) -> int
+function fres(v, sat, d) = {
+  let x = if sat then agx_sat(v) else v;
+  if view_bits(d) == 16 then { if fv_is_nan(x) then 32256 else encodeF(x, 16) }
+  else if fv_is_nan(x) then 2143289344
+  else match x {
+    FV_Fin(sg, m, _) => if m != 0 & fv_lt(fv_abs(x), FV_Fin(false, 1, -126)) then (if sg then 2147483648 else 0) else encodeF(x, 32),
+    _ => encodeF(x, 32)
+  }
+}
 
 /* ---------------------------------------------------------------- execute */
 val execute : ast -> unit
@@ -284,7 +331,7 @@ function clause execute(ASR(d, a, b)) = {
   var r : vector(32, int) = vector_init(0);
   foreach (t from 0 to 31) {
     if is_active(t) then
-      r[t] = land_int(asr_int(asext(opv(t, a, db(d)), db(d)), land_int(opv(t, b, db(d)), 127)), amask(db(d)))
+      r[t] = land_int(asr_int(asext(opv(t, a, op_size(a)), op_size(a)), land_int(opv(t, b, 32), 127)), amask(db(d)))
   };
   foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
 }
@@ -300,16 +347,15 @@ function clause execute(IUNOP(op, d, a)) = {
   foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
 }
 
-/* f32 results flush subnormals to zero (FZ() = SetItem("ftz")), f16 results do not */
+/* fadd / fmul / fmadd: the exact result of the source values (fval; the 32-bit forms read fp32
+ * subnormals as zero), rounded once into the destination (fres) */
 function clause execute(FBIN(op, h, sat, d, a, b)) = {
   var r : vector(32, int) = vector_init(0);
-  let w = if h then 16 else 32;
-  let m = if h then nofz(sat) else fz(sat);
   foreach (t from 0 to 31) {
     if is_active(t) then {
-      let x = fopv(t, a, w);
-      let y = fopv(t, b, w);
-      r[t] = match op { FB_add => fpAdd(m, w, x, y), FB_mul => fpMul(m, w, x, y) }
+      let x = fval(t, a, not_bool(h));
+      let y = fval(t, b, not_bool(h));
+      r[t] = fres(match op { FB_add => fv_add_exact(x, y, RN), FB_mul => fv_mul_exact(x, y) }, sat, d)
     }
   };
   foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
@@ -317,18 +363,35 @@ function clause execute(FBIN(op, h, sat, d, a, b)) = {
 
 function clause execute(FMADD(h, sat, d, a, b, c)) = {
   var r : vector(32, int) = vector_init(0);
-  let w = if h then 16 else 32;
-  let m = if h then nofz(sat) else fz(sat);
   foreach (t from 0 to 31) {
-    if is_active(t) then r[t] = fpFma(m, w, fopv(t, a, w), fopv(t, b, w), fopv(t, c, w))
+    if is_active(t) then
+      r[t] = fres(fv_fma_exact(fval(t, a, not_bool(h)), fval(t, b, not_bool(h)), fval(t, c, not_bool(h)), RN), sat, d)
   };
   foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
 }
 
-/* rcp: fpDiv(FZ(), 32, 1.0, A) */
+/* rcp: the binary32 reciprocal (correctly rounded; fp32 subnormal sources read as zero, results of
+ * magnitude below 2^-126 flushed), then .sat; a 16-bit destination receives that binary32 value
+ * rounded to binary16.  The hardware computes an approximation within one unit in the last place of
+ * this value (recorded tables of AGX-Performance-Simulator, testsuite/transcendental). */
+val rcpv : fv -> fv
+function rcpv(x) = match x {
+  FV_NaN() => FV_NaN(),
+  FV_Inf(s) => FV_Fin(s, 0, 0),
+  FV_Fin(s, m, _) =>
+    if m == 0 then FV_Inf(s)
+    else if fv_lt(FV_Fin(false, 1, 126), fv_abs(x)) then FV_Fin(s, 0, 0)
+    else decodeF(fv_div(fm_rn, 32, fv_one(), x), 32)
+}
+
 function clause execute(RCP(sat, d, a)) = {
   var r : vector(32, int) = vector_init(0);
-  foreach (t from 0 to 31) { if is_active(t) then r[t] = fpDiv(fz(sat), 32, 1065353216, fopv(t, a, 32)) };
+  foreach (t from 0 to 31) {
+    if is_active(t) then {
+      let y = rcpv(fval(t, a, true));
+      r[t] = fres(if sat then agx_sat(y) else y, false, d)
+    }
+  };
   foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
 }
 
@@ -340,25 +403,45 @@ function clause execute(CMPSEL(isf, cc, d, a, b, x, y)) = {
   foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
 }
 
+/* shuffles (applegpu simd_shuffle*): values move between quads.  Every quad takes the OR of the low
+ * two index bits of its four lanes (active or not), q, and permutes its lanes by q (idx: lane q of the
+ * quad for every element; down: (i + q) & 3; up: (i - q) & 3; xor: i ^ q).  An active lane t with
+ * index i reads element t & 3 of quad (t + i) >> 2 (down), (t - i) >> 2 (up), (t ^ i) >> 2 (xor), or the
+ * value of quad i >> 2 (idx), and its own A when that lane is outside the SIMD-group. */
+val lidx : int -> range(0, 31)
+function lidx(i) = { assert(0 <= i & i < 32, "lane out of range"); i }
+
 function clause execute(SHUFFLE(k, d, a, b)) = {
-  var r : vector(32, int) = vector_init(0);
-  match a {
-    OReg(ra) => {
-      foreach (t from 0 to 31) {
-        if is_active(t) then {
-          let i = opv(t, b, 32);
-          r[t] = match k {
-            SH_idx => if i < 32 then rval(i, ra) else 0,
-            SH_xor => rval(lxor_int(t, land_int(i, 31)), ra),
-            SH_up => if t - i >= 0 then rval(t - i, ra) else rval(t, ra),
-            SH_down => if t + i < 32 then rval(t + i, ra) else rval(t, ra)
-          }
-        }
+  var av : vector(32, int) = vector_init(0);
+  var bv : vector(32, int) = vector_init(0);
+  foreach (t from 0 to 31) { av[t] = opv(t, a, 32); bv[t] = opv(t, b, 32) };
+  var qv : vector(32, int) = vector_init(0);   /* element i of quad q at 4q + i */
+  foreach (q from 0 to 7) {
+    var qi : int = 0;
+    foreach (i from 0 to 3) { qi = lor_int(qi, land_int(bv[lidx(4 * q + i)], 3)) };
+    foreach (i from 0 to 3) {
+      let l : int = match k {
+        SH_idx => qi,
+        SH_down => land_int(i + qi, 3),
+        SH_up => land_int(i - qi + 4, 3),
+        SH_xor => lxor_int(i, qi)
       };
-      foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
-    },
-    _ => fatal("simd_shuffle of an immediate")
-  }
+      qv[lidx(4 * q + i)] = av[lidx(4 * q + l)]
+    }
+  };
+  var r : vector(32, int) = vector_init(0);
+  foreach (t from 0 to 31) {
+    if is_active(t) then {
+      let i = bv[t];
+      r[t] = match k {
+        SH_idx => if i < 32 then qv[lidx(4 * shr_int(i, 2))] else av[t],
+        SH_down => if t + i < 32 then qv[lidx(4 * shr_int(t + i, 2) + land_int(t, 3))] else av[t],
+        SH_up => if t - i >= 0 then qv[lidx(4 * shr_int(t - i, 2) + land_int(t, 3))] else av[t],
+        SH_xor => if lxor_int(t, i) < 32 then qv[lidx(4 * shr_int(lxor_int(t, i), 2) + land_int(t, 3))] else av[t]
+      }
+    }
+  };
+  foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
 }
 
 /* ---------------------------------------------------------------- execution mask stack (r0l) */
@@ -452,41 +535,73 @@ val ea : (int, afmt, aop, bool, int, int) -> int
 function ea(t, f, i, sgn, s, b) =
   shl_int(shr_int(trunc_int(b + shl_int(idxv(t, i, sgn), flog(f) + s), 64), flog(f)), flog(f))
 
-/* the memory elements of an access: mask bit k selects element k, the j-th selected element uses
- * register R + j (a mask 2^N - 1 is the K model's N consecutive elements) */
+/* the memory elements of an access: mask bit k selects element k (at k * size bytes); the j-th selected
+ * element uses register j of the tuple that starts at R: the 32-bit registers R + j, or for a 16-bit R
+ * the 16-bit registers that follow it (r5h, r6l, r6h, ...).  A load writes the element zero-extended to a
+ * 32-bit register, or truncated to a 16-bit one; a store writes the register's low `size` bytes.  The
+ * hardware performs the elements in order, each over all lanes; a device store's lanes go from the
+ * highest down (so the lowest lane's value stays when lanes store to the same bytes), a threadgroup
+ * store's from the lowest up (AGX-Performance-Simulator hardware test suite, mem_store / threadgroup). */
+val mreg_code : (areg, int) -> int
+function mreg_code(d, j) = if d.view == 0 then d.num + j else 1024 + 2 * d.num + d.view - 1 + j
+
+val mreg_get : (int, int) -> int
+function mreg_get(t, c) =
+  if c < 1024 then reg_raw(t, c)
+  else { let h = c - 1024 in land_int(shr_int(reg_raw(t, shr_int(h, 1)), 16 * land_int(h, 1)), 65535) }
+
+val mreg_put : (int, int, int) -> unit
+function mreg_put(t, c, v) =
+  if c < 1024 then { let i = gidx(t, c) in gpr[i] = get_slice_int(32, v, 0) }
+  else {
+    let h = c - 1024 in
+    let i = gidx(t, shr_int(h, 1)) in
+    if land_int(h, 1) == 0 then gpr[i] = gpr[i][31 .. 16] @ get_slice_int(16, v, 0)
+    else gpr[i] = get_slice_int(16, v, 0) @ gpr[i][15 .. 0]
+  }
+
 function clause execute(DEVMEM(st, f, mask, d, p, i, sgn, s, _, _)) = {
   var newp : list((int, int, int)) = [||];
-  foreach (t from 0 to 31) {
-    if is_active(t) then {
-      let a = ea(t, f, i, sgn, s, ubase(t, p));
-      var j : int = 0;
-      foreach (k from 0 to 3) {
-        if bit_int(mask, k) then {
-          if st then wrBytes(SP_DEV, a + k * fsize(f), reg_raw(t, d.num + j), fsize(f))
-          else newp = (t, d.num + j, rdBytes(SP_DEV, a + k * fsize(f), fsize(f))) :: newp;
-          j = j + 1
+  var addrs : vector(32, int) = vector_init(0);
+  foreach (t from 0 to 31) { if is_active(t) then addrs[t] = ea(t, f, i, sgn, s, ubase(t, p)) };
+  var j : int = 0;
+  foreach (k from 0 to 3) {
+    if bit_int(mask, k) then {
+      foreach (t from 31 downto 0) {
+        if is_active(t) then {
+          let a = addrs[t] + k * fsize(f);
+          if st then wrBytes(SP_DEV, a, mreg_get(t, mreg_code(d, j)), fsize(f))
+          else newp = (t, mreg_code(d, j), rdBytes(SP_DEV, a, fsize(f))) :: newp
         }
-      }
+      };
+      j = j + 1
     }
   };
   if not_bool(st) then pend = pend_append(pend, reverse_list(newp))
 }
 
-function clause execute(TGMEM(st, f, mask, d, base, i, s)) = {
+/* threadgroup accesses: byte base + 4 * size * index + size * k (the index counts four-element
+ * vectors; base and index are 16-bit values: registers, uniforms or immediates; hardware test suite
+ * finding of AGX-Performance-Simulator).  The model's threadgroup memory has no size: the hardware
+ * reads 0 and drops stores beyond the threadgroup allocation. */
+val tg_addr : (int, afmt, aop, aop) -> int
+function tg_addr(t, f, base, i) = opv(t, base, 16) + 4 * fsize(f) * opv(t, i, 16)
+
+function clause execute(TGMEM(st, f, mask, d, base, i, _)) = {
   var newp : list((int, int, int)) = [||];
-  /* stores: the K model writes all lanes' values (lane order) before any load of the same
-   * instruction; one instruction is either a load or a store */
-  foreach (t from 0 to 31) {
-    if is_active(t) then {
-      let a = ea(t, f, i, false, s, opv(t, base, 32));
-      var j : int = 0;
-      foreach (k from 0 to 3) {
-        if bit_int(mask, k) then {
-          if st then wrBytes(SP_TG, a + k * fsize(f), reg_raw(t, d.num + j), fsize(f))
-          else newp = (t, d.num + j, rdBytes(SP_TG, a + k * fsize(f), fsize(f))) :: newp;
-          j = j + 1
+  var addrs : vector(32, int) = vector_init(0);
+  foreach (t from 0 to 31) { if is_active(t) then addrs[t] = tg_addr(t, f, base, i) };
+  var j : int = 0;
+  foreach (k from 0 to 3) {
+    if bit_int(mask, k) then {
+      foreach (t from 0 to 31) {
+        if is_active(t) then {
+          let a = addrs[t] + k * fsize(f);
+          if st then wrBytes(SP_TG, a, mreg_get(t, mreg_code(d, j)), fsize(f))
+          else newp = (t, mreg_code(d, j), rdBytes(SP_TG, a, fsize(f))) :: newp
         }
-      }
+      };
+      j = j + 1
     }
   };
   if not_bool(st) then pend = pend_append(pend, reverse_list(newp))
@@ -526,29 +641,34 @@ function clause execute(DEVATOM(op, d, p, i, sgn, v, _)) = {
   pend = pend_append(pend, reverse_list(newp))
 }
 
+/* threadgroup atomics: the word at byte base + 16 * index (as a threadgroup access with 32-bit
+ * elements); the old value is written to the 32-bit register that holds D when the instruction
+ * completes (no wait: applegpu notes that threadgroup atomics have no wait group) */
 function clause execute(TGATOM(op, d, base, i, v)) = {
-  var newp : list((int, int, int)) = [||];
+  var olds : vector(32, int) = vector_init(0);
   var vals : vector(32, int) = vector_init(0);
   var addrs : vector(32, int) = vector_init(0);
   foreach (t from 0 to 31) {
-    if is_active(t) then { addrs[t] = ea(t, F_U32, i, false, 0, opv(t, base, 32)); vals[t] = opv(t, v, 32) }
+    if is_active(t) then { addrs[t] = opv(t, base, 16) + 16 * opv(t, i, 16); vals[t] = opv(t, v, 32) }
   };
   foreach (t from 0 to 31) {
     if is_active(t) then {
       let o = rdBytes(SP_TG, addrs[t], 4);
       wrBytes(SP_TG, addrs[t], aopv(op, o, vals[t]), 4);
-      match d { Some(r) => newp = (t, r.num, o) :: newp, None() => () }
+      olds[t] = o
     }
   };
-  pend = pend_append(pend, reverse_list(newp))
+  match d {
+    Some(r) => foreach (t from 0 to 31) { if is_active(t) then mreg_put(t, r.num, olds[t]) },
+    None() => ()
+  }
 }
 
-/* wait: apply the pending loads in issue order */
 function clause execute(WAIT(_)) = {
   var l = pend;
   while is_cons(l) do {
     match l {
-      (t, r, v) :: rest => { gpr[gidx(t, r)] = get_slice_int(32, v, 0); l = rest },
+      (t, r, v) :: rest => { mreg_put(t, r, v); l = rest },
       [||] => ()
     }
   };

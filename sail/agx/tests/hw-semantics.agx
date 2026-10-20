@@ -1,0 +1,35 @@
+// Regressions of the differential test against AGX-Performance-Simulator (hardware-recorded semantics): every
+// instruction has an encoding, so the program also runs from its binary form (agxtest.py --binary)
+.laneid r4;
+.all r5 = 4294967280;            // -16
+.all r6 = 32768;                 // r6l = 0x8000
+.all r7 = 1;                     // smallest fp32 subnormal
+.all r8 = 15360;                 // r8l = 1.0 in f16
+.all r9 = 1069547520;            // 1.5
+asr r10, r6l, 4;                 // the 16-bit source is sign-extended at its size: 0xfffff800
+bitop 12 r11, r4, r5;            // truth table 1100 gives A
+icmpsel slt r12, r6l, 0, 1, 2;   // r6l is negative as a 16-bit value
+icmp_ballot seq r13, r5l, r5;    // 0xfff0 vs 0xfffffff0 signed: equal
+fadd r14, r8l, r9;             // f16 source widened: 2.5
+fmul r15l, r9, r9;             // 2.25 rounded to the 16-bit destination (0x4080)
+fadd r16, r7, 0.0;             // fp32 subnormal source reads as zero
+fadd.sat r17, r9, -2.0;        // .sat of a negative result: +0
+simd_shuffle_xor r18, r4, 1;
+threadgroup_store u32 1 r4, r4l, 0;
+threadgroup_load u32 1 r19, r4l, 0;   // byte 16 * lane
+wait 0;
+threadgroup_atomic add r20, 3, r4;        // word at byte 48 (the value lane 3 stored above), result without a wait
+stop;
+.run;
+.expectall r10 = 4294965248;
+.expectlane 7 r11 = 7;
+.expectall r12 = 1;
+.expectall r13 = 4294967295;
+.expectall r14 = 1075838976;
+.expectall r15l = 16512;
+.expectall r16 = 0;
+.expectall r17 = 0;
+.expectlane 6 r18 = 7;
+.expectlane 9 r19 = 9;
+.expectlane 0 r20 = 3;
+.expectlane 1 r20 = 3
