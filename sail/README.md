@@ -95,7 +95,9 @@ form receives the exact result rounded to binary16, NaNs are canonical (0x7fc000
 to +0, shuffles move values between quads (applegpu's formulation), memory register tuples of 16-bit registers are
 consecutive halves, device stores keep the lowest lane's value on conflicts, threadgroup accesses address byte
 `base + 4 * size * index + size * element` and threadgroup atomics `base + 16 * index` with their result written
-without a wait.
+without a wait. The LLVM AGX backend relies on this indexing since 2026-10-20 (llvm-project 56d7e6bbc). It puts
+constant threadgroup offsets that are multiples of 4 * size in the immediate index, a form `agxgen.py` already
+generates (`idx` imm) and `mccheck.py` / `simcheck.py` cover.
 
 Remaining, documented differences: `rcp` is the correctly rounded reciprocal (the hardware's approximation is within
 one ulp; `simcheck.py` runs `agx_run` without its recorded tables); the model's threadgroup memory has no size (the
