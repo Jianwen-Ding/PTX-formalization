@@ -176,6 +176,21 @@ Not modelled, or left undefined (the model stops with an error rather than guess
   Device atomics cover every op but `end11`..`end15` and every mode; `umin64` / `umax64` without destination at even
   indices, `fadd` with a destination (the forms the model defines).
 
+* `mesacheck.py`: the Mesa subset of the model. Mesa's asahi compiler emits only the forms that
+  `llvm/utils/agx-mesa-isa/mesa_isa.py` (LLVM AGX fork) reads off its packer; the backend's `mesa-isa` feature and the
+  simulator's `--mesa-isa` allow only those. Forward: every generated instruction is encoded by the model and classified
+  (seed 1, `-n 1000 --reps 2`: 4,222 instructions, 3,903 forms; 2,721 forms Mesa emits for g14, 1,182 it never does:
+  saturating `imadd`/`imsub`, `iadd`/`imad` shifts above 4, sign extension of immediates and 64-bit sources, float
+  modifiers on ballot sources, memory masks of 0, the short device and threadgroup memory forms, memory barrier
+  encodings Mesa does not use, indexed threadgroup atomics and the G14 atomic modes). Backward: the 571 g14 instructions of the simulator's
+  `rust/src/isa/mesa_corpus.txt`, packed by Mesa's own `agx_pack.c` with random operands, are decoded by the model: 228 of
+  the 440 non-graphics ones decode; 35 opcodes completely (integer ALU, barriers, waits, control flow, device and
+  threadgroup memory, atomics, `get_sr`), 50 partly or not at all. Missing are `floor`, `ceil`, `trunc`, `roundeven`,
+  `srsqrt`, `rsqrt`, `sin_pt_1`/`_2`, `log2`, `exp2`, `extr`, `intl`, `convert`, the quad and SIMD reductions and
+  prefixes, quad shuffles and ballots and the stack instructions; partly covered are the float and half ALU forms, the
+  compare-selects and the device loads and stores (the model has the integer formats only). Extending the model to them
+  is the remaining work of the Mesa subset (g13: 520 instructions, 232 of 405 decode, 34 opcodes complete).
+
 ### PTX differential tests (`sail/ptx/gen`)
 
 * `ptxgen.py OUT -s SEED`: one kernel per instruction form of the Sail PTX model (arithmetic, conversions, half and
