@@ -229,9 +229,11 @@ function hex_word(w, n) = {
   s
 }
 
-/* print each instruction, its encoding, and check that decoding the encoding gives it back */
+/* print each instruction, its encoding, and check that decoding the encoding gives it back (jump labels are
+ * resolved first, so the check can come before or after `.run`) */
 val check_encodings : unit -> unit
 function check_encodings() = {
+  resolve();
   foreach (i from 0 to (ncode - 1)) {
     let a = get_code(i);
     let s = assembly_forwards(a);

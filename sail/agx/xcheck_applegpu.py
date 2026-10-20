@@ -436,15 +436,15 @@ def main(argv):
     if "-s" in argv:
         seed = int(argv[argv.index("-s") + 1])
     R.seed(seed)
-    # the agx/tests instructions with an encoding
+    # the agx/tests and sail/agx/tests instructions with an encoding
     tests = []
-    tdir = os.path.join(agxtest.ROOT, "agx", "tests")
-    for f in sorted(os.listdir(tdir)):
-        for kind, toks, _ in agxtest.statements(open(os.path.join(tdir, f)).read()):
-            if kind == "I" and not (toks[1] == "JMP" and toks[3] == "JL"):
-                tests.append(toks[1:])
+    for tdir in (os.path.join(agxtest.ROOT, "agx", "tests"), os.path.join(HERE, "tests")):
+        for f in sorted(os.listdir(tdir)):
+            for kind, toks, _ in agxtest.statements(open(os.path.join(tdir, f)).read()):
+                if kind == "I" and not (toks[1] == "JMP" and toks[3] == "JL"):
+                    tests.append(toks[1:])
     ok, bad, noenc = check_encode(tests, verbose)
-    print("encode (agx/tests): %d agree with applegpu, %d mismatches, %d without encoding" % (ok, bad, noenc))
+    print("encode (agx/tests, sail/agx/tests): %d agree with applegpu, %d mismatches, %d without encoding" % (ok, bad, noenc))
     rnd = [rinstr() for _ in range(n)]
     ok2, bad2, noenc2 = check_encode(rnd, verbose)
     print("encode (%d random instructions): %d agree with applegpu, %d mismatches, %d without encoding" % (n, ok2, bad2, noenc2))
