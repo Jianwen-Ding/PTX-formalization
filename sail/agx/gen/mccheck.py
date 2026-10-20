@@ -241,10 +241,12 @@ def llvm_text(toks):
         o, dk = T.next(), T.next()
         d = reg_text(*T.reg()) if dk == "S" else "_"
         pf, lo, hi = T.int(), T.int(), T.int()
-        i, sg, v, g = T.op(), T.int(), T.op(), T.int()
+        i, sg, v, g, m = T.op(), T.int(), T.op(), T.int(), T.int()
         base = "%s%d_%s%d" % ("u" if pf else "r", lo, "u" if pf else "r", hi)
-        A = {"min": "umin", "max": "umax"}.get(o, o)
-        return "atomic %s, %d, %s, %s, %s, %s, %s, 0" % (A, g, d, base, i, "signed" if sg else "unsigned", v)
+        # LLVM names the op field (11-15 as numbers); bits 45-46 are its last operand, the AST's mode
+        A = dict({"min": "umin", "max": "umax", "fadd": "sub", "umin64": "cmpxchg", "umax64": "cmpxchg"},
+                 **{"end%d" % n: str(n) for n in range(11, 16)}).get(o, o)
+        return "atomic %s, %d, %s, %s, %s, %s, %s, %d" % (A, g, d, base, i, "signed" if sg else "unsigned", v, m)
     if c == "TGATOM":
         o, dk = T.next(), T.next()
         d = reg_text(*T.reg()) if dk == "S" else "_"

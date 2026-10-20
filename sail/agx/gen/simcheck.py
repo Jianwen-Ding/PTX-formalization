@@ -130,16 +130,22 @@ class ProgGen:
             if not st:
                 out.append(["WAIT", g])
         elif k < 0.65:
-            op = R.choice(agxgen.AOPS)
+            # every device atomic but ops 11-15 (they end the program: atomic-end.agx); the 64-bit min / max at
+            # 8-byte aligned words (even index) and without the changed flag (its value when the source equals
+            # memory is not measured, and the model stops there), fadd always with a destination (red.add.f32
+            # is not measured)
+            op = R.choice([o for o in agxgen.DEV_AOPS if not o.startswith("end")])
+            wide = op in ("umin64", "umax64")
             pair = [1, 4, 5] if R.random() < 0.5 else [0, 38, 39]
             if R.random() < 0.5:
-                idx = ["I", R.randrange(0, 64)]
+                idx = ["I", R.randrange(0, 64, 2 if wide else 1)]
             else:
-                out.append(iand(37, R.choice(DATA), 63))
+                out.append(iand(37, R.choice(DATA), 62 if wide else 63))
                 idx = RG(37)
             g = R.randrange(2)
-            d = ["S"] + reg(0, R.choice(DATA)) if R.random() < 0.8 else ["N"]
-            out.append(["DEVATOM", op] + d + pair + idx + [R.randrange(2)] + RG(R.choice(DATA)) + [g])
+            d = ["S"] + reg(0, R.choice(DATA)) if (R.random() < 0.8 or op == "fadd") and not wide else ["N"]
+            v = RG(R.choice(DATA[:-1]), 3) if op in agxgen.DEV_PAIR else RG(R.choice(DATA))
+            out.append(["DEVATOM", op] + d + pair + idx + [R.randrange(2)] + v + [g, R.choice(agxgen.DEV_MODES[op])])
             out.append(["WAIT", g])
         elif k < 0.85:
             st = R.randrange(2)

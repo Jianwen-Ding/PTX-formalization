@@ -1,0 +1,19 @@
+// Device atomic ops 11-15 (Apple-M2-Playground novel-results/2026-10-17-atomic-variants, G14C): no memory effect, and
+// the whole SIMD group ends, inactive lanes included; a store issued before it lands, nothing after it runs
+.uni u4 = 196608;
+.uni u5 = 0;
+.laneid r4;
+.all r5 = 7;
+device_store u32 1 r4, u4_u5, r4, unsigned, 0;    // word t = t
+if_icmp eq r4, 3;                                  // only lane 3 is active
+device_atomic end11 r6, u4_u5, r4, r5;
+pop_exec 1;
+device_store u32 1 r5, u4_u5, r4, unsigned, 0;    // not reached
+mov r6, 1;
+stop;
+.run;
+.expectdev 196608 = 0;
+.expectdev 196620 = 3;                             // no memory effect of the atomic (lane 3's word)
+.expectdev 196700 = 23;
+.expectall r6 = 0;
+.expectmask 8

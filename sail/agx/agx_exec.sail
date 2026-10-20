@@ -638,32 +638,93 @@ function aopv(op, o, v) = match op {
   A_and => land_int(o, v),
   A_or => lor_int(o, v),
   A_xor => lxor_int(o, v),
-  A_xchg => v
+  A_xchg => v,
+  /* the device-only forms are computed in DEVATOM */
+  _ => o
 }
 
-/* atomics: the active lanes perform their read-modify-write one after the other in lane order;
- * the old value is returned like a load (visible at the next wait) */
-function clause execute(DEVATOM(op, d, p, i, sgn, v, _)) = {
-  var newp : list((int, int, int)) = [||];
-  var vals : vector(32, int) = vector_init(0);
-  var addrs : vector(32, int) = vector_init(0);
-  foreach (t from 0 to 31) {
-    if is_active(t) then { addrs[t] = ea(t, F_U32, i, sgn, 0, ubase(t, p)); vals[t] = opv(t, v, 32) }
-  };
-  foreach (t from 0 to 31) {
-    if is_active(t) then {
-      let o = rdBytes(SP_DEV, addrs[t], 4);
-      wrBytes(SP_DEV, addrs[t], aopv(op, o, vals[t]), 4);
-      match d { Some(r) => newp = (t, r.num, o) :: newp, None() => () }
+/* the float32 atomic add (device atomic op 1 with bit 45, G14C): round to nearest even; denormal inputs and
+ * results become zeros of their sign; every NaN result is 0x7fc00000 (2,048 measured edge and rounding pairs) */
+val atom_fadd : (int, int) -> int
+function atom_fadd(o, v) = fres(fv_add_exact(decodeF(flushB(o, 32), 32), decodeF(flushB(v, 32), 32), RN), false, gpr32(0))
+
+val is_end_op : aaop -> bool
+function is_end_op(op) = match op { A_end11 => true, A_end12 => true, A_end13 => true, A_end14 => true, A_end15 => true, _ => false }
+
+/* the value operand of the pair forms: its register number (S, S + 1) */
+val pair_reg : aop -> option(int)
+function pair_reg(v) = match v { OReg(r) => if r.file == GPR & r.view == 3 then Some(r.num) else None(), _ => None() }
+
+/* device atomics: the active lanes perform their read-modify-write one after the other in lane order; the
+ * returned value (the old word, or the umin64 / umax64 flag) is written like a load (visible at the next wait).
+ *   cmpxchg   32-bit compare-and-swap: S is the new value, S + 1 the compare value; returns the old word
+ *   fadd      float32 add (atom_fadd); returns the old word.  Without a destination (red.add.f32) it was not
+ *             run on the hardware: the model stops with an error
+ *   umin64 / umax64   unsigned min / max of the 64-bit word at base + 4 * index with the pair S (lo), S + 1 (hi);
+ *             the destination receives 1 if memory changed, else 0.  Not measured, so the model stops with an
+ *             error: a word that is not 8-byte aligned, and a destination when the source equals the memory word
+ *   end11 .. end15   no memory effect; the SIMD group ends, inactive lanes included (as `stop` in this
+ *             one-SIMD-group model); earlier stores have landed
+ * mode (bits 45-46) has no further effect. */
+function clause execute(DEVATOM(op, d, p, i, sgn, v, _, _)) = {
+  if is_end_op(op) then status = ST_stopped
+  else if op == A_fadd & is_none(d) then fatal("device_atomic fadd without a destination (red.add.f32) is not measured")
+  else {
+    let wide = op == A_umin64 | op == A_umax64;
+    let pairop = wide | op == A_cmpxchg;
+    let s : int = match pair_reg(v) { Some(n) => n, None() => 0 };
+    if pairop & is_none(pair_reg(v)) then fatal("device_atomic cmpxchg / umin64 / umax64 needs a register pair")
+    else {
+      var newp : list((int, int, int)) = [||];
+      var vals : vector(32, int) = vector_init(0);
+      var cmps : vector(32, int) = vector_init(0);
+      var addrs : vector(32, int) = vector_init(0);
+      foreach (t from 0 to 31) {
+        if is_active(t) then {
+          addrs[t] = ea(t, F_U32, i, sgn, 0, ubase(t, p));
+          if wide then vals[t] = reg_raw(t, s) + shl_int(reg_raw(t, s + 1), 32)
+          else if op == A_cmpxchg then { vals[t] = reg_raw(t, s); cmps[t] = reg_raw(t, s + 1) }
+          else vals[t] = opv(t, v, 32)
+        }
+      };
+      foreach (t from 0 to 31) {
+        if is_active(t) & status != ST_fault then {
+          if wide then {
+            if land_int(addrs[t], 7) != 0 then fatal("device_atomic umin64 / umax64 at an address that is not 8-byte aligned (not measured)")
+            else {
+              let o = rdBytes(SP_DEV, addrs[t], 8);
+              let n = if op == A_umin64 then (if vals[t] < o then vals[t] else o) else (if vals[t] > o then vals[t] else o);
+              if is_some(d) & vals[t] == o then fatal("device_atomic umin64 / umax64: the changed flag when the source equals memory is not measured")
+              else {
+                wrBytes(SP_DEV, addrs[t], n, 8);
+                match d { Some(r) => newp = (t, r.num, if n != o then 1 else 0) :: newp, None() => () }
+              }
+            }
+          } else {
+            let o = rdBytes(SP_DEV, addrs[t], 4);
+            let n : int = match op {
+              A_cmpxchg => if o == cmps[t] then vals[t] else o,
+              A_fadd => atom_fadd(o, vals[t]),
+              _ => aopv(op, o, vals[t])
+            };
+            wrBytes(SP_DEV, addrs[t], n, 4);
+            match d { Some(r) => newp = (t, r.num, o) :: newp, None() => () }
+          }
+        }
+      };
+      if status != ST_fault then pend = pend_append(pend, reverse_list(newp))
     }
-  };
-  pend = pend_append(pend, reverse_list(newp))
+  }
 }
 
 /* threadgroup atomics: the word at byte base + 16 * index (as a threadgroup access with 32-bit
  * elements); the old value is written to the 32-bit register that holds D when the instruction
  * completes (no wait: applegpu notes that threadgroup atomics have no wait group) */
 function clause execute(TGATOM(op, d, base, i, v)) = {
+  match op {
+    A_add => (), A_sub => (), A_xchg => (), A_umin => (), A_imin => (), A_umax => (), A_imax => (), A_and => (), A_or => (), A_xor => (),
+    _ => fatal("threadgroup_atomic: only the ten 32-bit operations are modelled")
+  };
   var olds : vector(32, int) = vector_init(0);
   var vals : vector(32, int) = vector_init(0);
   var addrs : vector(32, int) = vector_init(0);

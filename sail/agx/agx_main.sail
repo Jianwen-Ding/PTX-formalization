@@ -54,7 +54,9 @@ function rd_fmt() = match tok_str() { "u8" => F_U8, "u16" => F_U16, _ => F_U32 }
 val rd_aop : unit -> aaop
 function rd_aop() = match tok_str() {
   "add" => A_add, "sub" => A_sub, "xchg" => A_xchg, "min" => A_umin, "imin" => A_imin, "max" => A_umax,
-  "imax" => A_imax, "and" => A_and, "or" => A_or, _ => A_xor
+  "imax" => A_imax, "and" => A_and, "or" => A_or, "xor" => A_xor, "cmpxchg" => A_cmpxchg, "fadd" => A_fadd,
+  "umin64" => A_umin64, "umax64" => A_umax64, "end11" => A_end11, "end12" => A_end12, "end13" => A_end13,
+  "end14" => A_end14, _ => A_end15
 }
 
 val rd_adst : unit -> option(areg)
@@ -101,7 +103,7 @@ function rd_instr() = match tok_str() {
     DEVMEM(st, f, m, r, p, i, sg, s, g, u6)
   },
   "TGMEM" => { let st = rd_bool(); let f = rd_fmt(); let m = tok_int(); let r = rd_reg(); let b = rd_op(); let i = rd_op(); let s = tok_int(); TGMEM(st, f, m, r, b, i, s) },
-  "DEVATOM" => { let o = rd_aop(); let d = rd_adst(); let p = rd_pair(); let i = rd_op(); let sg = rd_bool(); let v = rd_op(); let g = tok_int(); DEVATOM(o, d, p, i, sg, v, g) },
+  "DEVATOM" => { let o = rd_aop(); let d = rd_adst(); let p = rd_pair(); let i = rd_op(); let sg = rd_bool(); let v = rd_op(); let g = tok_int(); let m = tok_int(); DEVATOM(o, d, p, i, sg, v, g, m) },
   "TGATOM" => { let o = rd_aop(); let d = rd_adst(); let b = rd_op(); let i = rd_op(); let v = rd_op(); TGATOM(o, d, b, i, v) },
   "WAIT" => WAIT(tok_int()),
   "TG_BARRIER" => TG_BARRIER(),

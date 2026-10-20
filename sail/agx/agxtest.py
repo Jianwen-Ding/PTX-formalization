@@ -22,6 +22,9 @@ EXE = os.environ.get("AGX_SAIL", os.path.join(HERE, "build", "agx"))
 CCS = ["eq", "ne", "ult", "ule", "ugt", "uge", "slt", "sle", "sgt", "sge", "feq", "fne", "flt", "fle", "fgt", "fge",
        "seq", "sne", "fltn", "fgtn", "fnequ", "fnlt", "fngt", "fnle", "fnge", "fnltn", "fngtn"]
 AOPS = ["add", "sub", "xchg", "min", "imin", "max", "imax", "and", "or", "xor"]
+# device atomics only: the G14C forms of bits 45-46 and ops 11-15 (agx_types.sail aaop); default mode (bits 45-46)
+DEV_AOPS = AOPS + ["cmpxchg", "fadd", "umin64", "umax64", "end11", "end12", "end13", "end14", "end15"]
+ATOM_MODE_DEFAULT = {"fadd": 1, "umax64": 1, "umin64": 3}
 FMTS = ["u8", "u16", "u32"]
 
 class ParseError(Exception):
@@ -184,15 +187,20 @@ def instr(stmt):
                 raise ParseError("bad trailing operands in %r" % stmt)
         return ["TGMEM", int(mnem.endswith("store")), pre[0], mask_field(pre[1])] + reg(ops[0]) + base + op(ops[1]) + [intv(ops[2])]
     if mnem in ("device_atomic", "threadgroup_atomic"):
-        if len(pre) != 1 or pre[0] not in AOPS:
+        if len(pre) != 1 or pre[0] not in (DEV_AOPS if mnem == "device_atomic" else AOPS):
             raise ParseError("bad atomic op in %r" % stmt)
         dst = ["N"] if ops[0] == "_" else ["S"] + reg(ops[0])
         if mnem == "device_atomic":
             want(4)
             extra = ops[4:]
-            if any(x not in ("signed", "g1") for x in extra):
-                raise ParseError("bad trailing operands in %r" % stmt)
-            return ["DEVATOM", pre[0]] + dst + pair(ops[1]) + op(ops[2]) + [int("signed" in extra)] + op(ops[3]) + [int("g1" in extra)]
+            mode = ATOM_MODE_DEFAULT.get(pre[0], 0)
+            for x in extra:
+                if x.startswith("mode="):
+                    mode = intv(x[5:])
+                elif x not in ("signed", "g1"):
+                    raise ParseError("bad trailing operands in %r" % stmt)
+            return ["DEVATOM", pre[0]] + dst + pair(ops[1]) + op(ops[2]) + [int("signed" in extra)] + op(ops[3]) + \
+                [int("g1" in extra), mode]
         want(3)
         base = ["I", 0]
         for x in ops[3:]:

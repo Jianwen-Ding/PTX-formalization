@@ -8,7 +8,7 @@
  * Fields that the K dialect has no syntax for are printed only when they differ from the K
  * model's implicit value: `.sat` on the mnemonic, a trailing `lsl N` shift, the push count of
  * if/else/while compares, `mask=N` for non-contiguous element masks, `g1`, `u6`, a threadgroup
- * base `base=OP`, `signed` on atomics, and `_` for an atomic without destination.
+ * base `base=OP`, `signed` on atomics, `mode=N` on device atomics, and `_` for an atomic without destination.
  * The driver (sail/agx/agxtest.py) parses this text; Sail prints it (assembly forwards), and the
  * test driver checks that printing the parsed program gives back the parsed program.
  * ============================================================================= */
@@ -83,7 +83,9 @@ function fmt_str(f) = match f { F_U8 => "u8", F_U16 => "u16", F_U32 => "u32" }
 val aop_str : aaop -> string
 function aop_str(o) = match o {
   A_add => "add", A_sub => "sub", A_xchg => "xchg", A_umin => "min", A_imin => "imin", A_umax => "max",
-  A_imax => "imax", A_and => "and", A_or => "or", A_xor => "xor"
+  A_imax => "imax", A_and => "and", A_or => "or", A_xor => "xor", A_cmpxchg => "cmpxchg", A_fadd => "fadd",
+  A_umin64 => "umin64", A_umax64 => "umax64", A_end11 => "end11", A_end12 => "end12", A_end13 => "end13",
+  A_end14 => "end14", A_end15 => "end15"
 }
 
 /* element mask: the K model's count N for masks 2^N - 1, else mask=M */
@@ -218,14 +220,14 @@ function asm_adst_backwards_matches(_) = false
 val asm_adst_matches_prefix : string -> option((option(areg), nat))
 function asm_adst_matches_prefix(_) = None()
 
-/* device atomics: signedness (K: zero-extended index) and wait group */
-val asm_atomx : (bool, int) <-> string
-function asm_atomx_forwards(sg, g) = concat_str(if sg then ", signed" else "", if g != 0 then ", g1" else "")
-function asm_atomx_forwards_matches(_) = true
-function asm_atomx_backwards(_) = (false, 0)
-function asm_atomx_backwards_matches(_) = false
-val asm_atomx_matches_prefix : string -> option(((bool, int), nat))
-function asm_atomx_matches_prefix(_) = None()
+/* device atomics: signedness (K: zero-extended index), wait group, and `mode=N` (bits 45-46) when it differs from
+ * the op's default: 1 for fadd and umax64, 3 for umin64, else 0 (Mesa's encoding) */
+val atom_mode_default : aaop -> int
+function atom_mode_default(o) = match o { A_fadd => 1, A_umax64 => 1, A_umin64 => 3, _ => 0 }
+
+val asm_atomx_forwards : (aaop, bool, int, int) -> string
+function asm_atomx_forwards(o, sg, g, m) = concat_str(concat_str(if sg then ", signed" else "", if g != 0 then ", g1" else ""),
+                                                     if m != atom_mode_default(o) then concat_str(", mode=", dec_str(m)) else "")
 
 val iunop_mnem : iunop <-> string
 mapping iunop_mnem = { U_popcount <-> "popcount", U_bitrev <-> "bitrev", U_ffs <-> "ffs" }
@@ -250,7 +252,9 @@ mapping asm_fmt = { F_U8 <-> "u8", F_U16 <-> "u16", F_U32 <-> "u32" }
 
 val asm_aop : aaop <-> string
 mapping asm_aop = { A_add <-> "add", A_sub <-> "sub", A_xchg <-> "xchg", A_umin <-> "min", A_imin <-> "imin",
-  A_umax <-> "max", A_imax <-> "imax", A_and <-> "and", A_or <-> "or", A_xor <-> "xor" }
+  A_umax <-> "max", A_imax <-> "imax", A_and <-> "and", A_or <-> "or", A_xor <-> "xor", A_cmpxchg <-> "cmpxchg",
+  A_fadd <-> "fadd", A_umin64 <-> "umin64", A_umax64 <-> "umax64", A_end11 <-> "end11", A_end12 <-> "end12",
+  A_end13 <-> "end13", A_end14 <-> "end14", A_end15 <-> "end15" }
 
 val assembly : ast <-> string
 scattered mapping assembly
@@ -280,7 +284,9 @@ mapping clause assembly = DEVMEM(false, f, m, r, p, i, sg, s, g, u6) <-> "device
 mapping clause assembly = DEVMEM(true, f, m, r, p, i, sg, s, g, u6) <-> "device_store" ^ spc() ^ asm_fmt(f) ^ spc() ^ asm_mask(m) ^ spc() ^ asm_reg(r) ^ comma() ^ asm_pair(p) ^ comma() ^ asm_op(i) ^ comma() ^ asm_sign(sg) ^ comma() ^ asm_int(s) ^ asm_memx(g, u6)
 mapping clause assembly = TGMEM(false, f, m, r, b, i, s) <-> "threadgroup_load" ^ spc() ^ asm_fmt(f) ^ spc() ^ asm_mask(m) ^ spc() ^ asm_reg(r) ^ comma() ^ asm_op(i) ^ comma() ^ asm_int(s) ^ asm_tgbase(b)
 mapping clause assembly = TGMEM(true, f, m, r, b, i, s) <-> "threadgroup_store" ^ spc() ^ asm_fmt(f) ^ spc() ^ asm_mask(m) ^ spc() ^ asm_reg(r) ^ comma() ^ asm_op(i) ^ comma() ^ asm_int(s) ^ asm_tgbase(b)
-mapping clause assembly = DEVATOM(o, d, p, i, sg, v, g) <-> "device_atomic" ^ spc() ^ asm_aop(o) ^ spc() ^ asm_adst(d) ^ comma() ^ asm_pair(p) ^ comma() ^ asm_op(i) ^ comma() ^ asm_op(v) ^ asm_atomx(sg, g)
+mapping clause assembly = forwards DEVATOM(o, d, p, i, sg, v, g, m) =>
+  concat_str("device_atomic ", concat_str(aop_str(o), concat_str(" ", concat_str(asm_adst_forwards(d), concat_str(", ",
+  concat_str(pair_str(p), concat_str(", ", concat_str(op_str(i), concat_str(", ", concat_str(op_str(v), asm_atomx_forwards(o, sg, g, m)))))))))))
 mapping clause assembly = TGATOM(o, d, b, i, v) <-> "threadgroup_atomic" ^ spc() ^ asm_aop(o) ^ spc() ^ asm_adst(d) ^ comma() ^ asm_op(i) ^ comma() ^ asm_op(v) ^ asm_tgbase(b)
 mapping clause assembly = WAIT(n) <-> "wait" ^ spc() ^ asm_int(n)
 mapping clause assembly = TG_BARRIER() <-> "threadgroup_barrier"

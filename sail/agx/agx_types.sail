@@ -1,5 +1,5 @@
 /* =============================================================================
- * AGX (Apple G13) in Sail: types and the instruction AST.
+ * AGX (Apple G13 / G14) in Sail: types and the instruction AST.
  *
  * A re-expression of agx/agx.k.  The AST covers the K model's instructions; operands carry the
  * extra fields of the binary encodings (register-cache hints, source sign-extension and float
@@ -49,7 +49,11 @@ enum acc = {
 }
 
 enum afmt = { F_U8, F_U16, F_U32 }
-enum aaop = { A_add, A_sub, A_xchg, A_umin, A_imin, A_umax, A_imax, A_and, A_or, A_xor }
+/* atomic operations: the K model's ten, then the device-atomic forms measured on G14C (Apple-M2-Playground
+ * 2026-10-17-atomic-variants): 32-bit compare-and-swap (op 3), float32 add (op 1 with bit 45), 64-bit unsigned
+ * min / max (op 3 with bit 45, bit 46 clear / set), and ops 11-15, which end the SIMD group */
+enum aaop = { A_add, A_sub, A_xchg, A_umin, A_imin, A_umax, A_imax, A_and, A_or, A_xor,
+              A_cmpxchg, A_fadd, A_umin64, A_umax64, A_end11, A_end12, A_end13, A_end14, A_end15 }
 enum iunop = { U_popcount, U_bitrev, U_ffs }
 enum fbinop = { FB_add, FB_mul }
 enum stkkind = { SK_if, SK_else, SK_while }
@@ -98,8 +102,12 @@ union ast = {
   DEVMEM : (bool, afmt, int, areg, apair, aop, bool, int, int, int),
   /* threadgroup_load / threadgroup_store (store, format, element mask, R, base, index, shift) */
   TGMEM : (bool, afmt, int, areg, aop, aop, int),
-  /* device_atomic (op, D, base, index, signed index, value, wait group) */
-  DEVATOM : (aaop, option(areg), apair, aop, bool, aop, int),
+  /* device_atomic (op, D, base, index, signed index, value, wait group, mode).  The value is a 32-bit register,
+   * or a register pair for cmpxchg (new value, compare value) and umin64 / umax64 (lo, hi).  mode is the LLVM
+   * backend's operand for bits 45-46: bit 0 = bit 45, bit 1 = bit 46 clear; 0 is Mesa's G14 encoding.  Where the
+   * op does not select a meaning with them, the bits have no effect on G14C (bit 45 is Mesa's multi-die
+   * coherency bit). */
+  DEVATOM : (aaop, option(areg), apair, aop, bool, aop, int, int),
   /* threadgroup_atomic (op, D, base, index, value) */
   TGATOM : (aaop, option(areg), aop, aop, aop),
   WAIT : int,

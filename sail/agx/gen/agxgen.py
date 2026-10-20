@@ -26,6 +26,11 @@ FCCS = ["feq", "flt", "fgt", "fltn", "fge", "fle", "fgtn", "fnequ", "fnlt", "fng
 ICCS_SEL = ["eq", "ult", "ugt", "seq", "slt", "sgt"]
 FCCS_SEL = ["feq", "flt", "fgt", "fltn", "fge", "fle", "fgtn"]
 AOPS = ["add", "sub", "xchg", "min", "imin", "max", "imax", "and", "or", "xor"]
+# device atomics: the G14C forms of bits 45-46 (mode) and ops 11-15; the modes each op encodes with
+DEV_AOPS = AOPS + ["cmpxchg", "fadd", "umin64", "umax64", "end11", "end12", "end13", "end14", "end15"]
+DEV_PAIR = ("cmpxchg", "umin64", "umax64")
+DEV_MODES = dict({o: (0, 1, 2, 3) for o in AOPS}, sub=(0, 2), cmpxchg=(0, 2), fadd=(1, 3), umin64=(3,), umax64=(1,),
+                 **{"end%d" % n: (0,) for n in range(11, 16)})
 FMTS = ["u8", "u16", "u32"]
 
 
@@ -230,7 +235,8 @@ def schemas():
         add("threadgroup_" + ("store" if st else "load"),
             [("fmt", FMTS), ("mask", list(range(16))), ("r", [R32, R16L, R16H]), ("base", ["zero", "r16", "u16"]), ("idx", ["imm", R16L, R16H])],
             lambda c, g, st=st: _tgmem(c, g, st))
-    add("atomic", [("op", AOPS), ("dst", ["reg", "none"]), ("base", ["gpr", "uni"]), ("idx", ["imm", "gpr"]), ("sg", BOOL), ("g", BOOL)],
+    add("atomic", [("op", DEV_AOPS), ("dst", ["reg", "none"]), ("base", ["gpr", "uni"]), ("idx", ["imm", "gpr"]), ("sg", BOOL), ("g", BOOL),
+                   ("mode", [0, 1, 2, 3])],
         lambda c, g: _devatom(c, g))
     add("threadgroup_atomic", [("op", AOPS), ("dst", [R32, R16L, R16H, "none"]), ("base", ["zero", "r16", "u16"]), ("idx", ["imm", R16L, R16H])],
         lambda c, g: _tgatom(c, g))
@@ -309,7 +315,11 @@ def _tgmem(c, g, st):
 def _devatom(c, g):
     d = ["S"] + reg(0, g.rn(128), 0) if c["dst"] == "reg" else ["N"]
     idx = ["I", g.R.randrange(-32768, 32768)] if c["idx"] == "imm" else ["R"] + reg(0, g.rn(128), 0)
-    return ["DEVATOM", c["op"]] + d + _pair(g, c["base"]) + idx + [c["sg"]] + ["R"] + reg(0, g.rn(128), 0) + [c["g"]]
+    o = c["op"]
+    v = reg(0, g.rn(127), 3) if o in DEV_PAIR else reg(0, g.rn(128), 0)
+    # a mode the op does not encode with is replaced by one it does (the op's dimension covers every op)
+    m = c["mode"] if c["mode"] in DEV_MODES[o] else g.pick(list(DEV_MODES[o]))
+    return ["DEVATOM", o] + d + _pair(g, c["base"]) + idx + [c["sg"]] + ["R"] + v + [c["g"], m]
 
 
 def _tgatom(c, g):
@@ -488,7 +498,7 @@ def form_key(t):
             i += 2 if t[i] == "I" else 8
             sg = t[i]
             i += 1 + 8
-            return "atomic %s %s, %s, %s, %s, g%d" % (t[1], d, "u" if pf else "r", ik, "signed" if sg else "unsigned", t[i])
+            return "atomic %s %s, %s, %s, %s, g%d, mode %d" % (t[1], d, "u" if pf else "r", ik, "signed" if sg else "unsigned", t[i], t[i + 1])
         if c == "TGATOM":
             i = 2
             if t[i] == "S":

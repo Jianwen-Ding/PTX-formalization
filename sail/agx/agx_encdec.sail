@@ -1,5 +1,5 @@
 /* =============================================================================
- * AGX (G13) binary encodings: `mapping clause encdec`.
+ * AGX (G13 / G14) binary encodings: `mapping clause encdec`.
  *
  * Bit layouts follow dougallj/applegpu (applegpu.py instruction and operand descriptors).  An
  * instruction word is little-endian; `encdec` maps an AST to its word zero-extended to 80 bits
@@ -498,9 +498,11 @@ function fmt_code(f) = match f { F_U8 => 0, F_U16 => 1, F_U32 => 2 }
 val code_fmt : int -> afmt
 function code_fmt(n) = match n { 0 => F_U8, 1 => F_U16, 2 => F_U32, _ => { dec_err = true; F_U32 } }
 
+/* the op field of the ten 32-bit operations (both atomics); the device-only forms are rejected here */
 val atom_code : aaop -> int
 function atom_code(o) = match o {
-  A_add => 0, A_sub => 1, A_xchg => 2, A_umin => 4, A_imin => 5, A_umax => 6, A_imax => 7, A_and => 8, A_or => 9, A_xor => 10
+  A_add => 0, A_sub => 1, A_xchg => 2, A_umin => 4, A_imin => 5, A_umax => 6, A_imax => 7, A_and => 8, A_or => 9, A_xor => 10,
+  _ => { enc_err = true; 0 }
 }
 val code_atom : int -> aaop
 function code_atom(n) = match n {
@@ -774,32 +776,82 @@ function d_tgmem(st, w) = {
   fin_dec(TGMEM(st, code_fmt(fget(w, 24, 4)), fget(w, 36, 4), d_memreg(w, 9, 60, 8), d_tgbase(w), d_tgidx(w), 0))
 }
 
-/* device atomic: op (6,4), g (30), R (10,6)+(40,2) flag 47, base, index, Ou (25), S (48, 8);
- * the unidentified fields hold the values applegpu observed: u1 (26) = 1, u2 (28,2) = 0, u3 (31) = 1,
- * u4 (42,3) = 4, u5 (45,2) = 2 */
-val e_devatom : (aaop, option(areg), apair, aop, bool, aop, int) -> option(int)
-function e_devatom(op, d, p, i, sgn, v, g) = {
+/* device atomic: op (6,4), g (30), R (10,6)+(40,2) flag 47, base, index, Ou (25), S (48, 8), bits 45-46;
+ * the other unidentified fields hold the values applegpu observed: u1 (26) = 1, u2 (28,2) = 0, u3 (31) = 1,
+ * u4 (42,3) = 4.
+ * Bits 45-46 (applegpu u5; G14C, Apple-M2-Playground 2026-10-17-atomic-variants) as the AST's mode, the LLVM
+ * backend's operand: mode = b45 | (1 - b46) << 1, so Mesa's G14 encoding (b45 = 0, b46 = 1) is mode 0.
+ *   op 1: b45 = 0 sub, b45 = 1 fadd (b46 free; the backend emits b46 = 1, mode 1)
+ *   op 3: b45 = 0 cmpxchg (b46 free); b45 = 1: b46 = 0 umin64 (mode 3), b46 = 1 umax64 (mode 1)
+ *   ops 0, 2, 4-10: the same operation for every mode (b45 is Mesa's multi-die coherency bit)
+ *   ops 11-15: end11 .. end15, measured only at Mesa's values (mode 0); other modes are rejected
+ * cmpxchg / umin64 / umax64 read the register pair S, S + 1 (applegpu prints S as a pair for op 3). */
+val devatom_code : (aaop, int) -> int
+function devatom_code(op, m) = {
+  let ok : bool = match op {
+    A_sub => land_int(m, 1) == 0, A_cmpxchg => land_int(m, 1) == 0, A_fadd => land_int(m, 1) == 1,
+    A_umin64 => m == 3, A_umax64 => m == 1,
+    A_end11 => m == 0, A_end12 => m == 0, A_end13 => m == 0, A_end14 => m == 0, A_end15 => m == 0,
+    _ => true
+  };
+  if not_bool(ok) | m < 0 | m > 3 then enc_err = true;
+  match op {
+    A_cmpxchg => 3, A_fadd => 1, A_umin64 => 3, A_umax64 => 3,
+    A_end11 => 11, A_end12 => 12, A_end13 => 13, A_end14 => 14, A_end15 => 15,
+    _ => atom_code(op)
+  }
+}
+
+val code_devatom : (int, int) -> aaop
+function code_devatom(n, m) = {
+  let b45 = land_int(m, 1) == 1;
+  match n {
+    1 => if b45 then A_fadd else A_sub,
+    3 => if not_bool(b45) then A_cmpxchg else if m == 3 then A_umin64 else A_umax64,
+    11 => { dchk(m == 0); A_end11 }, 12 => { dchk(m == 0); A_end12 }, 13 => { dchk(m == 0); A_end13 },
+    14 => { dchk(m == 0); A_end14 }, 15 => { dchk(m == 0); A_end15 },
+    _ => code_atom(n)
+  }
+}
+
+/* the forms whose value is a register pair */
+val devatom_pair : aaop -> bool
+function devatom_pair(op) = op == A_cmpxchg | op == A_umin64 | op == A_umax64
+
+val e_devatom : (aaop, option(areg), apair, aop, bool, aop, int, int) -> option(int)
+function e_devatom(op, d, p, i, sgn, v, g, m) = {
   start_enc();
-  var w : int = fput(fput(fput(0, 6, 4, atom_code(op)), 30, 1, g), 25, 1, if sgn then 0 else 1);
+  let c = devatom_code(op, m);
+  var w : int = fput(fput(fput(0, 6, 4, c), 30, 1, g), 25, 1, if sgn then 0 else 1);
   match d {
     Some(r) => { if r.file != GPR | r.view != 0 | not_bool(nomods(r)) | r.hint != HNone then enc_err = true; w = fput(fput2(w, 10, 6, 40, 2, 2 * r.num), 47, 1, 1) },
     None() => ()
   };
-  match op_reg32(v) { Some(r) => w = fput(w, 48, 8, 2 * r.num), None() => enc_err = true };
+  if devatom_pair(op) then {
+    match v {
+      OReg(r) => { if r.file != GPR | r.view != 3 | not_bool(nomods(r)) | r.hint != HNone then enc_err = true; w = fput(w, 48, 8, 2 * r.num) },
+      _ => enc_err = true
+    }
+  } else {
+    match op_reg32(v) { Some(r) => w = fput(w, 48, 8, 2 * r.num), None() => enc_err = true }
+  };
   w = e_memidx(e_membase(w, p), i);
-  w = fput(fput(fput(fput(fput(w, 26, 1, 1), 28, 2, 0), 31, 1, 1), 42, 3, 4), 45, 2, 2);
+  w = fput(fput(fput(fput(w, 26, 1, 1), 28, 2, 0), 31, 1, 1), 42, 3, 4);
+  w = fput(fput(w, 45, 1, land_int(m, 1)), 46, 1, 1 - fget(m, 1, 1));
   finish(C_ATOMIC, w)
 }
 val d_devatom : int -> option(ast)
 function d_devatom(w) = {
   start_dec();
-  dchk(fget(w, 26, 1) == 1 & fget(w, 28, 2) == 0 & fget(w, 31, 1) == 1 & fget(w, 42, 3) == 4 & fget(w, 45, 2) == 2);
+  dchk(fget(w, 26, 1) == 1 & fget(w, 28, 2) == 0 & fget(w, 31, 1) == 1 & fget(w, 42, 3) == 4);
+  let m = fget(w, 45, 1) + 2 * (1 - fget(w, 46, 1));
   let rv = fget2(w, 10, 6, 40, 2);
   let d : option(areg) = if bit_int(w, 47) then { dchk(not_bool(bit_int(rv, 0))); Some(mkreg(GPR, shr_int(rv, 1), 0, HNone)) } else { dchk(rv == 0); None() };
   let sv = fget(w, 48, 8);
   dchk(not_bool(bit_int(sv, 0)));
-  let op = code_atom(fget(w, 6, 4));
-  fin_dec(DEVATOM(op, d, d_membase(w), d_memidx(w), not_bool(bit_int(w, 25)), OReg(mkreg(GPR, shr_int(sv, 1), 0, HNone)), fget(w, 30, 1)))
+  let op = code_devatom(fget(w, 6, 4), m);
+  let v = mkreg(GPR, shr_int(sv, 1), if devatom_pair(op) then 3 else 0, HNone);
+  fin_dec(DEVATOM(op, d, d_membase(w), d_memidx(w), not_bool(bit_int(w, 25)), OReg(v), fget(w, 30, 1), m))
 }
 
 /* threadgroup atomic: op (24,4), R (9,6)+(60,2) flag 8, present 38, base, index, S (64, 8);
@@ -852,7 +904,7 @@ function agx_encode(i) = match i {
   SHUFFLE(k, d, a, b) => e_shuf(k, d, a, b),
   DEVMEM(st, f, m, r, p, i, sg, s, g, u6) => e_devmem(st, f, m, r, p, i, sg, s, g, u6),
   TGMEM(st, f, m, r, b, i, s) => e_tgmem(st, f, m, r, b, i, s),
-  DEVATOM(op, d, p, i, sg, v, g) => e_devatom(op, d, p, i, sg, v, g),
+  DEVATOM(op, d, p, i, sg, v, g, m) => e_devatom(op, d, p, i, sg, v, g, m),
   TGATOM(op, d, b, i, v) => e_tgatom(op, d, b, i, v),
   WAIT(n) => e_wait(n),
   TG_BARRIER() => e_plain(C_TGBARRIER),
