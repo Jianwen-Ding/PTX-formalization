@@ -6,7 +6,7 @@
 .visible .entry k(.param .u64 pi, .param .u64 po)
 {
     .reg .b64 %rd<4>; .reg .b32 %r<16>; .reg .b16 %h<2>; .reg .b64 %l<2>; .reg .u32 %u<4>; .reg .f32 %f<4>;
-    .reg .pred %p;
+    .reg .pred %p; .reg .b128 %q0;
     ld.param.u64 %rd0, [pi]; ld.param.u64 %rd1, [po];
     ld.global.b32 %r0, [%rd0];
     ld.global.ca.b32 %r1, [%rd0];
@@ -26,7 +26,7 @@
     ld.global.v2.b32 {%r0, %r1}, [%rd0];
     ld.global.v4.b32 {%r0, %r1, %r2, %r3}, [%rd0];
     ld.global.nc.L1::no_allocate.L2::256B.v4.b32 {%r0, %r1, %r2, %r3}, [%rd0];
-    ld.global.b128 %l0, [%rd0];
+    ld.global.b128 %q0, [%rd0];
     st.global.b32 [%rd1], %r0;
     st.global.wb.b32 [%rd1+4], %r1;
     st.global.cg.b32 [%rd1+8], %r2;
@@ -39,7 +39,7 @@
     st.global.L1::evict_first.b32 [%rd1+36], %r9;
     st.global.v2.b32 [%rd1+40], {%r0, %r1};
     st.global.v4.b32 [%rd1+48], {%r0, %r1, %r2, %r3};
-    st.global.b128 [%rd1+64], %l0;
+    st.global.b128 [%rd1+64], %q0;
     prefetch.global.L1 [%rd0];
     prefetch.global.L2 [%rd0];
     prefetch.global.L2::evict_last [%rd0];
