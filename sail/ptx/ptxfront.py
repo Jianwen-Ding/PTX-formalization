@@ -1354,6 +1354,17 @@ def check_types(fname, ld):
             sel = ops[1:] if base == "setp" else (ops[:3] if base == "selp" else ops)
             # mov d, {a, b} packs / unpacks elements of their own size (9.7.9.10)
             checks = [(o, tys[0], False) for o in sel if not (base == "mov" and o[0] == "vec")]
+        elif base in ("shl", "shr") and len(tys) == 1 and len(alltys) == 1 and len(ops) == 3:
+            # "the shift amount operand for left and right shift instructions always has type .u32" (9.4)
+            checks = [(ops[0], tys[0], False), (ops[1], tys[0], False), (ops[2], ("u", 32), False)]
+        elif base in ("mul", "mad") and "wide" in parts and len(tys) == 1 and len(alltys) == 1 and len(ops) >= 3:
+            # .wide: d (and c of mad) are twice the instruction width (9.7.1.3, 9.7.1.4)
+            wt = (tys[0][0], 2 * tys[0][1])
+            checks = [(ops[0], wt, False), (ops[1], tys[0], False), (ops[2], tys[0], False)] + \
+                     ([(ops[3], wt, False)] if base == "mad" and len(ops) == 4 else [])
+        elif base in ("popc", "clz") and len(tys) == 1 and len(alltys) == 1 and len(ops) == 2:
+            # d has type .u32, a the instruction type (9.7.1.15, 9.7.1.16)
+            checks = [(ops[0], ("u", 32), False), (ops[1], tys[0], False)]
         elif base == "ld" and len(tys) == 1 and len(alltys) == 1 and ops:
             checks = [(ops[0], tys[0], True)]
         elif base == "st" and len(tys) == 1 and len(alltys) == 1 and ops:

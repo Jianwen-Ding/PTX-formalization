@@ -1,0 +1,15 @@
+// expect: mul.wide.u32: operand %u of type .u32 does not agree with the instruction type .u64
+// an operand whose declared type does not agree with its operand type (9.4, .wide result), reported under .isacheck
+.version 8.0
+.target sm_80
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .u32 %u; .reg .u64 %d, %s; .reg .b64 %o;
+    ld.param.u64 %o, [po];
+    mul.wide.u32 %u, %u, %u;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

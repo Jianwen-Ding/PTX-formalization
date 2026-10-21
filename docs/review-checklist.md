@@ -156,7 +156,8 @@ Open:
       exactly); the data operand of ld / st and both cvt operands follow the relaxed Tables 27 / 28 (wider registers,
       no float with an integer type). Checked in the front end, which knows declared register types; no false positive
       over tests/ and tests/zluda (tests/neg/isa-ty-*.ptx, tests/isa-ty-relaxed.ptx). tests/sm1x-ftz.ptx used
-      `selp.u32` into an `.f32` register and was corrected.
+      `selp.u32` into an `.f32` register and was corrected. Also the `.u32` shift amount of shl / shr, the doubled
+      d (and c) of mul.wide / mad.wide, and the `.u32` result of popc / clz (tests/neg/isa-ty-shamt.ptx, isa-ty-wide.ptx).
 - [x] hard errors audited (loose syntax, solid semantics): `mma.m8n8k4` `.dtype .f16` with `.ctype .f32` now runs (f32
       accumulation rounded to f16, checked against the exact model) and is reported under `.isacheck`; a call without a
       return list discards the results; an undefined `wgmma` shape stops with an error instead of deadlocking.  Kept as
