@@ -1,0 +1,26 @@
+// .target sm_1x: single-precision instructions flush subnormal inputs and results to sign-preserving zero (9.7.3); .f64 keeps them
+.version 1.4
+.target sm_13
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .f32 %f<4>; .reg .f64 %d<3>; .reg .b64 %o; .reg .pred %p;
+    ld.param.u64 %o, [po];
+    mov.b32 %f1, 0x00000003; mov.b32 %f2, 0x80000001;
+    add.f32 %f0, %f1, 0f00000000;
+    st.global.b32 [%o], %f0;
+    mul.rn.f32 %f0, %f1, 0f3F800000;
+    st.global.b32 [%o+4], %f0;
+    mul.f32 %f0, %f2, 0f3F800000;
+    st.global.b32 [%o+8], %f0;
+    setp.gt.f32 %p, %f1, 0f00000000;
+    selp.u32 %f3, 1, 0, %p;
+    st.global.b32 [%o+12], %f3;
+    mov.b64 %d1, 0x0000000000000003;
+    add.f64 %d0, %d1, 0d0000000000000000;
+    st.global.b64 [%o+16], %d0;
+    ret;
+}
+.buffer O .u32 [6];
+.launch k <<< 1, 1 >>> (O);
+.expect O .u32 = { 0, 0, 2147483648, 0, 3, 0 };

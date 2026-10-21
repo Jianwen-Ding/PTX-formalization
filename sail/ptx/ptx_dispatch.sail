@@ -16,7 +16,19 @@ val exec_gx : (opcode, list(xop)) -> bool
 function exec_gx(o, ops) =
   gx_alu(o, ops) | gx_int(o, ops) | gx_intx(o, ops) | gx_ctrl(o, ops) | gx_sync(o, ops) | gx_misc(o, ops) | gx_half(o, ops) | gx_memq(o, ops) | gx_video(o, ops) | gx_ext(o, ops)
 
-function exec_dispatch(o, ops) = {
+/* "Single-precision instructions ... flush subnormal inputs and results to sign-preserving zero for sm_1x targets"
+ * (PTX ISA 9.3 9.7.3): on an sm_1x target every .f32 instruction that takes .ftz behaves as if it had it */
+let FTZ_OPS : list(string) = [|"add", "sub", "mul", "mad", "fma", "div", "rcp", "sqrt", "rsqrt", "sin", "cos", "lg2",
+  "ex2", "min", "max", "abs", "neg", "setp", "set", "slct", "cvt"|]
+val tysHasF32 : list(ty) -> bool
+function tysHasF32(l) = match l { [||] => false, t :: r => (t.k == "f" & t.w == 32) | tysHasF32(r) }
+val sm1xFtz : opcode -> opcode
+function sm1xFtz(o) =
+  if isasm > 0 & isasm < 20 & has(FTZ_OPS, o.base) & not_bool(has(o.mods, "ftz")) & tysHasF32(o.tys)
+  then { o with mods = pend_append(o.mods, [|"ftz"|]) } else o
+
+function exec_dispatch(o0, ops) = {
+  let o = sm1xFtz(o0);
   if exec_prio(o, ops) then ()
   else if exec_specific(o, ops) then ()
   else if exec_gx(o, ops) then ()

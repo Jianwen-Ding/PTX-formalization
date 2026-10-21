@@ -154,7 +154,9 @@ Open:
       errors (no meaning to give): undeclared registers, special-register writes, `d|literal`, partial return lists,
       tcgen05 descriptor bit 52 and `cta_group::2` disable-output-lane (layouts not specified), inc / dec on floats
 - [ ] tcgen05 allocation patterns (alloc after relinquish, growing size, exit without dealloc) under `.ub strict`
-- [ ] sm_1x single-precision defaults (ftz, mad.f32 truncation); `brkpt` suspends
+- [x] sm_1x single-precision default: on an sm_1x target every `.f32` instruction that takes `.ftz` flushes subnormal
+      inputs and results (§9.7.3); `.f64` keeps them (tests/sm1x-ftz.ptx)
+- [ ] sm_1x `mad.f32` mantissa truncation of the product (§9.7.3.5); `brkpt` suspends
 - [x] function-scope variables (`.shared`, `.global`, `.const`) are bound per function: equal names in two functions no
       longer share a symbol (tests/func-scope-vars.ptx)
 - [ ] `.ashift` with `.sp`, f64 mma "fma-equivalent precision", Figure 187 lane placement (see the matrix section)
