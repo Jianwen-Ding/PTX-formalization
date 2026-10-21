@@ -2,8 +2,9 @@
 """The Mesa subset of the AGX Sail model.
 
 Mesa's asahi compiler emits a subset of the instruction set: the forms that llvm/utils/agx-mesa-isa/mesa_isa.py in
-the LLVM AGX fork reads off its packer (src/asahi/compiler/agx_pack.c). That subset is what the LLVM backend's
-mesa-isa feature and the AGX Performance Simulator's --mesa-isa option allow. This checks the Sail model against it
+the LLVM AGX fork reads off its packer (src/asahi/compiler/agx_pack.c). That subset is what strict mode (agx-strict)
+allows: the LLVM backend's agx-strict feature (-mattr=+agx-strict) and the AGX Performance Simulator's --agx-strict
+option. This checks the Sail model against it
 in both directions:
 
   forms     every instruction agxgen generates (each form one factor at a time, plus random ones) is encoded by the
