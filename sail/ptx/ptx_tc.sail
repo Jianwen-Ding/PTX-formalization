@@ -106,11 +106,21 @@ function tcCell(m, a, t, i, h) = {
   else -1
 }
 
+/* .pack::16b / .unpack::16b (ISA 9.7.17.8.2, Figure 193): the 32-bit cell of register i becomes two adjacent 16-bit
+   columns, so its column (relative to taddr) doubles; for .32x32b and .16x32bx2 (whose split offset is a column offset)
+   those are the cells of elements 2i and 2i + 1 */
+val tcPkCell : (list(string), int, int, int, int, int) -> int
+function tcPkCell(m, a, t, i, h, half) =
+  if has(m, "16x64b") | has(m, "16x128b") | has(m, "16x256b") then {
+    let k = tcCell(m, a, t, i, h);
+    tcKey(tdiv_int(k, 65536), tcCol(a) + 2 * (fmod_int(k, 65536) - tcCol(a)) + half)
+  } else tcCell(m, a, t, 2 * i + half, h)
+
 val tcLoad : (int, list(string), int, int, int, int, bool) -> list(int)
 function tcLoad(tm, m, a, t, h, n, pk) = {
   var out : list(int) = [||];
   foreach (i from 0 to (n - 1))
-    out = pend_append(out, [|if pk then lor_int(land_int(tcWord(tm, tcCell(m, a, t, 2 * i, h)), 65535), shl_int(land_int(tcWord(tm, tcCell(m, a, t, 2 * i + 1, h)), 65535), 16))
+    out = pend_append(out, [|if pk then lor_int(land_int(tcWord(tm, tcPkCell(m, a, t, i, h, 0)), 65535), shl_int(land_int(tcWord(tm, tcPkCell(m, a, t, i, h, 1)), 65535), 16))
                             else tcWord(tm, tcCell(m, a, t, i, h))|]);
   out
 }
@@ -121,7 +131,7 @@ function tcStore(tm, m, a, t, h, vs, up) = {
   var x = vs;
   while is_cons(x) do {
     match x { v :: rest => {
-      if up then { tcPut(tm, tcCell(m, a, t, 2 * i, h), land_int(v, 65535)); tcPut(tm, tcCell(m, a, t, 2 * i + 1, h), land_int(asr_int(v, 16), 65535)) }
+      if up then { tcPut(tm, tcPkCell(m, a, t, i, h, 0), land_int(v, 65535)); tcPut(tm, tcPkCell(m, a, t, i, h, 1), land_int(asr_int(v, 16), 65535)) }
       else tcPut(tm, tcCell(m, a, t, i, h), v);
       i = i + 1;
       x = rest
