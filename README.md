@@ -231,5 +231,5 @@ make fuzz SEEDS="1 2 3" FUZZ_N=512
 make examples
 ```
 
-CI (`.github/workflows/ci.yml`) installs K from the official release and runs
-all three.
+CI (`.github/workflows/ci.yml`) builds the Sail models (Sail 0.20.3 from opam) and runs `make -C sail test`
+and `make -C sail test-ptx-extra`; the K semantics is no longer built in CI.

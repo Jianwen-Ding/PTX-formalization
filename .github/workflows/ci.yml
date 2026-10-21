@@ -4,31 +4,36 @@ on:
   push:
   pull_request:
 
+# The Sail models (sail/agx, sail/ptx) are the maintained ones; the K semantics is obsolete and not built here.
 jobs:
-  test:
+  sail:
     runs-on: ubuntu-24.04
     env:
-      K_VERSION: 7.1.337
+      SAIL_VERSION: 0.20.3
+      JOBS: 4
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install the K Framework
+      - name: System packages (z3 for Sail's type checker, gmp / zlib for the C backend)
         run: |
-          deb="kframework_${K_VERSION}_amd64_ubuntu_noble.deb"
-          curl -fsSL -o "/tmp/$deb" \
-            "https://github.com/runtimeverification/k/releases/download/v${K_VERSION}/$deb"
           sudo apt-get update
-          sudo apt-get install -y "/tmp/$deb"
-          kompile --version
+          sudo apt-get install -y z3 libgmp-dev zlib1g-dev pkg-config
 
-      - name: Build semantics
-        run: make build
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.2.1
 
-      - name: Tests
-        run: make test
+      - name: Install Sail
+        run: |
+          opam install -y sail.${SAIL_VERSION}
+          opam exec -- sail --version
 
-      - name: Differential IEEE-754 fuzzing
-        run: make fuzz SEEDS="1 2 3 4"
+      - name: Build the Sail models
+        run: opam exec -- make -C sail all
 
-      - name: Interleaving exploration examples
-        run: make examples
+      - name: AGX tests and PTX tests (tests/*.ptx against tests/*.out)
+        run: opam exec -- make -C sail test JOBS=$JOBS
+
+      - name: PTX negative tests and ZLUDA programs (tests/neg, tests/zluda)
+        run: opam exec -- make -C sail test-ptx-extra JOBS=$JOBS
