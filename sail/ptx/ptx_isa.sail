@@ -288,13 +288,66 @@ function isaRemoved(op, m, n) =
     "sust.p with a 32-bit type does not exist (removed from the specification)"
   else ""
 
+/* qualifier and operand rules that the ISA states in prose (strict mode only: the default mode gives these forms their
+   evident meaning) */
+val isaImm : xop -> option(int)
+function isaImm(o) = match o { XS(SI(i)) => Some(i), XS(SH(h)) => Some(hexBits(h, mkty("u", 64))), _ => None() }
+
+val isaCount : (list(string), list(string)) -> int
+function isaCount(m, l) = match l { [||] => 0, a :: r => (if has(m, a) then 1 else 0) + isaCount(m, r) }
+
+val isaPow2 : int -> bool
+function isaPow2(n) = n > 0 & land_int(n, n - 1) == 0
+
+/* operand i of n is an immediate outside lo .. hi or not a multiple of k */
+val isaBadImm : (list(xop), int, int, int, int, int) -> bool
+function isaBadImm(ops, n, i, lo, hi, k) =
+  if isaOpCount(ops) != n then false
+  else match isaImm(xop_nth(ops, i)) { Some(v) => v < lo | v > hi | fmod_int(v, k) != 0, None() => false }
+
+val isaBadAlign : list(xop) -> bool
+function isaBadAlign(ops) =
+  if isaOpCount(ops) != 3 then false
+  else match isaImm(xop_nth(ops, 2)) { Some(v) => not_bool(isaPow2(v)) | v > 8388608, None() => false }
+
+val isaQual : (opcode, list(xop)) -> string
+function isaQual(o, ops) = {
+  let m = o.mods;
+  let b = o.base;
+  let sem = if b == "ld" then "acquire" else "release";
+  let cache = isaAny(m, [|"ca", "cg", "cs", "lu", "cv", "wb", "wt"|]);
+  let scope = isaAny(m, [|"cta", "cluster", "gpu", "sys"|]);
+  let fl : bool = match o.tys { t :: _ => t.k == "f", _ => false };
+  let w : int = match o.tys { t :: _ => t.w, _ => 0 };
+  if (b == "ld" | b == "st") & isaCount(m, [|"weak", "volatile", "relaxed", sem|]) > 1 then
+    concat_str(b, ": the .weak, .volatile, .relaxed and .acquire / .release qualifiers are mutually exclusive [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
+  else if (b == "ld" & has(m, "release")) | (b == "st" & has(m, "acquire")) then
+    concat_str(b, concat_str(": no .", concat_str(if b == "ld" then "release" else "acquire", " form [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")))
+  else if (b == "ld" | b == "st") & (has(m, "relaxed") | has(m, sem) | has(m, "volatile")) & cache then
+    concat_str(b, ": cache operations are not allowed with .relaxed, .acquire / .release or .volatile [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
+  else if (b == "ld" | b == "st") & (has(m, "relaxed") | has(m, sem)) & not_bool(scope) then
+    concat_str(b, ": .relaxed and .acquire / .release need a .scope [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
+  else if (b == "ld" | b == "st") & has(m, "mmio") & not_bool(has(m, "sys") & has(m, "relaxed")) then
+    concat_str(b, ": only .relaxed.sys is valid for .mmio [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
+  else if b == "fma" & fl & not_bool(isaAny(m, [|"rn", "rz", "rm", "rp"|])) then
+    "fma needs a rounding modifier [PTX ISA 9.3 9.7.3.6]"
+  else if b == "setmaxnreg" & isaBadImm(ops, 1, 0, 24, 256, 8) then
+    "setmaxnreg: imm-reg-count must be 24 .. 256 and a multiple of 8 [PTX ISA 9.3 9.7.20.5]"
+  else if b == "pmevent" & not_bool(has(m, "mask")) & isaBadImm(ops, 1, 0, 0, 15, 1) then
+    "pmevent: the event number must be 0 .. 15 [PTX ISA 9.3 9.7.20.3]"
+  else if b == "alloca" & isaBadAlign(ops) then
+    "alloca: immAlign must be a power of 2 not above 2^23 [PTX ISA 9.3 9.7.18.3]"
+  else ""
+}
+
 val isaIns : item -> string
 function isaIns(it) = match it {
   INS(_, o, ops) => {
     let tys = isaTyNames(o.tys);
     let names = tys_app(o.mods, tys);
     let r0 = isaRemoved(o.base, o.mods, names);
-    let r = if r0 != "" then r0 else isaTables(o.base, o.mods, o.tys);
+    let q = if r0 != "" then r0 else isaQual(o, ops);
+    let r = if q != "" then q else isaTables(o.base, o.mods, o.tys);
     if r != "" then r else isaBad(isaRows(o.base), o.mods, tys, names, ops, isaver, isasm, isaarch)
   },
   _ => ""

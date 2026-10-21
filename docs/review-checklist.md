@@ -141,7 +141,10 @@ Instructions and resources:
 Open:
 - [ ] `sub.cc` / `subc` borrow vs carry (ISA text vs ZLUDA hardware results), needs a decision
 - [x] register-indexed array operands of ld / st / atom / red (`a[%r1]`, `a[%r1+4]`); in `mov` still unsupported (error)
-- [ ] the relaxed type-checking tables (6.4) and qualifier combinations (ld/st `.volatile` / `.relaxed` / `.mmio` / scopes,
+- [x] qualifier rules under `.isacheck` (default mode accepts): ld / st `.weak` `.volatile` `.relaxed` `.acquire` / `.release`
+      exclusive, no cache ops with them, scope required, `.mmio` only `.relaxed.sys`; `fma` needs a rounding modifier;
+      `setmaxnreg` 24 .. 256 step 8; `pmevent` 0 .. 15; `alloca` alignment a power of 2 (tests/neg/isa-rule-*.ptx)
+- [ ] the relaxed type-checking tables (6.4) under `.isacheck` (needs register kinds, not only widths),
       `fma.f32` without rounding, `setmaxnreg` range, ...) reported under `.isacheck` only; default mode accepts them
 - [ ] tcgen05 allocation patterns (alloc after relinquish, growing size, exit without dealloc) under `.ub strict`
 - [ ] sm_1x single-precision defaults (ftz, mad.f32 truncation); `brkpt` suspends

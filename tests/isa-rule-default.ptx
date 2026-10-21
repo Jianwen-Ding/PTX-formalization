@@ -1,0 +1,20 @@
+// without .isacheck the model accepts forms whose qualifier combinations the ISA text rules out and gives them their evident
+// meaning (the strict checks are in tests/neg/isa-rule-*.ptx): fma.f32 without rounding is .rn; ld.volatile.relaxed is a load
+.version 8.0
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r<4>; .reg .f32 %f<4>;
+    ld.param.u64 %o, [po];
+    mov.f32 %f2, 0f3FC00000;
+    fma.f32 %f1, %f2, %f2, %f2;
+    ld.volatile.relaxed.gpu.global.u32 %r1, [%o];
+    mov.b32 %r2, %f1;
+    st.global.v2.u32 [%o], {%r1, %r2};
+    ret;
+}
+.buffer OUT .u32 = { 7, 0 };
+.launch k <<< 1, 1 >>> (OUT);
+// 1.5 * 1.5 + 1.5 = 3.75 = 0x40700000
+.expect OUT .u32 = { 7, 0x40700000 };
