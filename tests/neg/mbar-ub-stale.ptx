@@ -12,7 +12,11 @@
  ld.param.u64 %o, [po];
  mov.u64 %mb, bar;
  cvta.shared.u64 %g, %mb;
-mbarrier.init.shared.b64 [%mb], 1; mbarrier.arrive.shared.b64 %st2, [%mb]; mbarrier.arrive.shared.b64 %st, [%mb]; mbarrier.arrive.shared.b64 %st, [%mb]; mbarrier.test_wait.shared.b64 %p, [%mb], %st2; selp.u32 %r0,1,0,%p;
+mbarrier.init.shared.b64 [%mb], 1;
+ mbarrier.arrive.shared.b64 %st2, [%mb]; mbarrier.test_wait.shared.b64 %q, [%mb], %st2;
+ mbarrier.arrive.shared.b64 %st, [%mb]; mbarrier.test_wait.shared.b64 %q, [%mb], %st;
+ mbarrier.arrive.shared.b64 %st, [%mb]; mbarrier.test_wait.shared.b64 %q, [%mb], %st;
+ mbarrier.test_wait.shared.b64 %p, [%mb], %st2; selp.u32 %r0,1,0,%p;
 st.global.v4.b32 [%o], {%r0,%r1,%r2,%r3};
  st.global.v4.b32 [%o+16], {%r4,%r5,%r6,%r7};
  ret;

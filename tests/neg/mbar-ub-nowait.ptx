@@ -1,0 +1,22 @@
+// expect: mbarrier.arrive: arrive-on before a wait returned True for the previous phase
+// "at least one test_wait or try_wait operation must be performed which returns True for waitComplete before an arrive-on operation in the subsequent primary phase" (9.7.14.16.5.1), reported under .ub strict
+.version 9.3
+.target sm_90
+.address_size 64
+.ub strict;
+.visible .entry k(.param .u64 po)
+{
+ .reg .b64 %o, %st, %st2, %mb, %g, %x; .reg .b32 %r<16>; .reg .pred %p, %q, %c;
+ .shared .align 8 .b64 bar[4];
+ .global .align 8 .b64 gbar[1];
+ ld.param.u64 %o, [po];
+ mov.u64 %mb, bar;
+ cvta.shared.u64 %g, %mb;
+mbarrier.init.shared.b64 [%mb], 1; mbarrier.arrive.shared.b64 %st, [%mb]; mbarrier.arrive.shared.b64 %st, [%mb];
+st.global.v4.b32 [%o], {%r0,%r1,%r2,%r3};
+ st.global.v4.b32 [%o+16], {%r4,%r5,%r6,%r7};
+ ret;
+}
+.buffer O .u32 [8];
+.launch k <<< 1, 1 >>> (O);
+.expect O .u32 = {0,0,0,0,0,0,0,0};

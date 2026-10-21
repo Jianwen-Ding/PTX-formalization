@@ -124,6 +124,9 @@ val mbPut : (int, (int, int, int, int, int)) -> unit
 function mbPut(k, s) = {
   let (p, q, e, t, l) = s;
   let ks = dec_str(k);
+  /* "w": a wait has returned True for the last completed phase (cleared when a phase completes) */
+  if not_bool(smap_has(SP_MBARS, concat_str("p", ks))) | smap_get(SP_MBARS, concat_str("p", ks)) != p then
+    smap_set(SP_MBARS, concat_str("w", ks), if p == 0 then 1 else 0);
   smap_set(SP_MBARS, concat_str("p", ks), p);
   smap_set(SP_MBARS, concat_str("q", ks), q);
   smap_set(SP_MBARS, concat_str("e", ks), e);
@@ -134,7 +137,7 @@ val mbDel : int -> unit
 function mbDel(k) = {
   let ks = dec_str(k);
   smap_del(SP_MBARS, concat_str("p", ks)); smap_del(SP_MBARS, concat_str("q", ks)); smap_del(SP_MBARS, concat_str("e", ks));
-  smap_del(SP_MBARS, concat_str("t", ks)); smap_del(SP_MBARS, concat_str("l", ks))
+  smap_del(SP_MBARS, concat_str("t", ks)); smap_del(SP_MBARS, concat_str("l", ks)); smap_del(SP_MBARS, concat_str("w", ks))
 }
 
 /* "Performing any mbarrier operation except mbarrier.init on a memory location that does not contain a valid mbarrier
@@ -163,6 +166,17 @@ function mbUbState(op, s) = {
   else if ub & (q < 0 | q > mbMaxCount(l)) then { fault(concat_str("mbarrier.", concat_str(op, ": arrive count larger than the pending count")), q); false }
   else true
 }
+
+/* "For each primary phase of the mbarrier object, at least one test_wait or try_wait operation must be performed which
+ * returns True for waitComplete before an arrive-on operation in the subsequent primary phase" (9.7.14.16.5.1): an
+ * arrive-on before such a wait is reported under .ub strict */
+val mbWaited : int -> unit
+function mbWaited(k) = smap_set(SP_MBARS, concat_str("w", dec_str(k)), 1)
+val mbArriveOk : (string, int) -> bool
+function mbArriveOk(op, k) =
+  if ub & smap_get(SP_MBARS, concat_str("w", dec_str(k))) == 0 then {
+    fault(concat_str("mbarrier.", concat_str(op, ": arrive-on before a wait returned True for the previous phase")), 0); false
+  } else true
 
 val mbCheck : ((int, int, int, int, int)) -> (int, int, int, int, int)
 function mbCheck(s) = { let (p, q, e, t, l) = s; if q == 0 & t == 0 then (p + 1, e, e, 0, l) else s }
@@ -230,7 +244,7 @@ function mbWaitOp(m, sp, ds, a, s) = {
        reported under .ub strict */
     if ub & not_bool(has(m, "parity")) & mbPhase(k) > land_int(v, 4294967295) + 1 then
       fault("mbarrier.test_wait: the state is older than the immediately preceding phase", v)
-    else wrWait(ds, b2i(mbDone(k, m, v)))
+    else { let r = mbDone(k, m, v); if r then mbWaited(k); wrWait(ds, b2i(r)) }
   }
 }
 
@@ -281,7 +295,7 @@ function exec_mbar(o, ops) = {
     },
     d :: XB([|a|], [||]) :: rest if (has(m, "arrive") | has(m, "arrive_drop")) & not_bool(mc) => {
       let k = mbKey(ea(a, sp));
-      if mbOk(if has(m, "arrive_drop") then "arrive_drop" else "arrive", k) then {
+      if mbOk(if has(m, "arrive_drop") then "arrive_drop" else "arrive", k) & mbArriveOk(if has(m, "arrive_drop") then "arrive_drop" else "arrive", k) then {
         let s = mbGet(k);
         let (p0, q0, e0, t0, l0) = s;
         let n = mbCountArg(m, rest);
@@ -339,7 +353,7 @@ function ext_wait_ready() = {
     K_wait("mbtry", _) => {
       let k = at(t_wd[t], 0);
       let m : list(string) = if at(t_wd[t], 1) == 1 then [|"parity"|] else [||];
-      if mbHas(k) & mbDone(k, m, at(t_wd[t], 2)) then { wrWait(t_wx[t], 1); t_cont[t] = K_none(); true } else false
+      if mbHas(k) & mbDone(k, m, at(t_wd[t], 2)) then { mbWaited(k); wrWait(t_wx[t], 1); t_cont[t] = K_none(); true } else false
     },
     _ => ext_wait_ready2()
   }
@@ -452,7 +466,13 @@ function exec_async(o, ops) = {
       [|XB([|a|], [||])|] => {
         /* "If no state space is specified then Generic Addressing is used" (9.7.14.16.18) */
         let k = mbKey(ea(a, if has(m, "shared") then "shared" else "generic"));
-        if mbOk("arrive", k) & has(m, "noinc") then mbPut(k, mbArrive(mbGet(k), 1));
+        if mbOk("arrive", k) & mbArriveOk("arrive", k) then {
+          let (p, q, e, t, l) = mbGet(k);
+          if has(m, "noinc") then mbPut(k, mbArrive((p, q, e, t, l), 1))
+          /* without .noinc the pending count is incremented first and "should not exceed the limit ... Otherwise, the
+             behavior is undefined" (9.7.14.16.18): under .ub strict */
+          else if ub & q + 1 > mbMaxCount(l) then fault("cp.async.mbarrier.arrive: pending count beyond the limit", q + 1)
+        };
         true
       },
       _ => false

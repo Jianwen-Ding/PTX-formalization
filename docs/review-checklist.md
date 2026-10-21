@@ -231,8 +231,10 @@ Open:
         .layout, init count and parity immediates in range, the `.multicast::cluster::32b` forms (not in 9.3)
         (tests/neg/isa-mbar-*.ptx)
 - [x] mbarrier: a shared ld / st / atom on an initialised object is reported under `.ub strict` (tests/neg/mbar-ub-st.ptx)
-- [ ] mbarrier, not reported: cp.async.mbarrier.arrive pending overflow, reading the
-      v1 report operands when waitComplete is False, a primary phase with no successful wait before the next arrive;
+- [x] mbarrier, `.ub strict`: an arrive-on before a wait returned True for the previous phase (§9.7.14.16.5.1), and
+      cp.async.mbarrier.arrive pushing the pending count past its limit (§9.7.14.16.18) (tests/neg/mbar-ub-nowait.ptx,
+      mbar-ub-cpasync-limit.ptx)
+- [ ] mbarrier, not reported: reading the v1 report operands when waitComplete is False;
       whether expect_tx alone may complete a phase (22188-22192 vs 22227-22231) is left as is (it can)
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
