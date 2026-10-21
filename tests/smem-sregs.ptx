@@ -1,8 +1,8 @@
 // Shared-memory special registers (PTX ISA 10.30-10.32) and %is_explicit_cluster (10.11, 11.7):
 // * %dynamic_smem_size: the dynamic shared memory of the launch (100 bytes);
 // * %total_smem_size: static (16 bytes) + dynamic, in multiples of the 128-byte allocation unit of sm_90 (128);
-// * %aggr_smem_size: static + dynamic + the reserved region (%reserved_smem_offset_end - _begin), checked as a
-//   difference that must be 0;
+// * %aggr_smem_size: the allocated user shared memory (%total_smem_size, 128) + the reserved region
+//   (%reserved_smem_offset_end - _begin) (10.31), checked as a difference that must be 0;
 // * %is_explicit_cluster: 1, the cluster dimensions are given by .reqnctapercluster; 0 in a kernel without them.
 .version 8.6
 .target sm_90
@@ -19,7 +19,7 @@
     mov.u32 %r4, %reserved_smem_offset_end;
     mov.u32 %r5, %reserved_smem_offset_begin;
     sub.u32 %r4, %r4, %r5;
-    add.u32 %r4, %r4, 116;
+    add.u32 %r4, %r4, %r2;
     sub.u32 %r3, %r3, %r4;
     mov.pred %p, %is_explicit_cluster;
     selp.u32 %r5, 1, 0, %p;

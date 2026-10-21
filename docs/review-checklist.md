@@ -207,6 +207,9 @@ Open:
       bytes (one such value); an address outside the `.global` window or not 128-byte aligned is reported under
       `.ub strict`, a size other than 128 under `.isacheck`; the same for `applypriority` (§9.7.9.17)
       (tests/neg/discard-*.ptx, applypriority-align.ptx, isa-discard-size.ptx)
+- [x] `%aggr_smem_size` is "the size of user shared memory allocated ... and the size of shared memory region which is
+      reserved" (§10.31): the allocated user size (as `%total_smem_size`, in allocation units) plus the reserved region;
+      the model added the unrounded byte count (tests/smem-sregs.ptx)
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

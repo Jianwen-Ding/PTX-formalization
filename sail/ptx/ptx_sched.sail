@@ -219,11 +219,13 @@ function mk_sregs(sp, c, t, g, b, cd) = {
   sreg_set(sp, "%is_explicit_cluster", b2i(explcl));
   sreg_set(sp, "%smid", 0); sreg_set(sp, "%nsmid", 1); sreg_set(sp, "%gridid", 0);
   sreg_set(sp, "%clock", 0); sreg_set(sp, "%clock64", 0); sreg_set(sp, "%warpsize", 32);
-  /* shared memory of the CTA (PTX ISA 10.30-10.32): static (all .shared variables of the module) and dynamic
+  /* shared memory of the CTA (PTX ISA 10.30-10.32): static (the kernel's .shared variables: module-scope ones used by it and its own) and dynamic
      (the launch's size); %total_smem_size in multiples of the allocation unit (256 bytes for sm_3x - sm_7x,
-     128 bytes otherwise); %aggr_smem_size adds the reserved region (%reserved_smem_offset_end - _begin) */
+     128 bytes otherwise); %aggr_smem_size is that allocated user size plus the reserved region
+     (%reserved_smem_offset_end - _begin): "the size of user shared memory allocated ... and the size of shared memory
+     region which is reserved for the NVIDIA system software use" (10.31) */
   let unit = if isasm >= 30 & isasm < 80 then 256 else 128;
-  sreg_set(sp, "%total_smem_size", alignUp(stop + dynsmem, unit)); sreg_set(sp, "%aggr_smem_size", stop + dynsmem + 1024);
+  sreg_set(sp, "%total_smem_size", alignUp(stop + dynsmem, unit)); sreg_set(sp, "%aggr_smem_size", alignUp(stop + dynsmem, unit) + 1024);
   sreg_set(sp, "%dynamic_smem_size", dynsmem); sreg_set(sp, "%current_graph_exec", 0);
   /* the region reserved for system software (PTX ISA 10.29) must not overlap user shared memory: 1024 bytes placed
      after the CTA's static and dynamic shared memory (its size and place are the implementation's choice) */
