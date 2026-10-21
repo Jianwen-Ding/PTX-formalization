@@ -371,6 +371,18 @@ function do_call(fname, rs, args) = match lookup_func(fname) {
     var rps = f_rets[fchk(f)];
     var rr = rs;
     var rok : bool = true;
+    /* a call without a return list ("return values are optional", ISA 9.7.13): the results are discarded; each
+       .param return value gets a fresh slot for the callee to store into */
+    if not_bool(is_cons(rs)) then {
+      var x = rps;
+      while is_cons(x) do {
+        match x { p :: pr => {
+          if p.palign >= 0 then { let addr = alignUp(t_ptop[t], p.palign); t_ptop[t] = addr + p.psize; smap_set(env, p.pname, mksym("param", addr)) };
+          x = pr
+        }, [||] => () }
+      };
+      rps = [||]
+    };
     while ok & rok & is_cons(rps) do {
       match (rps, rr) {
         (p :: pr, d :: dr) => {
