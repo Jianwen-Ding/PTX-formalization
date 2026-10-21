@@ -77,7 +77,10 @@ register isasm : int = 0
 register isaarch : string = ""
 register isachk : bool = false
 register tick : int = 1000
-register asz32 : bool = false
+/* without an .address_size directive the address size is 32 (PTX ISA 11.1.3) */
+register asz32 : bool = true
+register dynsmem : int = 0          /* dynamic shared memory of the launch (bytes) */
+register explcl : bool = false      /* the launch has an explicit cluster (.reqnctapercluster) */
 register nfaddr : int = 0
 register stuck : bool = false
 register stuck_msg : string = ""
@@ -171,11 +174,12 @@ register t_pmem : vector(16384, int) = vector_init(0)
 register t_ptop : vector(16384, int) = vector_init(0)
 register t_lmem : vector(16384, int) = vector_init(0)
 register t_ltop : vector(16384, int) = vector_init(0)
+register t_lsp : vector(16384, int) = vector_init(0)    /* the stack pointer of alloca / stacksave / stackrestore */
 register t_cseq : vector(16384, int) = vector_init(0)
 register t_misc : vector(16384, int) = vector_init(0)
 register t_cont : vector(16384, tcont) = vector_init(K_none())
-/* call stack: frame(function, return pc, registers, environment, local top, (formal, caller register) outs) */
-register t_stack : vector(16384, list((int, int, int, int, int, list((string, string))))) = vector_init([||])
+/* call stack: frame(function, return pc, registers, environment, local top, stack pointer, (formal, caller register) outs) */
+register t_stack : vector(16384, list((int, int, int, int, int, int, list((string, string))))) = vector_init([||])
 
 val tchk : int -> range(0, 16383)
 function tchk(t) = { assert(0 <= t & t < 16384, "too many threads"); t }

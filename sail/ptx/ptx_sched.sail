@@ -210,11 +210,15 @@ function mk_sregs(sp, c, t, g, b, cd) = {
   sreg_set(sp, "%cluster_nctaid.z", cd.z);
   sreg_set(sp, "%cluster_ctarank", clRank(c, g, cd));
   sreg_set(sp, "%cluster_nctarank", cd.x * cd.y * cd.z);
-  sreg_set(sp, "%is_explicit_cluster", 0);
+  sreg_set(sp, "%is_explicit_cluster", b2i(explcl));
   sreg_set(sp, "%smid", 0); sreg_set(sp, "%nsmid", 1); sreg_set(sp, "%gridid", 0);
   sreg_set(sp, "%clock", 0); sreg_set(sp, "%clock64", 0); sreg_set(sp, "%warpsize", 32);
-  sreg_set(sp, "%total_smem_size", 233472); sreg_set(sp, "%aggr_smem_size", 233472);
-  sreg_set(sp, "%dynamic_smem_size", 0); sreg_set(sp, "%current_graph_exec", 0);
+  /* shared memory of the CTA (PTX ISA 10.30-10.32): static (all .shared variables of the module) and dynamic
+     (the launch's size); %total_smem_size in multiples of the allocation unit (256 bytes for sm_3x - sm_7x,
+     128 bytes otherwise); %aggr_smem_size adds the reserved region (%reserved_smem_offset_end - _begin) */
+  let unit = if isasm >= 30 & isasm < 80 then 256 else 128;
+  sreg_set(sp, "%total_smem_size", alignUp(stop + dynsmem, unit)); sreg_set(sp, "%aggr_smem_size", stop + dynsmem + 1024);
+  sreg_set(sp, "%dynamic_smem_size", dynsmem); sreg_set(sp, "%current_graph_exec", 0);
   sreg_set(sp, "%reserved_smem_offset_begin", 0); sreg_set(sp, "%reserved_smem_offset_end", 1024);
   sreg_set(sp, "%reserved_smem_offset_cap", 1024);
   sreg_set(sp, "%reserved_smem_offset_0", 0); sreg_set(sp, "%reserved_smem_offset_1", 0);
@@ -264,6 +268,7 @@ function mkCtas(c0, n) = {
       t_ptop[s] = kptop;
       t_lmem[s] = new_space();
       t_ltop[s] = 0;
+      t_lsp[s] = LSTACK;
       t_cseq[s] = new_space();
       t_misc[s] = new_space();
       t_cont[s] = K_none();

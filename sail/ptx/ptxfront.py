@@ -245,6 +245,20 @@ class Parser:
                     self.next(); vs.append(self.initval())
             self.expect("}")
             return ("brace", vs)
+        if k == "hex" and s[1] in "xX" and self.at("(", 1):
+            # mask(expr) (PTX ISA 5.4.4): an integer constant expression or a symbol expression
+            self.next(); self.next()
+            inner = self.initval()
+            if inner[0] == "hex" and inner[1][1] in "xX":
+                inner = ("int", int(inner[1].rstrip("uU")[2:], 16))
+            while inner[0] == "int" and ((self.at("+") and self.kind(1) == "int") or self.kind() == "int"):
+                if self.at("+"):
+                    self.next()
+                inner = ("int", inner[1] + self.take_int())
+            self.expect(")")
+            if inner[0] not in ("int", "name", "nameoff", "generic", "genericoff"):
+                raise PtxError("bad expression in the mask() operator %s" % s)
+            return ("mask", int(s.rstrip("uU")[2:], 16), inner)
         if k == "name" and s == "generic" and self.at("(", 1):
             self.next(); self.next(); n = self.take_name(); self.expect(")")
             if self.at("+"):
@@ -484,6 +498,11 @@ class Parser:
                 self.next(); return ("nameplus", s, int(self.next()[1]))
             if self.kind() == "int":
                 return ("nameint", s, int(self.next()[1]))
+            if self.at("[") and self.kind(1) == "int" and self.at("]", 2):
+                # a[1]: the address of the array element (PTX ISA 6.4.2); the index is a byte offset as in the
+                # example of 4.3 (array[r1] with r1 = tid << 2)
+                self.next(); i = int(self.next()[1]); self.next()
+                return ("nameplus", s, i)
             return ("name", s)
         if k == "int": return ("int", int(s))
         if k == "float": return ("float", float_bits(s))
@@ -604,8 +623,9 @@ def align_of(attrs):
             return a[1]
     return 0
 
-def align_or(a1, a2, ty):
-    return align_of(a1) or align_of(a2) or tbytes(ty)
+def align_or(a1, a2, ty, st=()):
+    # vector variables are aligned to their overall size by default (PTX ISA 5.4.2)
+    return align_of(a1) or align_of(a2) or tbytes(ty) * (vwidth(st) or 1)
 
 def dspace(s):
     for k in ("reg", "shared", "local", "param", "global", "const"):
@@ -616,31 +636,49 @@ def dspace(s):
 def item_name(it):
     return it[2] if it[0] in ("plain", "range") else it[1]
 
-def item_size(it, ty):
-    if it[0] == "array":
-        n = 1
-        for d in it[1:][1]:
-            n *= (d or 0)
-        if it[2] and it[2][-1] is None and len(it[2]) == 1:
-            n = 0
-        return n * tbytes(ty)
-    return tbytes(ty)
-
 def dims_count(dims):
-    # dimsCount: [N] R => N * dimsCount(R); [N] => N; [] => 0 (a [] followed by more dims is not covered)
-    if not dims:
-        return 1
-    d = dims[0]
-    if len(dims) == 1:
-        return d if d is not None else 0
-    if d is None:
-        return 0
-    return d * dims_count(dims[1:])
+    # dimsCount: [N] R => N * dimsCount(R); [N] => N; [] => 0 (an unsized array without initializer)
+    n = 1
+    for d in dims:
+        n *= d or 0
+    return n
 
-def item_size2(it, ty):
-    if it[0] == "array":
-        return dims_count(it[2]) * tbytes(ty)
-    return tbytes(ty)
+def item_dims(it, st):
+    """the dimensions of a declarator; a .v2 / .v4 / .v8 vector is an innermost dimension (PTX ISA 5.4.2)"""
+    dims = list(it[2]) if it[0] == "array" else []
+    k = vwidth(st)
+    return dims + [k] if k else dims
+
+def item_size2(it, ty, st=()):
+    return dims_count(item_dims(it, st)) * tbytes(ty)
+
+def shape_init(init, dims):
+    """the flat element list of an initializer for an object of the given dimensions, and the dimensions with
+    an omitted first one taken from the initializer (PTX ISA 5.4.3, 5.4.4).  As in C, a nested list may be
+    incomplete: the rest of its sub-array is filled with zeros (only up to the last initialized element)."""
+    if not dims:
+        if init[0] == "brace":
+            if len(init[1]) != 1:
+                raise PtxError("a scalar takes a single initializer value")
+            return shape_init(init[1][0], [])
+        return [init], []
+    if init[0] != "brace":
+        return [init], [dims[0] or 1] + dims[1:]
+    inner = dims_count(dims[1:])
+    out, pad = [], False
+    for v in init[1]:
+        if pad or (v[0] == "brace" and len(dims) > 1):
+            out.extend([("int", 0)] * (-len(out) % inner))
+        pad = False
+        if v[0] == "brace" and len(dims) > 1:
+            out.extend(shape_init(v, dims[1:])[0])
+            pad = True
+        else:
+            out.extend(shape_init(v, [])[0])
+    n = -(-len(out) // inner) if inner else 0
+    if dims[0] is not None and n > dims[0]:
+        raise PtxError("too many initializers")
+    return out, [dims[0] if dims[0] is not None else n] + dims[1:]
 
 def vwidth(s):
     for k, n in (("v2", 2), ("v4", 4), ("v8", 8)):
@@ -660,7 +698,7 @@ def pdecls(ps):
         s = aset(a1) | aset(a2)
         name = item_name(it)
         if "reg" not in s:
-            out.append((name, ty, item_size2(it, ty), align_or(a1, a2, ty)))
+            out.append((name, ty, item_size2(it, ty, s), align_or(a1, a2, ty, s)))
         else:
             k = vwidth(s)
             if k == 0:
@@ -791,10 +829,10 @@ class Loader:
             _, a1, t, a2, items, init = s
             st = aset(a1) | aset(a2)
             ty = type_of(t)
-            al = align_or(a1, a2, ty)
+            al = align_or(a1, a2, ty, st)
             sp = dspace(st)
             if init is not None and sp in ("shared", "global", "const"):
-                self.sh.extend(sdecls(st, al, ty, items, init_of(init)))
+                self.sh.extend(sdecls(st, al, ty, items, init))
             else:
                 self.pp_decl(sp, st, al, ty, list(items))
         elif k in ("skip", "texdecl"):
@@ -828,20 +866,15 @@ class Loader:
                 else:
                     self.rw[item_name(it)] = ty[1]
             elif sp in ("local", "param"):
-                self.code.append(("declvar", sp, item_name(it), item_size2(it, ty), al))
+                self.code.append(("declvar", sp, item_name(it), item_size2(it, ty, st), al))
             else:
-                self.sh.extend(sdecls(st, al, ty, [it] + items, []))
+                self.sh.extend(sdecls(st, al, ty, [it] + items, None))
                 return
 
     def vdeclare(self, n, w, k):
         for i in range(k):
             self.rw[n + "." + vcomp(i)] = w
         self.rw["@vec:" + n] = k
-
-def init_of(v):
-    if v[0] == "brace":
-        return iv_list(v[1])
-    return [v]
 
 def iv_list(vs):
     out = []
@@ -853,7 +886,14 @@ def iv_list(vs):
     return out
 
 def sdecls(st, al, ty, items, init):
-    return [(dspace(st), item_name(it), ty, item_size2(it, ty), al, "extern" in st, init) for it in items]
+    out = []
+    for it in items:
+        dims = item_dims(it, st)
+        vals = []
+        if init is not None:
+            vals, dims = shape_init(init, dims)
+        out.append((dspace(st), item_name(it), ty, dims_count(dims) * tbytes(ty), al, "extern" in st, vals))
+    return out
 
 def func_head(kw, rets, name, params):
     return name, ("entry" if kw == ".entry" else "func"), pdecls(rets), pdecls(params)
@@ -968,6 +1008,12 @@ def ser_init(v):
     if t == "namediff": return "ND %s %s" % (v[1], v[2])
     if t == "generic": return "G " + v[1]
     if t == "genericoff": return "GO %s %d" % (v[1], v[2])
+    if t == "mask":
+        x = v[2]
+        kind, name, off = {"int": (0, "-", x[1]), "name": (1, x[1], 0), "generic": (2, x[1], 0),
+                           "nameoff": (1, x[1], x[2]) if len(x) > 2 else None,
+                           "genericoff": (2, x[1], x[2]) if len(x) > 2 else None}[x[0]]
+        return "M %d %d %s %d" % (v[1], kind, name, off)
     raise PtxError("bad initializer %r" % (v,))
 
 def ser_sdecl(d):
@@ -998,7 +1044,7 @@ def serialize(mod):
             _, a1, t, a2, items, init = td
             st = aset(a1) | aset(a2)
             ty = type_of(t)
-            sds = sdecls(st, align_or(a1, a2, ty), ty, items, init_of(init) if init is not None else [])
+            sds = sdecls(st, align_or(a1, a2, ty, st), ty, items, init)
             lines.append("DECL %d %s %d %s" % (len(st), " ".join(sorted(st)), len(sds), " ".join(ser_sdecl(d) for d in sds)))
         elif k == "func":
             _, a1, kw, rets, name, params, pd, body = td

@@ -1,0 +1,42 @@
+// Shared-memory special registers (PTX ISA 10.30-10.32) and %is_explicit_cluster (10.11, 11.7):
+// * %dynamic_smem_size: the dynamic shared memory of the launch (100 bytes);
+// * %total_smem_size: static (16 bytes) + dynamic, in multiples of the 128-byte allocation unit of sm_90 (128);
+// * %aggr_smem_size: static + dynamic + the reserved region (%reserved_smem_offset_end - _begin), checked as a
+//   difference that must be 0;
+// * %is_explicit_cluster: 1, the cluster dimensions are given by .reqnctapercluster; 0 in a kernel without them.
+.version 8.6
+.target sm_90
+.address_size 64
+.extern .shared .align 4 .b8 dyn[];
+.visible .entry k(.param .u64 po) .explicitcluster .reqnctapercluster 2, 1, 1
+{
+    .reg .b64 %o; .reg .b32 %r<8>; .reg .pred %p;
+    .shared .align 4 .b32 sh[4];
+    ld.param.u64 %o, [po];
+    mov.u32 %r1, %dynamic_smem_size;
+    mov.u32 %r2, %total_smem_size;
+    mov.u32 %r3, %aggr_smem_size;
+    mov.u32 %r4, %reserved_smem_offset_end;
+    mov.u32 %r5, %reserved_smem_offset_begin;
+    sub.u32 %r4, %r4, %r5;
+    add.u32 %r4, %r4, 116;
+    sub.u32 %r3, %r3, %r4;
+    mov.pred %p, %is_explicit_cluster;
+    selp.u32 %r5, 1, 0, %p;
+    st.global.v4.u32 [%o], {%r1, %r2, %r3, %r5};
+    ret;
+}
+.visible .entry k2(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r<3>; .reg .pred %p;
+    ld.param.u64 %o, [po];
+    mov.pred %p, %is_explicit_cluster;
+    selp.u32 %r1, 1, 0, %p;
+    mov.u32 %r2, %dynamic_smem_size;
+    st.global.v2.u32 [%o+16], {%r1, %r2};
+    ret;
+}
+.buffer OUT .u32 [6];
+.launch k <<< 2, 1, 100 >>> (OUT);
+.launch k2 <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 100, 128, 0, 1, 0, 0 };

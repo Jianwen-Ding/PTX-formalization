@@ -210,15 +210,33 @@ function nthD(l, i, d) = match l { [||] => d, h :: t => if i == 0 then h else nt
 val int_list_len : list(int) -> int
 function int_list_len(l) = match l { [||] => 0, _ :: t => 1 + int_list_len(t) }
 
-/* ---------------------------------------------------------------- address map (ptx-configuration.k) */
-let SHBASE : int = 1099511627776
-let LOCBASE : int = 2199023255552
-let PARBASE : int = 8796093022208
-let CLBASE : int = 4398046511104
+/* ---------------------------------------------------------------- address map (ptx-configuration.k)
+ * Generic addressing (PTX ISA 6.4.1.1): .shared, .local and .const are windows of the generic address space,
+ * and so is the shared::cluster window (16 MiB per CTA rank of the cluster); a generic address outside them
+ * maps to .global.  The window of the kernel parameters (.param) is contained in the .global window.  Each
+ * window maps to its state space by subtracting the window base.  Under `.address_size 32` generic addresses
+ * have 32 bits and the windows are 256 MiB each from 2^31 on; otherwise they are 2^40 .. 2^45. */
 let DYNSHARED : int = 16
+/* the stack top of the per-thread local memory: .local variables grow up from 0, alloca grows down from here */
+let LSTACK : int = 16777216
 
 val winBase : string -> int
-function winBase(s) = match s { "shared" => SHBASE, "local" => LOCBASE, "param" => PARBASE, _ => 0 }
+function winBase(s) = {
+  let i : int = match s { "shared" => 0, "local" => 1, "cluster" => 2, "param" => 3, "const" => 4, "end" => 5, _ => -1 };
+  if i < 0 then 0
+  else if asz32 then 2147483648 + 268435456 * i
+  else pow2(40 + i)
+}
+
+/* the window of a generic address */
+val genWin : int -> string
+function genWin(a) =
+  if a < winBase("shared") | a >= winBase("end") then "global"
+  else if a >= winBase("const") then "const"
+  else if a >= winBase("param") then "param"
+  else if a >= winBase("cluster") then "cluster"
+  else if a >= winBase("local") then "local"
+  else "shared"
 
 val alignUp : (int, int) -> int
 function alignUp(x, a) = if a > 0 then tdiv_int(x + a - 1, a) * a else x

@@ -86,6 +86,7 @@ union initval = {
   IVND : (string, string),
   IVG : string,
   IVGO : (string, int),
+  IVM : (int, int, string, int),     /* mask(expr): mask, 0 integer / 1 symbol / 2 generic(symbol), symbol, offset */
 }
 
 struct sdecl = {
