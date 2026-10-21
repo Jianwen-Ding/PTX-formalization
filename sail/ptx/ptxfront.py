@@ -959,6 +959,7 @@ class Loader:
         self.code = []
         self.L = {}
         self.rw = rw
+        self.rk = {}          # register name -> declared type (kind, width), for the .isacheck type rules
         self.sh = []
 
     # renaming (rnS / rnO / rnA)
@@ -1088,22 +1089,25 @@ class Loader:
                     if k == 0:
                         for i in range(it[3]):
                             self.rw[it[2] + str(i)] = ty[1]
+                            self.rk[it[2] + str(i)] = ty
                     else:
                         for i in range(it[3]):
-                            self.vdeclare(it[2] + str(i), ty[1], k)
+                            self.vdeclare(it[2] + str(i), ty[1], k, ty)
                 elif k > 0 and plain:
-                    self.vdeclare(item_name(it), ty[1], k)
+                    self.vdeclare(item_name(it), ty[1], k, ty)
                 else:
                     self.rw[item_name(it)] = ty[1]
+                    self.rk[item_name(it)] = ty
             elif sp in ("local", "param"):
                 self.code.append(("declvar", sp, item_name(it), item_size2(it, ty, st), al))
             else:
                 self.sh.extend(sdecls(st, al, ty, [it] + items, None))
                 return
 
-    def vdeclare(self, n, w, k):
+    def vdeclare(self, n, w, k, ty=None):
         for i in range(k):
             self.rw[n + "." + vcomp(i)] = w
+            if ty is not None: self.rk[n + "." + vcomp(i)] = ty
         self.rw["@vec:" + n] = k
 
 def iv_list(vs):
@@ -1307,6 +1311,63 @@ def check_regs(fname, ld):
                 continue
             raise PtxError("%s: register %s is not declared" % (fname, n))
 
+# ---------------------------------------------------------------- operand type rules (ISA 9.4, Tables 26-28)
+SIMPLE_TY = {"b8": ("b", 8), "b16": ("b", 16), "b32": ("b", 32), "b64": ("b", 64), "b128": ("b", 128),
+             "s8": ("s", 8), "s16": ("s", 16), "s32": ("s", 32), "s64": ("s", 64),
+             "u8": ("u", 8), "u16": ("u", 16), "u32": ("u", 32), "u64": ("u", 64),
+             "f16": ("f", 16), "f32": ("f", 32), "f64": ("f", 64)}
+# instructions whose register operands all carry the instruction type (Table 26); setp from its second operand
+SAME_TY = {"add", "sub", "mul", "mad", "min", "max", "abs", "neg", "div", "rem", "and", "or", "xor", "not", "cnot",
+           "fma", "rcp", "sqrt", "rsqrt", "sin", "cos", "lg2", "ex2", "copysign", "mov", "setp", "selp"}
+
+def ty_agrees(it, ot, relaxed):
+    """Table 26 (exact) or Tables 27 / 28 (ld, st, cvt: wider operands allowed)"""
+    (ik, iw), (ok, ow) = it, ot
+    if ok not in ("b", "s", "u", "f"):
+        return True
+    if relaxed:
+        if ow < iw: return False
+    elif ow != iw:
+        return False
+    if ik == "f":
+        return ok == "b" or (ok == "f" and ow == iw)
+    if ik in ("s", "u"):
+        return ok != "f"
+    return True
+
+def check_types(fname, ld):
+    """.isacheck: register operands must agree with the instruction type (ISA 9.4)"""
+    def regs(o):
+        if o[0] == "reg": return [o[1]]
+        if o[0] == "vec": return [x[1] for x in o[1] if x[0] == "reg"]
+        if o[0] == "pipe": return [x[1] for x in o[1:] if isinstance(x, tuple) and x[0] == "reg"]
+        return []
+    for c in ld.code:
+        if c[0] != "ins": continue
+        opc, ops = c[2], c[3]
+        parts = opc.split(".")
+        base = parts[0]
+        tys = [SIMPLE_TY[p] for p in parts[1:] if p in SIMPLE_TY]
+        alltys = [p for p in parts[1:] if p in SIMPLE_TY or p in ("pred", "bf16", "tf32") or "x" in p and p[-1].isdigit()]
+        checks = []
+        if base in SAME_TY and len(tys) == 1 and len(alltys) == 1 and "wide" not in parts:
+            sel = ops[1:] if base == "setp" else (ops[:3] if base == "selp" else ops)
+            # mov d, {a, b} packs / unpacks elements of their own size (9.7.9.10)
+            checks = [(o, tys[0], False) for o in sel if not (base == "mov" and o[0] == "vec")]
+        elif base == "ld" and len(tys) == 1 and len(alltys) == 1 and ops:
+            checks = [(ops[0], tys[0], True)]
+        elif base == "st" and len(tys) == 1 and len(alltys) == 1 and ops:
+            checks = [(ops[-1], tys[0], True)]
+        elif base == "cvt" and len(tys) == 2 and len(alltys) == 2 and len(ops) == 2:
+            checks = [(ops[0], tys[0], True), (ops[1], tys[1], True)]
+        for o, it, rel in checks:
+            for r in regs(o):
+                ot = ld.rk.get(r)
+                if ot is not None and not ty_agrees(it, ot, rel):
+                    raise PtxError("%s: %s: operand %s of type .%s%d does not agree with the instruction type .%s%d "
+                                   "[PTX ISA 9.3 9.4, Table %s]" % (fname, opc, r.split("@")[0], ot[0], ot[1], it[0], it[1],
+                                                                    "27 / 28" if rel else "26"))
+
 def serialize(mod):
     lines = []
     for td in mod:
@@ -1335,6 +1396,8 @@ def serialize(mod):
             ld.pp(body)
             colour_fields(ld)
             check_regs(fname, ld)
+            if any(t[0] == "isacheck" for t in mod):
+                check_types(fname, ld)
             labels = {k2: v for k2, v in ld.L.items() if not (k2.startswith("@ren:") or k2 in ("@depth", "@renid"))}
             lab_lines = []
             tgt_lines = []

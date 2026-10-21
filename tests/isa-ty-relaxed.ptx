@@ -1,0 +1,25 @@
+// operand forms the type rules allow (9.4, Tables 26-28) under .isacheck: a .b32 register with .f32 / .s32 instructions,
+// a wider .u32 register for ld.u8 (zero-extended) / ld.s8 (sign-extended), st.u8 from a .u32 register (chopped),
+// cvt from a wider bit-size source
+.version 8.0
+.target sm_80
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %b; .reg .u32 %u, %v; .reg .s32 %s; .reg .f32 %f; .reg .b64 %o;
+    ld.param.u64 %o, [po];
+    mov.b32 %b, 0x3F800000;
+    add.f32 %f, %b, %b;
+    st.global.u8 [%o+16], 0xF0;
+    ld.global.u8 %u, [%o+16];
+    ld.global.s8 %s, [%o+16];
+    mov.u32 %v, 0x1234;
+    st.global.u8 [%o+20], %v;
+    cvt.rn.f32.u16 %f, %v;
+    st.global.f32 [%o], %f; st.global.u32 [%o+4], %u; st.global.s32 [%o+8], %s;
+    ret;
+}
+.buffer O .u32 [6];
+.launch k <<< 1, 1 >>> (O);
+.expect O .u32 = { 0x4591A000, 0xF0, 0xFFFFFFF0, 0, 0xF0, 0x34 };

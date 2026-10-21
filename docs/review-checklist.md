@@ -150,7 +150,13 @@ Open:
 - [x] qualifier rules under `.isacheck` (default mode accepts): ld / st `.weak` `.volatile` `.relaxed` `.acquire` / `.release`
       exclusive, no cache ops with them, scope required, `.mmio` only `.relaxed.sys`; `fma` needs a rounding modifier;
       `setmaxnreg` 24 .. 256 step 8; `pmevent` 0 .. 15; `alloca` alignment a power of 2 (tests/neg/isa-rule-*.ptx)
-- [ ] the relaxed type-checking tables (6.4) under `.isacheck` (needs register kinds, not only widths)
+- [x] the operand type rules (§9.4, Tables 26-28) under `.isacheck`: register operands of the same-type instructions
+      (add, sub, mul, mad, min, max, abs, neg, div, rem, logic, fma, transcendentals, copysign, mov, setp, selp) must
+      agree with the instruction type (bit-size types with any same-size type, signed / unsigned with each other, floats
+      exactly); the data operand of ld / st and both cvt operands follow the relaxed Tables 27 / 28 (wider registers,
+      no float with an integer type). Checked in the front end, which knows declared register types; no false positive
+      over tests/ and tests/zluda (tests/neg/isa-ty-*.ptx, tests/isa-ty-relaxed.ptx). tests/sm1x-ftz.ptx used
+      `selp.u32` into an `.f32` register and was corrected.
 - [x] hard errors audited (loose syntax, solid semantics): `mma.m8n8k4` `.dtype .f16` with `.ctype .f32` now runs (f32
       accumulation rounded to f16, checked against the exact model) and is reported under `.isacheck`; a call without a
       return list discards the results; an undefined `wgmma` shape stops with an error instead of deadlocking.  Kept as
