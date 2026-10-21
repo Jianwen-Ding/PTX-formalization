@@ -145,7 +145,8 @@ function ea(a, s) = match a {
   ARO(r, i) => mkLocA(s, rreg(r) + i, r),
   AN(n) => if isRegName(n) then mkLocA(s, rreg(n), n) else symLoc(lookupSym(n), n, 0),
   ANO(n, i) => if isRegName(n) then mkLocA(s, rreg(n) + i, n) else symLoc(lookupSym(n), n, i),
-  AI(i) => mkLoc(s, i)
+  AI(i) => mkLoc(s, i),
+  ANR(n, r, i) => symLoc(lookupSym(n), n, rreg(r) + i)
 }
 
 /* the address operand of [ A ] */

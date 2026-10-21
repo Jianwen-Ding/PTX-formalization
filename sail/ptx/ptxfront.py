@@ -635,6 +635,10 @@ class Parser:
         ai = {"ld": 1, "ldu": 1, "atom": 1, "st": 0, "red": 0}.get(base)
         if ai is not None and len(ops) > ai and ops[ai][0] == "nameplus":
             ops[ai] = ("mem", [("anameoff", ops[ai][1], ops[ai][2])])
+        if ai is not None and len(ops) > ai and ops[ai][0] == "nameidx":
+            ops[ai] = ("mem", [("anamereg", ops[ai][1], ops[ai][2], ops[ai][3])])
+        if any(o[0] == "nameidx" for o in ops):
+            raise PtxError("a register-indexed array element is supported as a memory operand only (%s)" % opc)
         return opc, ops
 
     # -------------------------------------------------------------- operands
@@ -712,6 +716,13 @@ class Parser:
                 self.next(); return ("nameplus", s, ptx_int(self.next()[1]))
             if self.kind() == "int":
                 return ("nameint", s, ptx_int(self.next()[1]))
+            if self.at("[") and self.kind(1) == "reg":
+                # a[r], a[r+4], a[r-4]: register index (6.4.2) -- an address of ld / st / atom / red
+                self.next(); r = self.next()[1]
+                self.split_sign()
+                off = self.cexpr((0, False, False))[0] if (self.at("+") or self.at("-")) else 0
+                self.expect("]")
+                return ("nameidx", s, r, off)
             if self.at("[") and (self.lit_at(1) or self.cstart_at(1)):
                 # a[1], a[N-1]: the address of the array element (PTX ISA 6.4.2); the index is a byte offset as in
                 # the example of 4.3 (array[r1] with r1 = tid << 2)
@@ -960,6 +971,7 @@ class Loader:
         if a[0] == "aname": return ("aname", self.rn_s(a[1]))
         if a[0] == "aregoff": return ("aregoff", self.rn_s(a[1]), a[2])
         if a[0] == "anameoff": return ("anameoff", self.rn_s(a[1]), a[2])
+        if a[0] == "anamereg": return ("anamereg", self.rn_s(a[1]), self.rn_s(a[2]), a[3])
         return a
 
     def rn_item(self, it):
@@ -1140,6 +1152,7 @@ def ser_addr(a):
     if t == "aint": return "AI %d" % a[1]
     if t == "aregoff": return "ARO %s %d" % (a[1], a[2])
     if t == "anameoff": return "ANO %s %d" % (a[1], a[2])
+    if t == "anamereg": return "ANR %s %s %d" % (a[1], a[2], a[3])
     raise PtxError("bad address %r" % (a,))
 
 def addr_as_op(a):
@@ -1276,6 +1289,8 @@ def check_regs(fname, ld):
         if isinstance(x, tuple):
             if len(x) >= 2 and x[0] == "reg" and isinstance(x[1], str):
                 yield x[1]
+            if len(x) == 4 and x[0] == "anamereg":
+                yield x[2]
             for y in x:
                 yield from walk(y)
         elif isinstance(x, list):

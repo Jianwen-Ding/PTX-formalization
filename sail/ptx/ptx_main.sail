@@ -30,6 +30,7 @@ function tk_addr() = match tok_str() {
   "AN" => AN(tok_str()),
   "AI" => AI(tok_int()),
   "ARO" => { let n = tok_str(); let i = tok_int(); ARO(n, i) },
+  "ANR" => { let n = tok_str(); let r = tok_str(); let i = tok_int(); ANR(n, r, i) },
   _ => { let n = tok_str(); let i = tok_int(); ANO(n, i) }
 }
 

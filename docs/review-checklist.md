@@ -122,7 +122,7 @@ Syntax and operands:
 - [x] `.pragma` string lists and `.pragma` between a kernel header and its body; `.func .attribute(...)`
 - [x] an undeclared register is an error (it read as 0); writing a special register is an error (chapter 10)
 - [x] loose: `.pred %p;` without `.reg` declares a register (it was a .global variable named %p)
-- [x] the `%`-free test generators `gen_cvt.py` / `gen_mma.py` declared too few registers; regenerated
+- [x] the test generators `gen_cvt.py` / `gen_mma.py` declared too few registers; regenerated
 
 Instructions and resources:
 - [x] `wmma.load` / `wmma.store` without stride: the leading dimension (9.7.15.3)
@@ -140,7 +140,7 @@ Instructions and resources:
 
 Open:
 - [ ] `sub.cc` / `subc` borrow vs carry (ISA text vs ZLUDA hardware results), needs a decision
-- [ ] register-indexed array operands (`a[%r1]`, `a[%r1+4]`)
+- [x] register-indexed array operands of ld / st / atom / red (`a[%r1]`, `a[%r1+4]`); in `mov` still unsupported (error)
 - [ ] the relaxed type-checking tables (6.4) and qualifier combinations (ld/st `.volatile` / `.relaxed` / `.mmio` / scopes,
       `fma.f32` without rounding, `setmaxnreg` range, ...) reported under `.isacheck` only; default mode accepts them
 - [ ] tcgen05 allocation patterns (alloc after relinquish, growing size, exit without dealloc) under `.ub strict`

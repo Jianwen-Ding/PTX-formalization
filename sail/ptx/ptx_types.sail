@@ -38,6 +38,7 @@ union addr = {
   AI : int,
   ARO : (string, int),
   ANO : (string, int),
+  ANR : (string, string, int),   /* array[reg + off] (6.4.2): the array's address plus the register plus off */
 }
 
 /* an operand inside [ ... ] after the addresses: simple or a vector { ... } */

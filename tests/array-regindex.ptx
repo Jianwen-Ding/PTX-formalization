@@ -1,0 +1,23 @@
+// array elements with a register index as memory operands (PTX ISA 9.3 6.4.2: "a register variable, or a simple register
+// with constant offset expression"): a[r], a[r+4], a[r - 4] address the byte a + r (+ / - the offset)
+.version 8.0
+.target sm_80
+.address_size 64
+.global .u32 a[4] = { 10, 20, 30, 40 };
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %i; .reg .b32 %r<5>;
+    ld.param.u64 %o, [po];
+    mov.u64 %i, 4;
+    ld.global.u32 %r1, a[%i];             // a[1] = 20
+    ld.global.u32 %r2, a[%i+8];           // a[3] = 40
+    ld.global.u32 %r3, a[%i - 4];         // a[0] = 10
+    add.u32 %r4, %r1, %r2;
+    st.global.u32 a[%i + 4], %r4;         // a[2] = 60
+    st.global.v4.u32 [%o], {%r1, %r2, %r3, %r4};
+    ret;
+}
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 20, 40, 10, 60 };
+.expect a .u32 = { 10, 20, 60, 40 };
