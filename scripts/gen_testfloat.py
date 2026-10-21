@@ -6,7 +6,8 @@ usage: gen_testfloat.py TESTFLOAT_GEN [LEVEL] [MAXN] [TF_MODE] [PTX_MODE] > test
 
 TestFloat's testfloat_gen emits operands, the result of Berkeley SoftFloat and
 exception flags.  Rounding mode is selected with TF_MODE / PTX_MODE.  NaN results are mapped to PTX's
-canonical NaN, since NaN payload propagation is not specified by PTX.
+canonical NaN for f32; f64 NaN results are the first NaN operand, quieted (PTX ISA: NaN payloads are supported for
+double-precision instructions).
 """
 import subprocess, sys
 
@@ -29,7 +30,11 @@ def vectors(fn, nargs, w):
             ((res >> (23 if w == 32 else 52)) & (0xFF if w == 32 else 0x7FF)) == (0xFF if w == 32 else 0x7FF) and \
             (res & ((1 << (23 if w == 32 else 52)) - 1)) != 0
         if isnan:
-            res = (1 << (w - 1)) - 1
+            # f32: canonical NaN; f64 (NaN payloads are supported for double precision): the first NaN operand,
+            # quieted, else the canonical NaN
+            qbit = 1 << (22 if w == 32 else 51)
+            nans = [a for a in args if w == 64 and (a >> 52) & 0x7FF == 0x7FF and a & ((1 << 52) - 1)]
+            res = (nans[0] | qbit) if nans else (1 << (w - 1)) - 1
         rows.append((args, res))
     return rows
 
