@@ -5,7 +5,6 @@
  * ============================================================================= */
 
 /* <mmtab>: window start, size, device buffer addresses; <fabtab>: endpoint id, size, member buffers */
-register mmtab : list((int, int, list(int))) = [||]
 register fabtab : list((int, int, list(int))) = [||]
 
 val mmFind : int -> option((int, int, list(int)))

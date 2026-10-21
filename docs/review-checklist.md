@@ -248,6 +248,8 @@ Open:
 - [x] `cp.async.bulk` / `cp.reduce.async.bulk` (§9.7.9.26.4.1-2) under `.ub strict`: size not a multiple of 16, src / dst
       not 16-byte aligned, a `.shared::cta` → `.shared::cluster` copy into the executing CTA (tests/neg/bulk-ub-*.ptx);
       the existing bulk and TMA tests pass under `.ub strict`
+- [x] a plain ld / st / atom on a multimem address is reported under `.ub strict` (§9.7.9.15) (tests/neg/multimem-plain-ld.ptx);
+      multimem.* on a non-multimem address already stops
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

@@ -204,3 +204,6 @@ function fault(s, i) = {
     stuck_msg = concat_str(s, concat_str(" ", dec_str(i)))
   }
 }
+
+/* multimem handles: (handle address, size, device addresses) (ptx_mm.sail) */
+register mmtab : list((int, int, list(int))) = [||]
