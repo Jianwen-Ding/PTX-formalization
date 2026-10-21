@@ -179,6 +179,28 @@ function xlast(l) = match l { [||] => None(), [|x|] => Some(x), _ :: rest => xla
 val wrFirst : (list(xop), int) -> unit
 function wrFirst(ds, v) = match ds { d :: _ => wr(d, v), [||] => () }
 
+/* test_wait / try_wait: waitComplete, then the payload report of .phase_type::primary (reportPredicate, reportValue).
+ * "For .layout::v0, reportPredicate and reportValue are always zero" (PTX ISA 9.3, mbarrier.test_wait); for
+ * .layout::v1 the report is zero unless a tracked operation reported a failure, which no operation of the model does. */
+val wrZeros : list(xop) -> unit
+function wrZeros(ds) = match ds { d :: rest => { wr(d, 0); wrZeros(rest) }, [||] => () }
+val wrWait : (list(xop), int) -> unit
+function wrWait(ds, v) = match ds { d :: rest => { wr(d, v); wrZeros(rest) }, [||] => () }
+
+val mbWaitOp : (list(string), string, list(xop), addr, xop) -> unit
+function mbWaitOp(m, sp, ds, a, s) = {
+  let k = mbKey(ea(a, sp));
+  let v = rd(s, mkty("b", 64));
+  let t = tchk(cur);
+  if has(m, "try_wait") then {
+    t_wd[t] = [|k, b2i(has(m, "parity")), v|];
+    t_wx[t] = ds;
+    t_cont[t] = K_wait("mbtry", 0);
+    yielded = true
+  } else if mbHas(k) then wrWait(ds, b2i(mbDone(k, m, v)))
+  else fault("mbarrier.test_wait on an object that is not initialised", 0)
+}
+
 val exec_mbar : (opcode, list(xop)) -> bool
 function exec_mbar(o, ops) = {
   let m = o.mods;
@@ -221,17 +243,9 @@ function exec_mbar(o, ops) = {
       wr(d, mbState(s));
       true
     },
-    d :: XB([|a|], [||]) :: s :: _ if has(m, "test_wait") | has(m, "try_wait") => {
-      let k = mbKey(ea(a, sp));
-      let v = rd(s, mkty("b", 64));
-      let t = tchk(cur);
-      if has(m, "try_wait") then {
-        t_wd[t] = [|k, b2i(has(m, "parity")), v|];
-        t_wx[t] = dests(d);
-        t_cont[t] = K_wait("mbtry", 0);
-        yielded = true
-      } else if mbHas(k) then wrFirst(dests(d), b2i(mbDone(k, m, v)))
-      else fault("mbarrier.test_wait on an object that is not initialised", 0);
+    d :: XB([|a|], [||]) :: s :: _ if has(m, "test_wait") | has(m, "try_wait") => { mbWaitOp(m, sp, dests(d), a, s); true },
+    d :: rv :: XB([|a|], [||]) :: s :: _ if (has(m, "test_wait") | has(m, "try_wait")) & has(m, "phase_type::primary") => {
+      mbWaitOp(m, sp, pend_append(dests(d), [|rv|]), a, s);
       true
     },
     [|d, s|] if has(m, "pending_count") => { wr(d, land_int(asr_int(rd(s, mkty("b", 64)), 32), 1048575)); true },
@@ -255,16 +269,21 @@ function ext_wait_ready() = {
     K_wait("mbtry", _) => {
       let k = at(t_wd[t], 0);
       let m : list(string) = if at(t_wd[t], 1) == 1 then [|"parity"|] else [||];
-      if mbHas(k) & mbDone(k, m, at(t_wd[t], 2)) then { wrFirst(t_wx[t], 1); t_cont[t] = K_none(); true } else false
+      if mbHas(k) & mbDone(k, m, at(t_wd[t], 2)) then { wrWait(t_wx[t], 1); t_cont[t] = K_none(); true } else false
     },
     _ => ext_wait_ready2()
   }
 }
 
 /* ---------------------------------------------------------------- cp.async */
-val cpSrcN : (int, list(xop)) -> int
-function cpSrcN(n, rest) = match rest {
+/* the bytes read from src: the optional src-size / ignore-src operand, which comes before the
+ * cache_policy operand; with .L2::cache_hint the last operand is cache_policy (PTX ISA 9.3, cp.async
+ * syntax: cp-size{, src-size}{, cache_policy}, and "When the optional argument cache_policy is specified,
+ * the qualifier .level::cache_hint is required") */
+val cpSrcN : (int, list(xop), bool) -> int
+function cpSrcN(n, rest, hint) = match rest {
   [||] => n,
+  [|_|] if hint => n,
   XS(SI(x)) :: _ => min_int(x, n),
   x :: _ => if regW(x) == 1 then (if rdu32(x) == 0 then n else 0) else min_int(rdu32(x), n)
 }
@@ -305,6 +324,11 @@ function expandMask(mk, chunks) = {
   r
 }
 
+/* "The current implementation of cp.reduce.async.bulk.add.f32 flushes subnormal inputs and results to
+ * sign-preserving zero" (ISA 9.7.9.26.4.2) */
+val bulkOp : (string, ty) -> string
+function bulkOp(op, t) = if op == "add" & ty_eq(t, mkty("f", 32)) then "add.ftz" else op
+
 val exec_async : (opcode, list(xop)) -> bool
 function exec_async(o, ops) = {
   let m = o.mods;
@@ -321,7 +345,7 @@ function exec_async(o, ops) = {
       _ => false
     } else match ops {
       XB([|d|], [||]) :: XB([|s|], [||]) :: XS(SI(n)) :: rest => {
-        let k = cpSrcN(n, rest);
+        let k = cpSrcN(n, rest, has(m, "L2::cache_hint"));
         let dl = ea(d, "shared");
         let v = if k > 0 then memop_do(ea(s, "generic"), RdOp(k)) else 0;
         if not_bool(stuck) then { let _ = memop_do(dl, WrOp(n, v)); () };
@@ -337,7 +361,7 @@ function exec_async(o, ops) = {
         let v = memop_do(ea(s, "shared"), RdOp(n));
         let dl = ea(d, if has(m, "global") then "generic" else "shared_cluster");
         let mb : option(loc) = match bulkMbar(rest) { Some(a) => Some(ea(a, "shared_cluster")), None() => None() };
-        if not_bool(stuck) then { let _ = memop_do(dl, BulkRedOp(atomOp(m), ty1(o), n, v)); () };
+        if not_bool(stuck) then { let _ = memop_do(dl, BulkRedOp(bulkOp(atomOp(m), ty1(o)), ty1(o), n, v)); () };
         if not_bool(stuck) then match mb { Some(l) => bulkTx(l, n), None() => () };
         true
       } else if has(m, "mbarrier::complete_tx::bytes") & is_some(bulkMbar(rest)) then {
@@ -404,8 +428,22 @@ function exec_amisc(o, ops) = {
     },
     ("clusterlaunchcontrol", [|XB([|a|], [||]), XB([|mb|], [||])|]) => {
       if has(m, "try_cancel") then {
-        let _ = memop_do(ea(a, "shared"), WrOp(16, 0));
-        if not_bool(stuck) then bulkTx(ea(mb, "shared"), 16);
+        /* "If the .space qualifier is specified, both operands addr and mbar must be in the .shared::cta state space.
+         * Otherwise, generic addressing will be assumed for both"; with .multicast::cluster::all "the response is
+         * asynchronously written ... to the corresponding local shared memory addr of each CTA in the requesting
+         * cluster", signalled by a complete-tx on the mbarrier "on the shared memory of that CTA" (PTX ISA 9.3,
+         * clusterlaunchcontrol.try_cancel).  The response is always the failure response (0). */
+        let sp = if has(m, "shared") then "shared" else "generic";
+        let mc = has(m, "multicast::cluster::all");
+        let all = pow2(vol(clusterDim)) - 1;
+        var ds = if mc then rankLocs(land_int(locOffA(ea(a, sp)), 16777215), all) else [|ea(a, sp)|];
+        var ms = if mc then rankLocs(land_int(locOffA(ea(mb, sp)), 16777215), all) else [|ea(mb, sp)|];
+        while is_cons(ds) & is_cons(ms) & not_bool(stuck) do {
+          match (ds, ms) {
+            (dl :: dr, ml :: mr) => { let _ = memop_do(dl, WrOp(16, 0)); if not_bool(stuck) then bulkTx(ml, 16); ds = dr; ms = mr },
+            _ => ()
+          }
+        };
         true
       } else false
     },

@@ -1,0 +1,59 @@
+// Sizes and initializers of static variables (PTX ISA 5.4.2 - 5.4.4):
+// * an unsized first dimension takes its size from the initializer (bar[] has 3 elements, so baz follows it);
+// * incomplete nested initializers: x[3][2] = { {1,2}, {3} } is { {1,2}, {3,0}, {0,0} },
+//   y[3][2] = { {1}, {3,4} } is { {1,0}, {3,4}, {0,0} };
+// * .v2 / .v4 variables hold 2 / 4 elements and are aligned to their overall size.
+.version 8.6
+.target sm_90
+.address_size 64
+.global .u32 bar[] = { 2, 3, 5 };
+.global .u32 baz = 77;
+.global .s32 off[][2] = { {-1, 0}, {0, -1}, {1, 0}, {0, 1} };
+.global .u32 after = 99;
+.global .s32 x[3][2] = { {1,2}, {3} };
+.global .s32 y[3][2] = { {1}, {3,4} };
+.global .u8 c = 1;
+.global .v4 .u32 v = { 1, 2, 3, 4 };
+.global .v2 .u16 w[2] = { {5, 6}, {7, 8} };
+.global .u8 c2 = 1;
+.global .v2 .f64 d = { 1.5, 2.5 };
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %a; .reg .b32 %r<5>; .reg .b16 %h<3>; .reg .f64 %f<3>;
+    ld.param.u64 %o, [po];
+    ld.global.u32 %r1, [bar+8];
+    ld.global.u32 %r2, [baz];
+    st.global.v2.u32 [%o], {%r1, %r2};
+    ld.global.u32 %r1, [off+28];
+    ld.global.u32 %r2, [after];
+    st.global.v2.u32 [%o+8], {%r1, %r2};
+    ld.global.v2.u32 {%r1, %r2}, [x+8];
+    ld.global.v2.u32 {%r3, %r4}, [x+16];
+    st.global.v4.u32 [%o+16], {%r1, %r2, %r3, %r4};
+    ld.global.v2.u32 {%r1, %r2}, [y];
+    ld.global.v2.u32 {%r3, %r4}, [y+8];
+    st.global.v4.u32 [%o+32], {%r1, %r2, %r3, %r4};
+    ld.global.v4.u32 {%r1, %r2, %r3, %r4}, [v];
+    st.global.v4.u32 [%o+48], {%r1, %r2, %r3, %r4};
+    mov.u64 %a, v;
+    and.b64 %a, %a, 15;
+    cvt.u32.u64 %r1, %a;
+    mov.u64 %a, w;
+    and.b64 %a, %a, 3;
+    cvt.u32.u64 %r2, %a;
+    mov.u64 %a, d;
+    and.b64 %a, %a, 15;
+    cvt.u32.u64 %r3, %a;
+    ld.global.v2.u16 {%h1, %h2}, [w+4];
+    mov.b32 %r4, {%h1, %h2};
+    st.global.v4.u32 [%o+64], {%r1, %r2, %r3, %r4};
+    ld.global.v2.f64 {%f1, %f2}, [d];
+    add.f64 %f1, %f1, %f2;
+    cvt.rzi.u32.f64 %r1, %f1;
+    ld.global.u8 %r2, [c2];
+    st.global.v2.u32 [%o+80], {%r1, %r2};
+    ret;
+}
+.buffer OUT .u32 [22];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 5, 77, 1, 99, 3, 0, 0, 0, 1, 0, 3, 4, 1, 2, 3, 4, 0, 0, 0, 524295, 4, 1 };

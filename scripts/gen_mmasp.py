@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generate tests/sp-*.ptx: mma.sp against a dense model.  A is built dense with the required
 2:4 / 1:2 / pair-wise 4:8 structure, then compressed per the ISA fragment formulas (regions of
-a row held by a lane, non-zeros in column order) and metadata nibbles placed per the lane
-assignment documented in semantics/ptx-exec-sp.k.  usage: gen_mmasp.py [SEED]"""
+a row held by a lane, non-zeros in column order) and metadata nibbles placed per the ISA metadata
+layout figures of ISA 9.7.15.6.2.  usage: gen_mmasp.py [SEED]"""
 import random, sys
 from fractions import Fraction
 src = open(__file__.rsplit('/', 1)[0] + '/gen_mma.py').read().split('cases = []')[0]
@@ -114,7 +114,11 @@ def build_sp(case):
         def row_bits(r, lo, hi):
             return sum(nibble(at, choice[(r, c)]) << (4 * (c - lo)) for c in range(lo, hi))
         if bits == 16: meta[4 * g + sel] = row_bits(g, 0, 4) | (row_bits(g + 8, 0, 4) << 16)
-        elif bits == 32:
+        elif bits == 32 and ewa >= 16:
+            # f16 / bf16 m16n8k32, tf32 m16n8k16 (ISA Figures 122, 125): thread 2*sel + h holds chunks 4h..4h+3 of
+            # row g (bits 0-15) and of row g + 8 (bits 16-31)
+            for hh in range(2): meta[4 * g + 2 * sel + hh] = row_bits(g, 4 * hh, 4 * hh + 4) | (row_bits(g + 8, 4 * hh, 4 * hh + 4) << 16)
+        elif bits == 32:     # u8 / s8 m16n8k32 (Figure 129): thread 2*sel + rh holds the 8 chunks of row g + 8*rh
             for rh in range(2): meta[4 * g + 2 * sel + rh] = row_bits(g + 8 * rh, 0, 8)
         else:
             for h in range(2):

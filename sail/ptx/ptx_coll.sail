@@ -124,6 +124,13 @@ function reduxStep(op, t, m, a, b) = match op {
   _ => a
 }
 
+/* redux.sync .abs: "the absolute value of the input is considered for the reduction operation" (.f32 only) */
+val reduxAbs : (ty, list(string), list(int)) -> list(int)
+function reduxAbs(t, m, l) = match l {
+  [||] => [||],
+  v :: rest => (if isF(t) & has(m, "abs") then land_int(v, 2147483647) else v) :: reduxAbs(t, m, rest)
+}
+
 val reduxFold : (string, ty, list(string), list(int)) -> int
 function reduxFold(op, t, m, l) = match l {
   [||] => 0,
@@ -135,6 +142,8 @@ val matchAny : (list(int), list((int, list(int))), list(int)) -> list((int, list
 val electAll : (list(int), int) -> list((int, list(int)))
 val sum_contrib : (list((int, list(int))), list(int)) -> int
 val sum_list : list(int) -> int
+/* the lanes of the arrivals as a mask */
+val arrMask : list((int, list(int))) -> int
 
 val collCompute : (string, list(cval), list((int, list(int)))) -> list((int, list(int)))
 function collCompute(k, d, arr) = {
@@ -151,7 +160,8 @@ function collCompute(k, d, arr) = {
     "vote.ballot" => sameAll(ls, [|ballotv(arr, ls)|]),
     "match.any" => matchAny(ls, arr, ls),
     "match.all" => {
-      if sameValueMask(arr, ls, at(listAt(arr, minLane(ls)), 0)) == cv_int(d, 0) then sameAll(ls, [|cv_int(d, 0), 1|])
+      /* "d is set to mask corresponding to non-exited threads in membermask" (the lanes that took part) */
+      if sameValueMask(arr, ls, at(listAt(arr, minLane(ls)), 0)) == arrMask(arr) then sameAll(ls, [|arrMask(arr), 1|])
       else sameAll(ls, [|0, 0|])
     },
     "elect" => electAll(ls, minLane(ls)),
@@ -159,7 +169,7 @@ function collCompute(k, d, arr) = {
     "coll_test.first" => sameAll(ls, listAt(arr, minLane(ls))),
     _ => {
       if k == "redux.add" | k == "redux.min" | k == "redux.max" | k == "redux.and" | k == "redux.or" | k == "redux.xor" then
-        sameAll(ls, [|reduxFold(k, cv_ty(d, 0), cv_mods(d, 1), preds(arr, ls))|])
+        sameAll(ls, [|reduxFold(k, cv_ty(d, 0), cv_mods(d, 1), reduxAbs(cv_ty(d, 0), cv_mods(d, 1), preds(arr, ls)))|])
       else match coll_compute_ext(k, d, arr) { Some(r) => r, None() => arr }
     }
   }
@@ -211,6 +221,46 @@ function drop_coll(key) = {
 val list_len_pairs : list((int, list(int))) -> int
 function list_len_pairs(l) = match l { [||] => 0, _ :: t => 1 + list_len_pairs(t) }
 
+/* shfl.sync, vote.sync, match.sync and redux.sync wait for "all non-exited threads corresponding to
+ * membermask" (PTX ISA 9.3, shfl.sync, vote.sync, match.sync, redux.sync), and bar.warp.sync is a barrier,
+ * and "Barriers exclusively waiting on arrivals from exited threads are always released" (exit).  For these
+ * kinds the lanes of the mask that have exited do not take part; elect.sync waits for "all threads in the
+ * membermask" and the warp-wide matrix instructions are undefined after an exit, so they keep the full mask. */
+val collExitOk : string -> bool
+function collExitOk(k) =
+  string_startswith(k, "shfl.") | string_startswith(k, "vote.") | string_startswith(k, "match.")
+  | string_startswith(k, "redux.") | k == "bar.warp"
+
+function arrMask(a) = match a { [||] => 0, (l, _) :: rest => lor_int(pow2(l), arrMask(rest)) }
+
+/* the lanes an instance of kind K, mask M of warp W waits for */
+val collNeed : (int, int, string, int) -> int
+function collNeed(c, w, k, m) = if collExitOk(k) then land_int(m, smap_get(c_wlive[cchk(c)], dec_str(w))) else m
+
+val collComplete : (int, int, coll) -> coll
+function collComplete(c, w, x) =
+  if not_bool(x.cdone) & land_int(collNeed(c, w, x.ckind, x.cmask), lnot_int(arrMask(x.carr))) == 0
+  then { x with cres = collCompute(x.ckind, x.cdata, x.carr), cdone = true }
+  else x
+
+/* a lane of warp W of CTA C exited: the instances that only waited for exited lanes complete */
+val collRecheck : (int, int) -> unit
+function collRecheck(c, w) = {
+  let pre = concat_str(dec_str(c), concat_str("#", concat_str(dec_str(w), "#")));
+  var l = colls;
+  var out : list(coll) = [||];
+  while is_cons(l) do {
+    match l {
+      x :: rest => {
+        out = (if string_startswith(x.ckey, pre) & collExitOk(x.ckind) then collComplete(c, w, x) else x) :: out;
+        l = rest
+      },
+      [||] => ()
+    }
+  };
+  colls = out
+}
+
 /* #coll(K, M, D, Cn, Ds) */
 val do_coll : (string, int, list(cval), list(int), list(xop)) -> unit
 function do_coll(k, m, d, cn, ds) = {
@@ -229,10 +279,7 @@ function do_coll(k, m, d, cn, ds) = {
       None() => struct { ckey = key, ckind = k, cdata = d, cmask = m, carr = [||], cres = [||], cdone = false, ctaken = 0 }
     };
     let arr = pend_append(c0.carr, [|(lane, cn)|]);
-    let c1 : coll = if list_len_pairs(arr) == popc_int(m)
-                    then { c0 with ckind = k, cdata = d, cmask = m, carr = arr, cres = collCompute(k, d, arr), cdone = true }
-                    else { c0 with ckind = k, cdata = d, cmask = m, carr = arr };
-    put_coll(c1);
+    put_coll(collComplete(cur_cta(), tdiv_int(tid, collW(k)), { c0 with ckind = k, cdata = d, cmask = m, carr = arr }));
     t_cont[t] = K_collwait(key, ds);
     yielded = true
   }
@@ -275,7 +322,7 @@ function coll_take() = {
           P_none() => collWrite(ds, vs),
           p => { t_post[t] = P_none(); coll_post_ext(p, vs) }
         };
-        if c.ctaken + 1 == popc_int(c.cmask) then drop_coll(key) else put_coll({ c with ctaken = c.ctaken + 1 });
+        if c.ctaken + 1 == list_len_pairs(c.carr) then drop_coll(key) else put_coll({ c with ctaken = c.ctaken + 1 });
         t_cont[t] = K_none()
       },
       None() => ()
@@ -287,6 +334,56 @@ function coll_take() = {
 /* ---------------------------------------------------------------- instructions */
 val dests : xop -> list(xop)
 function dests(dp) = match dual_regs(dp) { Some((d, p)) => [|XS(d), XS(p)|], None() => [|dp|] }
+
+/* activemask without `.convergence its`: "An active thread will contribute 1 for its entry in the result and exited
+ * or inactive or predicated-off thread will contribute 0" (PTX ISA 9.3, activemask).  The model reports the lanes that
+ * execute this activemask together with the executing lane: activemask ends a turn (isVisible), so the first lane of
+ * the warp to execute it finds the lanes that will execute the same instruction next (same function and pc, not
+ * blocked, guard true; an unguarded lane whose collective just completed counts too) and records the mask for all of
+ * them.  Exited lanes, lanes elsewhere (divergent paths) and predicated-off lanes contribute 0.  The visit count of the
+ * instruction keys the recorded mask (t_misc "act:<site>:<visit>"). */
+val actKey : (int, string) -> string
+function actKey(s, site) = concat_str("act:", concat_str(site, concat_str(":", dec_str(smap_get(t_cseq[tchk(s)], seqKey(site, 0))))))
+
+val actJoins : (int, int, string) -> bool
+function actJoins(t, s, site) = {
+  let me = tchk(t);
+  let o = tchk(s);
+  let pc = t_pc[me] - 1;
+  if not_bool(t_alive[o]) | t_status[o] != 0 | t_cta[o] != t_cta[me] | tdiv_int(t_tid[o], 32) != tdiv_int(t_tid[me], 32)
+     | t_fn[o] != t_fn[me] | t_pc[o] != pc | smap_get(t_misc[o], actKey(s, site)) != 0 then false
+  else match get_item(f_base[fchk(t_fn[o])] + pc) {
+    INS(None(), _, _) => t_cont[o] == K_none() | coll_ready(s),
+    INS(Some((p, neg)), _, _) => {
+      if t_cont[o] != K_none() then false
+      else { let sv = cur; cur = s; let v = rreg(p); cur = sv; (v != 0) != neg }
+    },
+    _ => false
+  }
+}
+
+val actGroup : int -> int
+function actGroup(t) = {
+  let s = tchk(t);
+  let site = concat_str("act@", concat_str(f_name[fchk(t_fn[s])], concat_str(":", dec_str(t_pc[s]))));
+  let key = actKey(t, site);
+  let cs = t_cseq[s];
+  let sk = seqKey(site, 0);
+  let mine = smap_get(t_misc[s], key);
+  var msk : int = mine;
+  if mine == 0 then {
+    let lane = fmod_int(t_tid[s], 32);
+    msk = pow2(lane);
+    var grp : list(int) = [||];
+    foreach (j from 0 to 31) {
+      let o = t - lane + j;
+      if j != lane & o >= 0 & o < nthreads then { if actJoins(t, o, site) then { msk = lor_int(msk, pow2(j)); grp = o :: grp } }
+    };
+    while is_cons(grp) do match grp { o :: rest => { smap_set(t_misc[tchk(o)], actKey(o, site), msk); grp = rest }, [||] => () }
+  } else smap_del(t_misc[s], key);
+  smap_set(cs, sk, smap_get(cs, sk) + 1);
+  msk
+}
 
 val exec_warp : (opcode, list(xop)) -> bool
 function exec_warp(o, ops) = {
@@ -337,7 +434,7 @@ function exec_warp(o, ops) = {
         var l = arr_lanes(arr);
         while is_cons(l) do { match l { x :: rest => { msk = lor_int(msk, pow2(x)); l = rest }, [||] => () } };
         wr(d, msk)
-      } else wr(d, smap_get(c_wlive[cchk(cur_cta())], dec_str(tdiv_int(t_tid[t], 32))));
+      } else wr(d, actGroup(t));
       true
     },
     _ => false

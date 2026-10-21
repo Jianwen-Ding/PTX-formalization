@@ -71,7 +71,8 @@ def int_range(t):
 def conv_fi(b, s, t, rm):
     k, v, sg = R.classify(b, s)
     lo, hi = int_range(t)
-    if k == 'nan': return 0
+    # PTX ISA 9.3 cvt: NaN gives 0, or 1 << (BitWidth(dst) - 1) when the source is .f64 or dst .s64 / .u64
+    if k == 'nan': return 1 << (int(t[1:]) - 1) if s == 64 or int(t[1:]) == 64 else 0
     if k == 'inf': return hi if not sg else lo
     x = Fraction(0) if k == 'zero' else (-v if sg else v)
     fl = x.numerator // x.denominator

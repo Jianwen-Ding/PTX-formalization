@@ -167,11 +167,11 @@ function fillC(sp, s, t, arr, off) = {
 val fv_zero : unit -> fv
 function fv_zero() = FV_Fin(false, 0, 0)
 
-val dotF : (ty, ty, int, int, int, fv) -> fv
-function dotF(at_, bt, r, c, k, acc0) = {
+val dotF : (ty, ty, int, int, int, fv, rmode) -> fv
+function dotF(at_, bt, r, c, k, acc0, md) = {
   var acc : fv = acc0;
   foreach (i from 0 to (k - 1))
-    acc = fv_add_exact(acc, fv_mul_exact(elemF(at_, mget(SP_MA, rc(r, i))), elemF(bt, mget(SP_MB, rc(i, c)))), RN);
+    acc = fv_add_exact(acc, fv_mul_exact(elemF(at_, mget(SP_MA, rc(r, i))), elemF(bt, mget(SP_MB, rc(i, c)))), md);
   acc
 }
 
@@ -189,12 +189,14 @@ function dotI(at_, bt, r, c, k, acc0, op) = {
 val noMods : unit -> fmods
 function noMods() = fmods_of([||])
 
-/* one result element, as bits of the D type */
+/* one result element, as bits of the D type; the rounding modifier (.rn / .rz / .rm / .rp, ISA 9.7.15.5: f64 only,
+   .rn by default) rounds the exact sum */
 val resElem : (ty, ty, ty, ty, int, int, int, list(string)) -> int
 function resElem(dt, at_, bt, ct, r, c, k, m) = {
   let cv = mget(SP_MC, rc(r, c));
+  let md = fmods_of(m).rm;
   if isFloatElem(at_) then
-    fin({ noMods() with satfinite = has(m, "satfinite") }, fw(dt), dotF(at_, bt, r, c, k, elemF(ct, cv)), false)
+    fin({ noMods() with satfinite = has(m, "satfinite"), rm = md }, fw(dt), dotF(at_, bt, r, c, k, elemF(ct, cv), md), false)
   else if ew(at_) > 1 then {
     let v = dotI(at_, bt, r, c, k, ival(cv, ct), "");
     trunc(if has(m, "satfinite") then clamp(v, dt) else v, 32)
@@ -236,8 +238,86 @@ function scatterAll(s, dt, arr) = {
 val cv_str : (list(cval), int) -> string
 function cv_str(d, i) = match d { [||] => "", h :: t => if i == 0 then (match h { CVS(x) => x, _ => "" }) else cv_str(t, i - 1) }
 
+/* ---------------------------------------------------------------- mma.m8n8k4 with .f16 A / B (ISA 9.7.15.5.1)
+ * Four independent 8x8x4 products: quad pair Q = (%laneid % 16) / 4 (lanes 4Q..4Q+3 low, 4Q+16..4Q+19 high group).
+ * Product Q is kept at rows / columns 8Q..8Q+7 of D and C, rows 8Q.. of A and columns 8Q.. of B, so the
+ * dense dot product above is reused (it reads only the 4 columns of A / rows of B of its own product). */
+val layCol : (list(string), int) -> bool
+function layCol(m, n) = {
+  /* the N-th (0 = .alayout, 1 = .blayout) .row / .col qualifier is .col */
+  var l = m;
+  var k : int = 0;
+  var r : bool = false;
+  while is_cons(l) do {
+    match l { x :: rest => { if x == "row" | x == "col" then { if k == n then r = x == "col"; k = k + 1 }; l = rest }, [||] => () }
+  };
+  r
+}
+
+val m884Q : int -> int
+function m884Q(l) = tdiv_int(fmod_int(l, 16), 4)
+val m884H : int -> int
+function m884H(l) = 4 * tdiv_int(l, 16)
+
+/* (row, col) of element i of lane l of the accumulator: .f16 (Figure 50) or .f32 (Figures 51, 52) */
+val posC884 : (ty, int, int) -> int
+function posC884(t, l, i) = {
+  let o = 8 * m884Q(l);
+  if ew(t) == 16 then rc(o + fmod_int(l, 4) + m884H(l), o + i)
+  else rc(o + land_int(l, 1) + land_int(i, 2) + m884H(l), o + land_int(i, 4) + land_int(l, 2) + land_int(i, 1))
+}
+
+val m884_compute : (list(cval), list((int, list(int)))) -> list((int, list(int)))
+function m884_compute(d, arr) = {
+  let dt = cv_ty(d, 1);
+  let at_ = cv_ty(d, 2);
+  let bt = cv_ty(d, 3);
+  let ct = cv_ty(d, 4);
+  let m = cv_mods(d, 5);
+  let acol = layCol(m, 0);
+  let bcol = layCol(m, 1);
+  smap_clear(SP_MA);
+  smap_clear(SP_MB);
+  smap_clear(SP_MC);
+  foreach (l from 0 to 31) {
+    match lane_get(arr, l) {
+      Some(rs) => {
+        let o = 8 * m884Q(l);
+        let t = fmod_int(l, 4);
+        let h = m884H(l);
+        foreach (i from 0 to 3) {
+          /* A: Figures 46 / 47; B: Figures 48 / 49 */
+          mset(SP_MA, if acol then rc(o + i + h, t) else rc(o + t + h, i), fragBits(rs, 0, at_, i));
+          mset(SP_MB, if bcol then rc(i, o + t + h) else rc(t, o + i + h), fragBits(rs, 2, bt, i))
+        };
+        foreach (i from 0 to 7) mset(SP_MC, posC884(ct, l, i), fragBits(rs, 4, ct, i))
+      },
+      None() => ()
+    }
+  };
+  smap_clear(SP_MD);
+  foreach (q from 0 to 3)
+    foreach (r from 0 to 7)
+      foreach (c from 0 to 7)
+        mset(SP_MD, rc(8 * q + r, 8 * q + c), resElem(dt, at_, bt, ct, 8 * q + r, 8 * q + c, 4, m));
+  var out : list((int, list(int))) = [||];
+  foreach (l from 31 downto 0) {
+    if is_some(lane_get(arr, l)) then {
+      let per = perReg(dt);
+      var regs : list(int) = [||];
+      foreach (r from 0 to (tdiv_int(8, per) - 1)) {
+        var v : int = 0;
+        foreach (j from 0 to (per - 1)) v = lor_int(v, shl_int(mget(SP_MD, posC884(dt, l, r * per + j)), ew(dt) * j));
+        regs = pend_append(regs, [|v|])
+      };
+      out = (l, regs) :: out
+    }
+  };
+  out
+}
+
 val mma_compute : (list(cval), list((int, list(int)))) -> list((int, list(int)))
-function mma_compute(d, arr) = {
+function mma_compute(d, arr) = if cv_str(d, 0) == "m8n8k4" & ew(cv_ty(d, 2)) == 16 then m884_compute(d, arr) else {
   let s = cv_str(d, 0);
   let dt = cv_ty(d, 1);
   let at_ = cv_ty(d, 2);
@@ -487,10 +567,11 @@ function exec_mma(o, ops) = {
   let full : int = 4294967295;
   match (o.base, o.tys, ops) {
     ("mma", [|dt, at_, bt, ct|], [|dv, av, bv, cv|]) => {
-      /* m8n8k4 is modelled for .f64 only (the sm_70 .f16 form has other fragments): anything else is unsupported */
-      if has(m, "sync") & not_bool(has(m, "sp")) & not_bool(has(m, "sp::ordered_metadata"))
-         & not_bool(shapeOf(m) == "m8n8k4" & wid(at_) != 64) then {
-        do_coll("mma", full, [|CVS(shapeOf(m)), CVT(dt), CVT(at_), CVT(bt), CVT(ct), CVM(m)|],
+      if has(m, "sync") & not_bool(has(m, "sp")) & not_bool(has(m, "sp::ordered_metadata")) then {
+        /* ISA 9.7.15.5.14 (mma): ".m8n8k4 : When .ctype is .f32, .dtype must also be .f32" */
+        if shapeOf(m) == "m8n8k4" & ty_eq(ct, mkty("f", 32)) & not_bool(ty_eq(dt, mkty("f", 32))) then
+          fault("mma.m8n8k4: .dtype must be .f32 when .ctype is .f32", 0)
+        else do_coll("mma", full, [|CVS(shapeOf(m)), CVT(dt), CVT(at_), CVT(bt), CVT(ct), CVM(m)|],
                 pend_append(pend_append(vecRegs(av, at_), vecRegs(bv, bt)), vecRegs(cv, ct)), vecOps(dv));
         true
       } else false
@@ -544,11 +625,21 @@ function spChunk(t, u, tg) = if ew(t) >= 16 then tg + 4 * tdiv_int(u, 2) else 2 
 val spMeta : (list((int, list(int))), int) -> int
 function spMeta(arr, l) = { let c = listAt(arr, l); at(c, list_length(c) - 1) }
 
-val spNib : (list((int, list(int))), int, int, int, int, int) -> int
-function spNib(arr, g, rh, c, nc, sel) =
-  if nc == 4 then land_int(asr_int(spMeta(arr, 4 * g + sel), 16 * rh + 4 * c), 15)
-  else if nc == 8 then land_int(asr_int(spMeta(arr, 4 * g + 2 * sel + rh), 4 * c), 15)
-  else if nc == 16 then land_int(asr_int(spMeta(arr, 4 * g + 2 * tdiv_int(c, 8) + rh), 4 * fmod_int(c, 8)), 15)
+/* (lane in the group of four, bit offset) of the nibble of chunk c of row g + 8 rh, from NC chunks per row and the
+   selector: one thread (NC = 4), a thread pair (NC = 8) or all four threads (NC = 16).  With eight chunks the
+   16- and 32-bit types (Figures 122, 125; wgmma Figures 176, 178) give thread 2 sel + c / 4 chunks 4 (c / 4) .. + 3
+   of both rows (row g + 8 in the upper half), the 8-bit types (Figure 129) give thread 2 sel + rh all chunks of
+   one row */
+val spNibAt : (ty, int, int, int, int) -> (int, int)
+function spNibAt(t, rh, c, nc, sel) =
+  if nc == 4 then (sel, 16 * rh + 4 * c)
+  else if nc == 8 & ew(t) >= 16 then (2 * sel + tdiv_int(c, 4), 16 * rh + 4 * fmod_int(c, 4))
+  else if nc == 8 then (2 * sel + rh, 4 * c)
+  else (2 * tdiv_int(c, 8) + rh, 4 * fmod_int(c, 8))
+
+val spNib : (ty, list((int, list(int))), int, int, int, int, int) -> int
+function spNib(t, arr, g, rh, c, nc, sel) =
+  if nc == 4 | nc == 8 | nc == 16 then { let (ln, b) = spNibAt(t, rh, c, nc, sel); land_int(asr_int(spMeta(arr, 4 * g + ln), b), 15) }
   else 0
 
 val spPos : (ty, int, int) -> int
@@ -566,7 +657,7 @@ function spFillAll(s, t, arr, sel) = {
         let u = tdiv_int(i, spNz(t));
         let rh = spRh(t, u);
         let ch = spChunk(t, u, fmod_int(l, 4));
-        let nib = spNib(arr, tdiv_int(l, 4), rh, ch, tdiv_int(shK(s), spCw(t)), sel);
+        let nib = spNib(t, arr, tdiv_int(l, 4), rh, ch, tdiv_int(shK(s), spCw(t)), sel);
         mset(SP_MA, rc(tdiv_int(l, 4) + 8 * rh, spCw(t) * ch + spPos(t, nib, fmod_int(i, spNz(t)))), fragBits(rs, 0, t, i))
       },
       None() => ()

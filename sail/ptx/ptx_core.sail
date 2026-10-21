@@ -112,11 +112,11 @@ union loc = {
 val mkLoc : (string, int) -> loc
 function mkLoc(s, a) = {
   if s == "generic" then {
-    if a >= CLBASE & a < PARBASE then Loc("cluster", lor_int(shl_int(asr_int(a - CLBASE, 24) + 1, 24), land_int(a - CLBASE, 16777215)))
-    else if a >= PARBASE then Loc("param", a - PARBASE)
-    else if a >= LOCBASE & a < CLBASE then Loc("local", a - LOCBASE)
-    else if a >= SHBASE & a < LOCBASE then Loc("shared", a - SHBASE)
-    else Loc("global", a)
+    let w = genWin(a);
+    let o = a - winBase(w);
+    if w == "cluster" then Loc("cluster", lor_int(shl_int(asr_int(o, 24) + 1, 24), land_int(o, 16777215)))
+    else if w == "const" then Loc("global", o)
+    else Loc(w, o)
   } else if s == "const" then Loc("global", a)
   else if s == "shared_cluster" then Loc("cluster", a)
   else Loc(s, a)
@@ -210,7 +210,7 @@ function memop_do(l, op) = match l {
       fault(concat_str("misaligned ", concat_str(s, concat_str(" access of ", concat_str(dec_str(nb), " bytes")))), a); 0
     } else if ub & s == "global" & nb > 0 & (a < 4096 | a + nb > gtop) then {
       fault("global access outside the allocated data", a); 0
-    } else if ub & s == "local" & nb > 0 & a + nb > t_ltop[tchk(cur)] then {
+    } else if ub & s == "local" & nb > 0 & a + nb > t_ltop[tchk(cur)] & (a < t_lsp[tchk(cur)] | a + nb > LSTACK) then {
       fault("local access above the stack top", a); 0
     } else if s == "global" & a >= 4096 then mem_apply(SP_GMEM, a, op)
     else if s == "shared" & a >= 0 then mem_apply(cta_smem(), a, op)

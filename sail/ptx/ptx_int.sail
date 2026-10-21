@@ -362,11 +362,16 @@ function testp(op, v, w) = match op {
 }
 
 val inSpace : (list(string), int, int) -> bool
-function inSpace(m, a, own) =
-  ((has(m, "global") | has(m, "const") | has(m, "param")) & a < SHBASE)
-  | ((has(m, "shared") | has(m, "shared::cta")) & ((a >= SHBASE & a < LOCBASE) | (a >= CLBASE & asr_int(a - CLBASE, 24) == own)))
-  | (has(m, "shared::cluster") & ((a >= SHBASE & a < LOCBASE) | a >= CLBASE))
-  | (has(m, "local") & a >= LOCBASE & a < CLBASE)
+function inSpace(m, a, own) = {
+  /* the .param window is contained in the .global window (PTX ISA 6.4.1.1, isspacep) */
+  let w = genWin(a);
+  (has(m, "global") & (w == "global" | w == "param"))
+  | (has(m, "const") & w == "const")
+  | ((has(m, "param") | has(m, "param::entry")) & w == "param")
+  | ((has(m, "shared") | has(m, "shared::cta")) & (w == "shared" | (w == "cluster" & asr_int(a - winBase("cluster"), 24) == own)))
+  | (has(m, "shared::cluster") & (w == "shared" | w == "cluster"))
+  | (has(m, "local") & w == "local")
+}
 
 val exec_pred : (opcode, list(xop)) -> bool
 function exec_pred(o, ops) = {
@@ -464,16 +469,18 @@ val exec_misc : (opcode, list(xop)) -> bool
 function exec_misc(o, ops) = {
   let t = tchk(cur);
   match (o.base, ops) {
+    /* the stack grows down; the stack pointer and the pointer returned by alloca are .local addresses
+       (PTX ISA 9.7.18: ptr can be used with ld.local / st.local; alloca's result is the new stack pointer) */
     ("alloca", d :: sz :: rest) => {
       let ty = ty1(o);
       let al = allocaAlign(rest);
-      let a = alignUp(t_ltop[t], al);
-      wr(d, trunc(a + (if wid(ty) == 64 then LOCBASE else 0), wid(ty)));
-      t_ltop[t] = a + rd(sz, U32);
+      let a = fdiv_int(t_lsp[t] - rd(sz, ty), al) * al;
+      t_lsp[t] = a;
+      wr(d, trunc(a, wid(ty)));
       true
     },
-    ("stacksave", [|d|]) => { let ty = ty1(o); wr(d, trunc(t_ltop[t] + (if wid(ty) == 64 then LOCBASE else 0), wid(ty))); true },
-    ("stackrestore", [|a|]) => { let ty = ty1(o); t_ltop[t] = rd(a, ty) - (if wid(ty) == 64 then LOCBASE else 0); true },
+    ("stacksave", [|d|]) => { let ty = ty1(o); wr(d, trunc(t_lsp[t], wid(ty))); true },
+    ("stackrestore", [|a|]) => { let ty = ty1(o); t_lsp[t] = rd(a, ty); true },
     _ => false
   }
 }

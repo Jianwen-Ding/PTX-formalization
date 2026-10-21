@@ -1,0 +1,40 @@
+// Generic-address windows (PTX ISA 6.4.1.1, isspacep 9.7.9.20): the kernel-parameter window is contained in
+// the .global window, so isspacep.global and isspacep.param are both 1 on a cvta.param address, and
+// isspacep.param is 0 on a global address; .const is a window of its own (cvta.const, generic() initializers).
+.version 8.6
+.target sm_90
+.address_size 64
+.const .u32 cv = 42;
+.global .u64 gcv = generic(cv);
+.visible .entry k(.param .u64 po, .param .u32 pv)
+{
+    .reg .b64 %o, %a, %c; .reg .b32 %r<16>; .reg .pred %p;
+    ld.param.u64 %o, [po];
+    mov.u64 %a, pv;
+    cvta.param.u64 %a, %a;
+    ld.u32 %r0, [%a];
+    isspacep.global %p, %a;  selp.u32 %r1, 1, 0, %p;
+    isspacep.param %p, %a;   selp.u32 %r2, 1, 0, %p;
+    isspacep.const %p, %a;   selp.u32 %r3, 1, 0, %p;
+    isspacep.param %p, %o;   selp.u32 %r4, 1, 0, %p;
+    isspacep.global %p, %o;  selp.u32 %r5, 1, 0, %p;
+    isspacep.const %p, %o;   selp.u32 %r6, 1, 0, %p;
+    mov.u64 %c, cv;
+    cvta.const.u64 %c, %c;
+    ld.u32 %r7, [%c];
+    isspacep.const %p, %c;   selp.u32 %r8, 1, 0, %p;
+    isspacep.global %p, %c;  selp.u32 %r9, 1, 0, %p;
+    ld.global.u64 %c, [gcv];
+    ld.u32 %r10, [%c];
+    isspacep.const %p, %c;   selp.u32 %r11, 1, 0, %p;
+    cvta.to.const.u64 %c, %c;
+    ld.const.u32 %r12, [%c];
+    st.global.v4.u32 [%o], {%r0, %r1, %r2, %r3};
+    st.global.v4.u32 [%o+16], {%r4, %r5, %r6, %r7};
+    st.global.v4.u32 [%o+32], {%r8, %r9, %r10, %r11};
+    st.global.u32 [%o+48], %r12;
+    ret;
+}
+.buffer OUT .u32 [13];
+.launch k <<< 1, 1 >>> (OUT, 1234);
+.expect OUT .u32 = { 1234, 1, 1, 0, 0, 1, 0, 42, 1, 0, 42, 1, 42 };

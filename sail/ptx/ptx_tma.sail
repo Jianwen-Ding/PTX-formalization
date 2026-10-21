@@ -48,9 +48,12 @@ function tmTyOf(c) = match c {
 val tmTy : int -> ty
 function tmTy(b) = tmTyOf(tmEtc(b))
 
+/* the swizzle of the shared-memory addresses (swizzle of ptx_wg.sail) for the tensor map's swizzle mode (Table 33:
+ * 0 none, 1 32B, 2 64B, 3 128B, 4 96B).  The 96B mode has the pattern of the 32B mode ("0 1 2 3 4 5 6 7 / 1 0 3 2 5 4 7 6 /
+ * ... Pattern repeats" from a 256-byte boundary, PTX ISA 9.3 section 5.5.7, and Figure 31). */
 val tmEffMode : int -> int
 function tmEffMode(b) =
-  if tmSwz(b) == 1 then 3 else if tmSwz(b) == 2 then 2
+  if tmSwz(b) == 1 | tmSwz(b) == 4 then 3 else if tmSwz(b) == 2 then 2
   else if tmSwz(b) == 3 then (match tmAtom(b) { 0 => 1, 1 => 4, 2 => 5, 3 => 6, _ => 0 })
   else 0
 

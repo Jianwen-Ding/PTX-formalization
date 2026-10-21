@@ -1,0 +1,40 @@
+// PTX ISA 9.3 9.7.4.9: tanh.approx.{f16,bf16,f16x2,bf16x2}, maximum absolute error 2^-10.987 (f16) / 2^-8 (bf16),
+// tanh(+-Inf) = +-1, tanh(+-0) = +-0.  The model gives the correctly rounded tanh; expected values: tanh from Decimal
+// exp at 80 digits, rounded once (Python fractions).  0x4039 / 0x4032 exceeded the bound before (0x3BC7, 0x3F80).
+.version 8.0
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 ph, .param .u64 pho, .param .u64 pb, .param .u64 pbo)
+{
+    .reg .b32 %r0, %r1, %r2; .reg .b16 %h<3>; .reg .b64 %rd<8>;
+    mov.u32 %r0, %tid.x;
+    mul.wide.u32 %rd1, %r0, 2;
+    ld.param.u64 %rd2, [ph]; add.s64 %rd2, %rd2, %rd1; ld.global.b16 %h1, [%rd2];
+    tanh.approx.f16 %h2, %h1;
+    ld.param.u64 %rd3, [pho]; add.s64 %rd3, %rd3, %rd1; st.global.b16 [%rd3], %h2;
+    ld.param.u64 %rd4, [pb]; add.s64 %rd4, %rd4, %rd1; ld.global.b16 %h1, [%rd4];
+    tanh.approx.bf16 %h2, %h1;
+    ld.param.u64 %rd5, [pbo]; add.s64 %rd5, %rd5, %rd1; st.global.b16 [%rd5], %h2;
+    ret;
+}
+.visible .entry k2(.param .u64 po)
+{
+    .reg .b32 %r<4>; .reg .b64 %o;
+    ld.param.u64 %o, [po];
+    mov.b32 %r1, 0x38004039;
+    tanh.approx.f16x2 %r2, %r1;
+    mov.b32 %r1, 0x3F004032;
+    tanh.approx.bf16x2 %r3, %r1;
+    st.global.v2.b32 [%o], {%r2, %r3};
+    ret;
+}
+.buffer H .u16 = { 0x4039, 0x3800, 0x0C01, 0x3C00, 0xFC00, 0x8000, 0xB4CD, 0x0001, 0x4A00, 0x2E66 };
+.buffer HO .u16 [10];
+.buffer B .u16 = { 0x4032, 0x3F00, 0x3981, 0x3F80, 0xFF80, 0x8000, 0xBE4D, 0x0001, 0x4140, 0x3D4D };
+.buffer BO .u16 [10];
+.buffer P .u32 [2];
+.launch k <<< 1, 10 >>> (H, HO, B, BO);
+.launch k2 <<< 1, 1 >>> (P);
+.expect HO .u16 = { 0x3BC5, 0x3765, 0x0C01, 0x3A18, 0xBC00, 0x8000, 0xB4A9, 0x0001, 0x3C00, 0x2E61 };
+.expect BO .u16 = { 0x3F7E, 0x3EED, 0x3981, 0x3F43, 0xBF80, 0x8000, 0xBE4A, 0x0001, 0x3F80, 0x3D4D };
+.expect P .u32 = { 0x37653BC5, 0x3EED3F7E };

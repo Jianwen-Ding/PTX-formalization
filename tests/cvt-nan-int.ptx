@@ -1,0 +1,33 @@
+// PTX ISA 9.3 9.7.9.22 (Integer Notes): a NaN converted to an integer gives zero if the source is not .f64 and the
+// destination is not .s64 / .u64, otherwise 1 << (BitWidth(dst) - 1).
+.version 8.0
+.target sm_80
+.address_size 64
+.visible .entry k(.param .u64 pa, .param .u64 pb, .param .u64 pc)
+{
+    .reg .f32 %f1; .reg .f64 %d1; .reg .f16 %h1; .reg .b32 %r<8>; .reg .b64 %rd<6>; .reg .b16 %s1; .reg .b64 %a, %b, %c;
+    ld.param.u64 %a, [pa]; ld.param.u64 %b, [pb]; ld.param.u64 %c, [pc];
+    mov.b32 %f1, 0x7FC00000; mov.b64 %d1, 0x7FF8000000000000; mov.b16 %h1, 0x7E00;
+    cvt.rzi.s32.f32 %r1, %f1;
+    cvt.rzi.u32.f32 %r2, %f1;
+    cvt.rzi.s32.f64 %r3, %d1;
+    cvt.rni.u32.f64 %r4, %d1;
+    cvt.rzi.s32.f16 %r5, %h1;
+    cvt.rzi.s64.f32 %rd1, %f1;
+    cvt.rni.u64.f32 %rd2, %f1;
+    cvt.rzi.s64.f64 %rd3, %d1;
+    cvt.rzi.u64.f16 %rd4, %h1;
+    cvt.rzi.u16.f64 %s1, %d1;
+    st.global.v4.u32 [%a], {%r1, %r2, %r3, %r4};
+    st.global.u32 [%a+16], %r5;
+    st.global.v4.u64 [%b], {%rd1, %rd2, %rd3, %rd4};
+    st.global.u16 [%c], %s1;
+    ret;
+}
+.buffer A .u32 [5];
+.buffer B .u64 [4];
+.buffer C .u16 [1];
+.launch k <<< 1, 1 >>> (A, B, C);
+.expect A .u32 = { 0, 0, 0x80000000, 0x80000000, 0 };
+.expect B .u64 = { 0x8000000000000000, 0x8000000000000000, 0x8000000000000000, 0x8000000000000000 };
+.expect C .u16 = { 0x8000 };

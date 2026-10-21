@@ -1,0 +1,37 @@
+// Counted CTA barriers (PTX ISA 9.3, bar / barrier): "barrier{.cta} instruction causes executing thread to wait for all
+// non-exited threads from its warp and marks warps' arrival at barrier"; the thread count "must be a multiple of the warp
+// size".  First launch: lane 31 of warp 0 has exited, warp 0 still arrives as a warp and barrier.sync 1, 64 completes.
+// Second launch: a CTA of 4 threads (one warp) completes bar.sync 1, 32.
+.version 8.0
+.target sm_80
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %r<10>; .reg .pred %p<4>; .reg .b64 %rd<8>;
+    ld.param.u64 %rd2, [po];
+    mov.u32 %r1, %tid.x;
+    setp.eq.u32 %p1, %r1, 31;
+    @%p1 exit;
+    barrier.sync 1, 64;
+    mul.wide.u32 %rd3, %r1, 4;
+    add.s64 %rd5, %rd2, %rd3;
+    st.global.u32 [%rd5], 7;
+    ret;
+}
+.visible .entry k4(.param .u64 po)
+{
+    .reg .b32 %r<10>; .reg .b64 %rd<8>;
+    ld.param.u64 %rd2, [po];
+    mov.u32 %r1, %tid.x;
+    bar.sync 1, 32;
+    mul.wide.u32 %rd3, %r1, 4;
+    add.s64 %rd5, %rd2, %rd3;
+    st.global.u32 [%rd5], 9;
+    ret;
+}
+.buffer O .u32 [64];
+.buffer O4 .u32 [4];
+.launch k <<< 1, 64 >>> (O);
+.launch k4 <<< 1, 4 >>> (O4);
+.expect O .u32 = { 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7 };
+.expect O4 .u32 = { 9, 9, 9, 9 };

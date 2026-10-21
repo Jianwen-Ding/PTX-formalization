@@ -1,0 +1,29 @@
+// .maxntid bounds the total number of threads, the product of the extents, and "does not guarantee that the
+// limit in any particular dimension is not exceeded" (PTX ISA 11.4.2): 16 x 16 threads fit .maxntid 256, and
+// 64 x 2 threads fit .maxntid 16, 16, 4 (1024 threads).
+.version 8.6
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 po) .maxntid 256
+{
+    .reg .b64 %o; .reg .b32 %r<3>; .reg .pred %p;
+    ld.param.u64 %o, [po];
+    mov.u32 %r1, %tid.x;
+    mov.u32 %r2, %tid.y;
+    or.b32 %r1, %r1, %r2;
+    setp.ne.u32 %p, %r1, 0;
+    @%p ret;
+    atom.global.add.u32 %r1, [%o], 1;
+    ret;
+}
+.visible .entry k2(.param .u64 po) .maxntid 16, 16, 4
+{
+    .reg .b64 %o; .reg .b32 %r1;
+    ld.param.u64 %o, [po];
+    atom.global.add.u32 %r1, [%o+4], 1;
+    ret;
+}
+.buffer OUT .u32 [2];
+.launch k <<< 1, (16, 16) >>> (OUT);
+.launch k2 <<< 1, (64, 2) >>> (OUT);
+.expect OUT .u32 = { 1, 128 };

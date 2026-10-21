@@ -50,6 +50,78 @@ the reference for correctness.
       keeps CC.CF = carry of a + ~b + 1 (1 = no borrow), because ZLUDA's hardware-recorded `subc_cc_s32` reads
       CC.CF = 0 after `sub.cc` with a < b, which the ISA text would make 1. Needs a decision.
 
+## Sync / async / textures review against the ISA (fixed, Sail only)
+
+- [x] cp.async: with `.L2::cache_hint` a single trailing operand is the cache_policy (§9.7.9.26.3.1, ~15824-15880)
+- [x] warp collectives (shfl, vote, match, redux, bar.warp.sync) wait only for non-exited lanes of the membermask
+      (~12949, 21672-21767); match.all returns the participating lanes; elect.sync keeps the full mask ("all threads")
+- [x] redux.sync `.abs` (~21878)
+- [x] activemask: exited, inactive and predicated-off lanes contribute 0 (~21812-21818): the lanes executing the same
+      dynamic instance together under the round-robin schedule
+- [x] clusterlaunchcontrol.try_cancel `.multicast::cluster::all`: response and complete-tx in every CTA (~23576-23579)
+- [x] mbarrier test_wait / try_wait reportPredicate / reportValue operands (zero for `.layout::v0`, ~23064-23067)
+- [x] txq `.array_size` / `.num_mipmap_levels` 0 when not array / mipmapped, sampler queries, `txq.level` (~19255-19264)
+- [x] counted CTA barriers mark warp arrivals (~20252-20261)
+- [x] 96B swizzle (Table 33, Figure 31)
+
+## Matrix review against the ISA (fixed, Sail only)
+
+- [x] `mma.m8n8k4` with `.f16` inputs (§9.7.15.5.1, Figures 46-52); `.ctype .f32` requires `.dtype .f32` (~26898)
+- [x] f64 `mma` `.rn/.rz/.rm/.rp` (~26937-26942)
+- [x] sparse metadata of 16/32-bit `mma.sp` and `wgmma.sp` (Figures 122, 125, 176, 178)
+- [x] tcgen05.ld / st `.16x64b`, `.16x128b`, `.16x256b` cells (Figures 184-186)
+- [x] tcgen05 block-scale factor placement incl. K = 96 column groups (Figures 231, 234-251)
+- [x] tcgen05.mma.sp `kind::f16` / `tf32` metadata (Figures 262-265)
+- [x] matrix descriptor bit 52 (absolute leading-dimension mode): the ISA gives no layout, so the model stops with an error
+- [ ] open: f64 `mma` "precision ... identical to that of .f64 precision fused multiply-add" (the model rounds the exact
+      sum once); Figure 187 (`.16x32bx2`) draws threads 16-31 at lanes 16-31 while the text and the model use t % 16;
+      M = 64 "Layout F" lane placement is not modelled
+
+## Floating-point review against the ISA (fixed, Sail only)
+
+- [x] `div.approx.f32` with 2^126 < |b| < 2^128: NaN for infinite a, else a sign-preserving zero (~8581)
+- [x] `rcp.approx.ftz.f64`, `rsqrt.approx.ftz.f64`: computed on a[63:32], d[31:0] = 0, NaN -> 0x7fffffff00000000
+      (~9150-9187, 9403-9437). Choice: the high word is rounded once to nearest even (the ISA names no rounding)
+- [x] f64 NaN payloads (~7859): arithmetic returns the first NaN operand, quieted (which NaN and quieting are model
+      choices); `abs.f64` passes a NaN through unchanged (~8674); `neg.f64` NaN stays unspecified (~8738)
+- [x] cvt float -> int NaN: 0, or 1 << (BitWidth(dst) - 1) for an .f64 source or 64-bit destination (~15168-15170)
+- [x] `tanh.approx.f16` / `.bf16` correctly rounded (bounds 2^-10.987 / 2^-8 at ~10848 were exceeded); checked on all
+      65536 inputs of each type
+- [x] three-input `min` / `max` (~8773-8975); two-operand `cvt.pack.sat.{u16,s16}.s32` (~15506)
+- [x] `.relu` / `.satfinite` on fp8/fp6/fp4/s2f6 up-conversions; ue8m0x2 `.satfinite` of |x| > MAX_NORM is 0xfe (~15249-15257)
+- [x] `cvt.rs` stochastic rounding (~14809, Figures 38-41). Choices where the text is ambiguous: with more discarded bits
+      than random bits, the random bits are added at the most significant discarded bits; the x4 forms' rbits split
+- [x] `atom` / `red` `.add.f32` on global memory and `cp.reduce.async.bulk.add.f32` flush subnormals (~20917, 16478)
+- [x] test generators `gen_cvt.py`, `gen_mini.py`, `gen_testfloat.py` follow the same rules
+
+## Memory, calls and launch review against the ISA (fixed, Sail only)
+
+- [x] declarations: unsized first dimension from the initializer (~2675); `.v2` / `.v4` variables sized and aligned to the
+      whole vector (~2650); incomplete nested initializers padded per sub-array (~2693)
+- [x] address windows: `.const` window, `.param` window inside `.global` for `isspacep` (~3963-3966, 14661-14664);
+      windows under `.address_size 32`; a missing `.address_size` means 32 (~39194)
+- [x] `alloca` / `stacksave` / `stackrestore` return `.local` addresses (~35770-35960). Choice: the stack top (16 MiB)
+- [x] `mov` of a device-function `.param` address copies the parameter to the stack (`.local`) (~1812, 2128, 12608)
+- [x] `.param` variables as arguments of `.reg` formals and `.reg` returns into `.param` variables (~4307-4330)
+- [x] `.maxntid` bounds the total thread count (~39897); `%dynamic_smem_size`, `%total_smem_size`, `%aggr_smem_size`
+      (choices: bytes rounded up to the allocation unit; module-wide static `.shared`); `%is_explicit_cluster`
+- [x] `generic(v)+off` and `mask()` initializers (~2743-2760); `mov r, A[k]` (choice: k is a byte offset, constant
+      only); an omitted unsized last argument (~39381)
+- [ ] register-indexed operands such as `ld [array[r1]]`; `tests/launch-ok.ptx` combines `.maxntid` with `.reqntid`,
+      which the ISA forbids (~39942)
+
+## Where the Sail model now differs from the K semantics
+
+The K semantics in `semantics/` is no longer kept in step for the fixes above (it cannot be built here). Differences:
+cp.async operand parsing; redux `.abs`; exit-tolerant collectives and match.all's mask; activemask; try_cancel multicast
+and generic addresses; mbarrier report operands; txq; per-warp barrier arrival; 96B swizzle; m8n8k4 `.f16` and the
+ctype/dtype check; f64 mma rounding modifiers (also wmma f64); sparse metadata layouts (`ptx-exec-sp.k`,
+`ptx-exec-wg.k`); tcgen05 `tcCell`, `tcScalesA`, `tcNib`, descriptor bit 52 (`ptx-exec-tc.k`); every floating-point
+fix above (and the test expectations that changed with them: testfloat f64 NaNs, cvt NaN -> int, mini-1 ue8m0,
+transc-edge tanh); declarations, address map, `isspacep`, alloca, parameter passing, launch checks and the
+shared-memory registers (`ptx-load.k`, `ptx-configuration.k`, `ptx-exec-pred.k`, `ptx-exec-misc.k`,
+`ptx-exec-alu.k`, `ptx-exec-ctrl.k`, `ptx-harness.k`).  `tests/*.out` files are therefore no longer K output.
+
 ## Next: review the Sail model against the ISA (not against K)
 
 - [ ] Integer and bit instructions (§9.7.1, §9.7.2)

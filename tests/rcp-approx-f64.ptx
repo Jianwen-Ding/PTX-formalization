@@ -1,0 +1,33 @@
+// PTX ISA 9.3 9.7.3.13 / 9.7.3.16: rcp.approx.ftz.f64 and rsqrt.approx.ftz.f64 work on tmp = a[63:32] (1.11.20),
+// put 1/tmp (1/sqrt(tmp)) in 1.11.20 into d[63:32] and zero d[31:0]; subnormal inputs and results are flushed to
+// sign-preserving zero, NaN inputs give 0x7fffffff00000000.  Expected values: exact quotient / root rounded once to
+// 21 bits of precision (nearest even, the ISA names no rounding), computed with Python fractions.
+.version 8.0
+.target sm_80
+.address_size 64
+.visible .entry k(.param .u64 pr, .param .u64 pro, .param .u64 pq, .param .u64 pqo)
+{
+    .reg .b32 %r0; .reg .f64 %d<3>; .reg .b64 %rd<8>;
+    mov.u32 %r0, %tid.x;
+    mul.wide.u32 %rd1, %r0, 8;
+    ld.param.u64 %rd2, [pr]; add.s64 %rd2, %rd2, %rd1; ld.global.f64 %d1, [%rd2];
+    rcp.approx.ftz.f64 %d2, %d1;
+    ld.param.u64 %rd3, [pro]; add.s64 %rd3, %rd3, %rd1; st.global.f64 [%rd3], %d2;
+    ld.param.u64 %rd4, [pq]; add.s64 %rd4, %rd4, %rd1; ld.global.f64 %d1, [%rd4];
+    rsqrt.approx.ftz.f64 %d2, %d1;
+    ld.param.u64 %rd5, [pqo]; add.s64 %rd5, %rd5, %rd1; st.global.f64 [%rd5], %d2;
+    ret;
+}
+// 3, pi, -NaN(0x123), -0, +subnormal (upper word), +Inf, -Inf, 0x7fefffff00000000 (1/x subnormal), -7.5 (low word ignored)
+.buffer R .u64 = { 0x4008000000000000, 0x400921FB54442D18, 0xFFF8000000000123, 0x8000000000000000, 0x0000000100000000,
+                   0x7FF0000000000000, 0xFFF0000000000000, 0x7FEFFFFF00000000, 0xC01E000012345678 };
+.buffer RO .u64 [9];
+// 2, 3, -1, -Inf, +Inf, -0, sNaN, 2^-1022, 0x3FD5555555555555 (low word ignored)
+.buffer Q .u64 = { 0x4000000000000000, 0x4008000000000000, 0xBFF0000000000000, 0xFFF0000000000000, 0x7FF0000000000000,
+                   0x8000000000000000, 0x7FF4000000000001, 0x0010000000000000, 0x3FD5555555555555 };
+.buffer QO .u64 [9];
+.launch k <<< 1, 9 >>> (R, RO, Q, QO);
+.expect RO .u64 = { 0x3FD5555500000000, 0x3FD45F3100000000, 0x7FFFFFFF00000000, 0xFFF0000000000000, 0x7FF0000000000000,
+                    0x0000000000000000, 0x8000000000000000, 0x0000000000000000, 0xBFC1111100000000 };
+.expect QO .u64 = { 0x3FE6A09E00000000, 0x3FE279A700000000, 0x7FFFFFFF00000000, 0x7FFFFFFF00000000, 0x0000000000000000,
+                    0xFFF0000000000000, 0x7FFFFFFF00000000, 0x5FE0000000000000, 0x3FFBB67B00000000 };
