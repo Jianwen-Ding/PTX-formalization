@@ -185,8 +185,9 @@ Open:
 - [x] `.rp` / `.rm` to the small float formats (e4m3, e5m2, e2m3, e3m2, e2m1, s2f6) round the signed value toward
       ±infinity; the model rounded the magnitude up (`.rp`) or to nearest (`.rm`). The ISA allows only `.rn` (`.rs` for
       x4) there, so `.isacheck` reports these forms (tests/cvt-mini-dir.ptx, tests/neg/isa-cvt-mini-rnd.ptx)
-- [ ] `cvt.rn.satfinite.ue8m0x2.f32` is listed at isa.txt 15298 while `.frnd3 = { .rz, .rp }`; the model rounds `.rn`
-      like `.rz`
+- [x] `cvt.rn.satfinite.ue8m0x2.f32` is listed at isa.txt 15298 while the syntax has `.frnd3 = { .rz, .rp }` (14836) and
+      15302 lists `{rz/rp}` for the same form: the syntax is taken as authoritative, `.isacheck` reports `.rn`, and the
+      default mode rounds it to the nearest power of two, ties to the even code (tests/cvt-ue8m0-rn.ptx)
 - [x] deprecated non-`.sync` `vote` / `shfl` (targets below sm_70): the same exchange among the active lanes, found as
       for `activemask` (tests/warp-nosync.ptx)
 - [ ] `elect.sync` with exited lanes in the membermask waits for them (the text does not say "non-exited"); consider a

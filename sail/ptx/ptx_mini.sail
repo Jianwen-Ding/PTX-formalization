@@ -160,8 +160,8 @@ function s2f6Val(b) = scaleP2(fv_of_int(sext(land_int(b, 255), 8)), -6)
 /* ue8m0 */
 val isUe : ty -> bool
 function isUe(t) = t.k == "ue8m0x2"
-val ueEnc : (fv, bool, bool) -> int
-function ueEnc(x, up, satf) = {
+val ueEnc : (fv, int, bool) -> int
+function ueEnc(x, md, satf) = {
   if fv_is_nan(x) then 255
   /* .satfinite: |x| > MAX_NORM gives the positive MAX_NORM 0xfe, also for a negative x (ISA 9.7.9.22, .satfinite) */
   else if satf & (fv_is_inf(x) | fv_cmp(fv_abs(x), FV_Fin(false, 1, 127)) > 0) then 254
@@ -172,12 +172,21 @@ function ueEnc(x, up, satf) = {
     var r : int = -1000;
     while r == -1000 do {
       if e >= 130 then r = e
-      else if fv_cmp(x, FV_Fin(false, 1, e + 1)) < 0 then r = (if up & fv_cmp(x, FV_Fin(false, 1, e)) > 0 then e + 1 else e)
+      else if fv_cmp(x, FV_Fin(false, 1, e + 1)) < 0 then r = (
+        if md == 1 then (if fv_cmp(x, FV_Fin(false, 1, e)) > 0 then e + 1 else e)
+        /* .rn (outside the frnd3 syntax, reported under .isacheck): nearest power of two, ties (1.5 * 2^e) to the even
+           code */
+        else if md == 2 then (let h = fv_cmp(x, FV_Fin(false, 3, e - 1)) in
+                              if h > 0 | (h == 0 & fmod_int(e + 127, 2) != 0) then e + 1 else e)
+        else e)
       else e = e + 1
     };
     max_int(0, min_int(254, r + 127))
   }
 }
+val ueMode : list(string) -> int
+function ueMode(m) = if has(m, "rp") then 1 else if has(m, "rn") then 2 else 0
+
 val ueDec : int -> int
 function ueDec(c) = if c == 255 then 32767 else if c == 0 then 64 else shl_int(c, 7)
 
@@ -227,7 +236,7 @@ function exec_mini(o, ops) = {
         } else if isS2F6(dt) & isF(st) then {
           wr(d, lor_int(shl_int(s2f6Enc(m, fv(rd(a, st), st), 127), 8), s2f6Enc(m, fv(rd(b, st), st), 127))); true
         } else if isUe(dt) & isF(st) then {
-          wr(d, lor_int(shl_int(ueEnc(fv(rd(a, st), st), has(m, "rp"), has(m, "satfinite")), 8), ueEnc(fv(rd(b, st), st), has(m, "rp"), has(m, "satfinite")))); true
+          wr(d, lor_int(shl_int(ueEnc(fv(rd(a, st), st), ueMode(m), has(m, "satfinite")), 8), ueEnc(fv(rd(b, st), st), ueMode(m), has(m, "satfinite")))); true
         } else if isMiniX2(dt) & isHalfPair(st) then {
           let s = rd(b, B16);
           let v = rd(a, st);
@@ -277,7 +286,7 @@ function exec_mini(o, ops) = {
           wr(d, pack16(upF(m, miniDecF(miniKind(st), miniElem(st, v, 0)), fw(laneTyH(dt))), upF(m, miniDecF(miniKind(st), miniElem(st, v, 1)), fw(laneTyH(dt))))); true
         } else if isUe(dt) & isHalfPair(st) then {
           let v = rd(a, st);
-          wr(d, lor_int(shl_int(ueEnc(decodeF(lane16(v, 1), 116), has(m, "rp"), has(m, "satfinite")), 8), ueEnc(decodeF(lane16(v, 0), 116), has(m, "rp"), has(m, "satfinite")))); true
+          wr(d, lor_int(shl_int(ueEnc(decodeF(lane16(v, 1), 116), ueMode(m), has(m, "satfinite")), 8), ueEnc(decodeF(lane16(v, 0), 116), ueMode(m), has(m, "satfinite")))); true
         } else if isHalfPair(dt) & isUe(st) then {
           let v = rd(a, st);
           wr(d, pack16(ueDec(land_int(v, 255)), ueDec(land_int(asr_int(v, 8), 255)))); true

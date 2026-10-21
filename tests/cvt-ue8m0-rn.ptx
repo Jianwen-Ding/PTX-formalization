@@ -1,0 +1,23 @@
+// cvt.rn to .ue8m0x2 (outside the frnd3 = { .rz, .rp } syntax of 9.7.9.21, reported under .isacheck) rounds to the
+// nearest power of two, ties (1.5 * 2^e) to the even code: 1.9 -> 2.0 (0x80), 1.4 -> 1.0 (0x7f), 1.5 -> 2.0 (0x80),
+// 3.0 -> 2.0 (0x80, tie, 0x80 even); .rz and .rp as before
+.version 8.6
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b16 %h<4>; .reg .b32 %r<4>; .reg .b64 %o;
+    ld.param.u64 %o, [po];
+    cvt.rn.satfinite.ue8m0x2.f32 %h0, 0f3FF33333, 0f3FB33333;
+    cvt.u32.u16 %r0, %h0; st.global.u32 [%o], %r0;
+    cvt.rn.satfinite.ue8m0x2.f32 %h0, 0f3FC00000, 0f40400000;
+    cvt.u32.u16 %r0, %h0; st.global.u32 [%o+4], %r0;
+    cvt.rz.satfinite.ue8m0x2.f32 %h0, 0f3FF33333, 0f3FB33333;
+    cvt.u32.u16 %r0, %h0; st.global.u32 [%o+8], %r0;
+    cvt.rp.satfinite.ue8m0x2.f32 %h0, 0f3FF33333, 0f3FB33333;
+    cvt.u32.u16 %r0, %h0; st.global.u32 [%o+12], %r0;
+    ret;
+}
+.buffer O .u32 [4];
+.launch k <<< 1, 1 >>> (O);
+.expect O .u32 = { 0x807f, 0x8080, 0x7f7f, 0x8080 };

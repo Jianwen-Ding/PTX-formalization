@@ -325,7 +325,7 @@ function isaQual(o, ops) = {
   if b == "cvt" & isaAny([|dk|], [|"e4m3x2", "e5m2x2", "e2m3x2", "e3m2x2", "e2m1x2", "s2f6x2", "e4m3x4", "e5m2x4", "e2m3x4", "e3m2x4", "e2m1x4"|])
      & isaAny(m, [|"rz", "rm", "rp", "rna"|]) then
     concat_str("cvt to .", concat_str(dk, " rounds only with .rn (or .rs for the x4 forms) [PTX ISA 9.3 9.7.9.21]"))
-  else if b == "cvt" & dk == "ue8m0x2" & isaAny(m, [|"rm", "rna"|]) then
+  else if b == "cvt" & dk == "ue8m0x2" & isaAny(m, [|"rn", "rm", "rna"|]) then
     "cvt to .ue8m0x2 rounds with .rz or .rp [PTX ISA 9.3 9.7.9.21]"
   else if hArith & isaAny(m, [|"rz", "rm", "rp"|]) then
     concat_str(b, " on .f16 / .bf16 values rounds only with .rn [PTX ISA 9.3 9.7.4]")
