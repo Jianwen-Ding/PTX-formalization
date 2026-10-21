@@ -148,6 +148,11 @@ function exec_half(o, ops) = {
         let dt = ty_nth(o.tys, 0); let st = ty_nth(o.tys, 1);
         wr(d, pack16(cvt(m, laneTyH(dt), st, rd(b, st)), cvt(m, laneTyH(dt), st, rd(a, st))));
         true
+      } else if ntys(o) == 2 & has(m, "pack") then {
+        /* cvt.pack.sat.{u16,s16}.s32 d, a, b (ISA 9.7.9.23): d = sat(a) << 16 | sat(b) */
+        let pt = ty_nth(o.tys, 0); let st = ty_nth(o.tys, 1);
+        wr(d, lor_int(shl_int(land_int(clamp(ival(rd(a, st), st), pt), mask(wid(pt))), wid(pt)), land_int(clamp(ival(rd(b, st), st), pt), mask(wid(pt)))));
+        true
       } else false
     },
     ("cvt", [|d, a, b, x|]) => {

@@ -134,6 +134,8 @@ function gx_alu(o, ops) = {
       wr(xop_nth(ops, 0), bin(op, m, t, rd(xop_nth(ops, 1), t), rd(xop_nth(ops, 2), src2Ty(op, t)))); true
     } else if has(UNOPS, op) & not_bool(isPacked(t)) & n == 2 then {
       wr(xop_nth(ops, 0), un(op, m, t, rd(xop_nth(ops, 1), t))); true
+    } else if (op == "min" | op == "max") & isF(t) & n == 4 then {
+      wr(xop_nth(ops, 0), minmax3(op, m, t, rd(xop_nth(ops, 1), t), rd(xop_nth(ops, 2), t), rd(xop_nth(ops, 3), t))); true
     } else if has(TERNOPS, op) & not_bool(has(m, "cc")) & not_bool(isPacked(t)) & n == 4 then {
       wr(xop_nth(ops, 0), tern(op, m, t, rd(xop_nth(ops, 1), t), rd(xop_nth(ops, 2), t), rd(xop_nth(ops, 3), src3Ty(op, m, t)))); true
     } else false

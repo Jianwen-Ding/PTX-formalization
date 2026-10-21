@@ -78,10 +78,11 @@ function f2int(f) = match f {
   _ => 0
 }
 
-/* f2i(F, mode, T): float -> integer with saturation, NaN -> 0 */
-val f2i : (fv, string, ty) -> int
-function f2i(f, m, t) = match f {
-  FV_NaN() => 0,
+/* f2i(F, mode, T): float -> integer with saturation; NaN -> 0 if the source is not .f64 and the destination is not
+ * .s64 / .u64, otherwise 1 << (BitWidth(dst) - 1) (ISA 9.7.9.22, Integer Notes) */
+val f2i : (fv, string, ty, bool) -> int
+function f2i(f, m, t, src64) = match f {
+  FV_NaN() => if src64 | wid(t) == 64 then pow2(wid(t) - 1) else 0,
   FV_Inf(s) => trunc(if s then minOf(t) else maxOf(t), wid(t)),
   _ => trunc(clamp(f2int(rndInt(f, m)), t), wid(t))
 }
