@@ -230,7 +230,8 @@ Open:
         expect_tx / complete_tx only .relaxed, waits only on .shared::cta, noComplete only .release.cta, check_layout needs
         .layout, init count and parity immediates in range, the `.multicast::cluster::32b` forms (not in 9.3)
         (tests/neg/isa-mbar-*.ptx)
-- [ ] mbarrier, not reported: ld / st on an initialised object, cp.async.mbarrier.arrive pending overflow, reading the
+- [x] mbarrier: a shared ld / st / atom on an initialised object is reported under `.ub strict` (tests/neg/mbar-ub-st.ptx)
+- [ ] mbarrier, not reported: cp.async.mbarrier.arrive pending overflow, reading the
       v1 report operands when waitComplete is False, a primary phase with no successful wait before the next arrive;
       whether expect_tx alone may complete a phase (22188-22192 vs 22227-22231) is left as is (it can)
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the

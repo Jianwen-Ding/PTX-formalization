@@ -213,6 +213,18 @@ function resvHit(a, n) = {
   } else false
 }
 
+/* [a, a + n) overlaps an initialised mbarrier object (8 bytes, keyed by CTA and offset as in ptx_async.sail) */
+val mbarHit : (int, int) -> bool
+function mbarHit(a, n) = {
+  var hit : bool = false;
+  var x : int = a - tmod_int(a, 8);
+  while x < a + n & not_bool(hit) do {
+    if smap_has(SP_MBARS, concat_str("p", dec_str(cur_cta() * 4294967296 + x))) then hit = true;
+    x = x + 8
+  };
+  hit
+}
+
 /* [a, a + n) reaches past the CTA's shared memory (static, dynamic and the reserved region after them) */
 val resvAbove : (int, int) -> bool
 function resvAbove(a, n) = {
@@ -236,6 +248,10 @@ function memop_do(l, op) = match l {
       /* "This region of shared memory is not available to users, and accessing this region from user code results in
          undefined behavior" (10.29) */
       fault("shared access to the region reserved for system software", a); 0
+    } else if ub & s == "shared" & nb > 0 & cur >= 0 & mbarHit(a, nb) then {
+      /* "Performing any non-mbarrier or mbarrier.init operations on an initialized mbarrier object results in undefined
+         behavior" (9.7.14.16) */
+      fault("shared access to a valid mbarrier object", a); 0
     } else if ub & s == "shared" & nb > 0 & cur >= 0 & resvAbove(a, nb) then {
       fault("shared access outside the CTA's shared memory", a); 0
     } else if s == "global" & a >= 4096 then mem_apply(SP_GMEM, a, op)
