@@ -13,4 +13,4 @@
 }
 
 .buffer OUT .u32 [4];
-.launch k <<< 1, 1 >>> (OUT);
+.launch k <<< 1, 32 >>> (OUT);

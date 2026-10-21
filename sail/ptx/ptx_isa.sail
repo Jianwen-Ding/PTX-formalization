@@ -89,7 +89,7 @@ val isaOpCount : list(xop) -> int
 function isaOpCount(ops) = match ops { [||] => 0, _ :: t => 1 + isaOpCount(t) }
 
 /* operand shapes: d|p destination, an indirect texture/surface (a register in [ ]), a register operand,
- * the sink `_` destination */
+ * the sink `_` destination, a [ ] second operand */
 val isaDestPred : list(xop) -> bool
 function isaDestPred(ops) = match ops { XVP(_, _, _) :: _ => true, XS(SPIPE(_, _, _, _)) :: _ => true, _ => false }
 
@@ -104,6 +104,10 @@ function isaIndirect(ops) = match ops {
 
 val isaRegOp : list(xop) -> bool
 function isaRegOp(ops) = match ops { [||] => false, XS(SR(_)) :: _ => true, _ :: t => isaRegOp(t) }
+
+/* the second operand is a [ ] address (mbarrier.test_wait/try_wait without the reportValue operand) */
+val isaSecondMem : list(xop) -> bool
+function isaSecondMem(ops) = match ops { _ :: XB(_, _) :: _ => true, _ => false }
 
 val isaSink : list(xop) -> bool
 function isaSink(ops) = match ops { XS(SN(n)) :: _ => n == "_", _ => false }
@@ -130,6 +134,7 @@ function isaTerm(t, mods, tys, names, ops) = {
     else if u == "ir" then isaIndirect(ops)
     else if u == "rr" then isaRegOp(ops)
     else if u == "sk" then isaSink(ops)
+    else if u == "m2" then isaSecondMem(ops)
     else false;
   if neg then not_bool(r) else r
 }

@@ -1,0 +1,16 @@
+// expect: needs target sm_80
+// .target compute_70 is a synonym of sm_70 (11.1.2 L39091); redux.sync requires sm_80 (9.7.14.13 L21902)
+.version 7.8
+.target compute_70
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r<4>;
+    ld.param.u64 %o, [po];
+    redux.sync.add.u32 %r0, %r1, 0xffffffff;
+    st.global.u32 [%o], %r0;
+}
+
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1 >>> (OUT);

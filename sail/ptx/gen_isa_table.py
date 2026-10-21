@@ -38,12 +38,20 @@ Row encoding (read by ptx_isa.sail):  isaRows(op) = [|(pattern, alternatives, se
      !t=a/b       no type is a or b
      d=a/b        the first (destination) type is a or b
      n=K          exactly K types
+     q=a,b        the modifiers contain a and after it b
+     s=::a/::b    some modifier ends with ::a or ::b (sub-qualifiers)
+     o=K / o>K    exactly / more than K operands
+     dp           the destination is d|p        ir   the [ ] operand starts with a %register (indirect)
+     rr           some operand is a %register   sk   the first operand is the sink `_`
+     m2           the second operand is a [ ] operand          (any term can be negated with !)
   alternatives: "|"-separated  VER:TGT ; the row holds when one alternative holds:
-     VER  minimum .version x10 (0: any)
+     VER  minimum .version x10 (0: any); -V: the form is valid only below PTX ISA V
+          ("required from PTX ISA 1.4", "not supported from PTX ISA 6.4 for sm_70 or higher")
      TGT  ""   any target
           N    sm_N or higher (onion model; also its a/f variants)
           Na   exactly sm_Na (architecture-specific)
           Nf   sm_Mf or sm_Ma with M >= N in the same family (Table 67)
+          <N   below sm_N
 """
 import os, re, sys
 
@@ -876,9 +884,12 @@ OVERRIDES = [
     *[(n, "Support for count argument without the modifier .noComplete requires sm_90",
        [("mbarrier", "o=3 !m=noComplete/expect_tx", "0:90")]) for n in ("9.7.14.16.16", "9.7.14.16.17")],
     # 9.7.14.16.19 mbarrier.test_wait / try_wait: the reportPredicate / reportValue operands (L23121, L23130)
-    ("9.7.14.16.19", "Support for reportPredicate and reportValue operands", None),
+    # (L22975: waitComplete|reportPredicate {, reportValue}, [addr], ...: a d|p destination, or a second operand
+    # that is not the [addr] operand)
+    ("9.7.14.16.19", "Support for reportPredicate and reportValue operands",
+     [("mbarrier", "dp", "93:"), ("mbarrier", "!m2", "93:")]),
     ("9.7.14.16.19", "Operands reportPredicate and reportValue and qualifier .phase_type::* requires sm_90",
-     [("mbarrier", "m=phase_type", "0:90")]),
+     [("mbarrier", "m=phase_type", "0:90"), ("mbarrier", "dp", "0:90"), ("mbarrier", "!m2", "0:90")]),
     # 9.7.15.4.3-5 wmma (L24488-L24845): integer = .u8/.s8 (and their .s32 accumulators), sub-byte = .u4/.s4,
     # single-bit = .b1, double = .f64, alternate floating point = .bf16/.tf32
     *[(n, "Integer, sub-byte integer and single-bit wmma introduced in PTX ISA version 6.3",

@@ -475,9 +475,14 @@ function do_expect(n, t, vs, off) = {
 
 /* ---------------------------------------------------------------- the module */
 val targetSm : list(string) -> int
+/* 11.1.2: "Targets of the form compute_xx are also accepted as synonyms for sm_xx targets" */
+val targetName : string -> string
+function targetName(t) = if string_length(t) > 8 & stake(t, 8) == "compute_" then concat_str("sm_", sdrop(t, 8)) else t
+
 function targetSm(l) = match l {
   [||] => 0,
-  s :: rest => {
+  t :: rest => {
+    let s = targetName(t);
     if string_length(s) >= 5 & stake(s, 3) == "sm_" then {
       var i : int = 3;
       var v : int = 0;
@@ -491,7 +496,8 @@ function targetSm(l) = match l {
 val targetArch : list(string) -> string
 function targetArch(l) = match l {
   [||] => "",
-  s :: rest => {
+  t :: rest => {
+    let s = targetName(t);
     if string_length(s) >= 5 & stake(s, 3) == "sm_" then {
       var i : int = 3;
       while i < string_length(s) & is_dec_digit(stake(sdrop(s, i), 1)) do i = i + 1;
