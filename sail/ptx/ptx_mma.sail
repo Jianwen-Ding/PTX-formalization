@@ -574,10 +574,9 @@ function exec_mma(o, ops) = {
   match (o.base, o.tys, ops) {
     ("mma", [|dt, at_, bt, ct|], [|dv, av, bv, cv|]) => {
       if has(m, "sync") & not_bool(has(m, "sp")) & not_bool(has(m, "sp::ordered_metadata")) then {
-        /* ISA 9.7.15.5.14 (mma): ".m8n8k4 : When .ctype is .f32, .dtype must also be .f32" */
-        if shapeOf(m) == "m8n8k4" & ty_eq(ct, mkty("f", 32)) & not_bool(ty_eq(dt, mkty("f", 32))) then
-          fault("mma.m8n8k4: .dtype must be .f32 when .ctype is .f32", 0)
-        else do_coll("mma", full, [|CVS(shapeOf(m)), CVT(dt), CVT(at_), CVT(bt), CVT(ct), CVM(m)|],
+        /* ".m8n8k4 : When .ctype is .f32, .dtype must also be .f32" (ISA 9.7.15.5.14) is reported under .isacheck;
+           otherwise the f32 accumulation is rounded to the .f16 destination */
+        do_coll("mma", full, [|CVS(shapeOf(m)), CVT(dt), CVT(at_), CVT(bt), CVT(ct), CVM(m)|],
                 pend_append(pend_append(vecRegs(av, at_), vecRegs(bv, bt)), vecRegs(cv, ct)), vecOps(dv));
         true
       } else false

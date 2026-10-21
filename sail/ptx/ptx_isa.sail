@@ -331,6 +331,8 @@ function isaQual(o, ops) = {
     concat_str(b, ": only .relaxed.sys is valid for .mmio [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
   else if b == "fma" & fl & not_bool(isaAny(m, [|"rn", "rz", "rm", "rp"|])) then
     "fma needs a rounding modifier [PTX ISA 9.3 9.7.3.6]"
+  else if b == "mma" & has(m, "m8n8k4") & (match o.tys { [|dt, _, _, ct|] => ty_eq(ct, mkty("f", 32)) & not_bool(ty_eq(dt, mkty("f", 32))), _ => false }) then
+    "mma.m8n8k4: .dtype must be .f32 when .ctype is .f32 [PTX ISA 9.3 9.7.15.5.14]"
   else if b == "setmaxnreg" & isaBadImm(ops, 1, 0, 24, 256, 8) then
     "setmaxnreg: imm-reg-count must be 24 .. 256 and a multiple of 8 [PTX ISA 9.3 9.7.20.5]"
   else if b == "pmevent" & not_bool(has(m, "mask")) & isaBadImm(ops, 1, 0, 0, 15, 1) then

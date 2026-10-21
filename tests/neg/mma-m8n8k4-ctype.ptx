@@ -1,8 +1,9 @@
 // expect: mma.m8n8k4: .dtype must be .f32 when .ctype is .f32
-// ISA 9.7.15.5.14: ".m8n8k4 : When .ctype is .f32, .dtype must also be .f32" (here .dtype is .f16)
+// ISA 9.7.15.5.14: ".m8n8k4 : When .ctype is .f32, .dtype must also be .f32" (here .dtype is .f16), reported under .isacheck
 .version 8.0
 .target sm_80
 .address_size 64
+.isacheck ;
 .visible .entry k(.param .u64 po)
 {
     .reg .b32 %a<2>, %b<2>, %d<4>; .reg .f32 %c<8>;
