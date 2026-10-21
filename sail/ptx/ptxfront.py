@@ -364,7 +364,7 @@ class Parser:
         if s == ".nv_intermediate_source_section":
             self.next(); self.skip_braces(); return ("skip",)
         if s == ".pragma":
-            self.next(); self.next(); self.expect(";"); return ("skip",)
+            self.next(); self.pragma_strings(); self.expect(";"); return ("skip",)
         if s in HARNESS:
             return self.harness()
         return self.decl_or_func(top=True)
@@ -508,7 +508,11 @@ class Parser:
                        ".abi_preserve_control", ".minperctamemory"):
                 ds.append((d, [self.take_int()]))
             elif d in (".pragma",):
-                self.next(); ds.append((d, []))
+                # .pragma list-of-strings ; (11.4.1), also between a kernel's header and its body
+                self.pragma_strings()
+                if self.at(";"):
+                    self.next()
+                ds.append((d, []))
             elif d == ".language":
                 self.next()
                 if self.at(","):
@@ -537,8 +541,15 @@ class Parser:
         self.expect(";")
         return ("decl", a1, t, a2, items, init)
 
+    def pragma_strings(self):
+        self.next()
+        while self.at(","):
+            self.next(); self.next()
+
     def funcdef(self, a1):
         kw = self.next()[1]
+        if self.at(".attribute"):
+            a1 = list(a1) + self.dattrs()   # .func .attribute(attr-list) fname (11.3.2)
         rets = None
         if kw == ".func" and self.at("("):
             rets = self.paramdecls()
@@ -564,7 +575,7 @@ class Parser:
         if s == "{" and k == "punct":
             return ("block", self.block())
         if s == ".pragma":
-            self.next(); self.next(); self.expect(";"); return ("skip",)
+            self.next(); self.pragma_strings(); self.expect(";"); return ("skip",)
         if s == ".loc":
             self.next(); self.take_int(); self.take_int(); self.take_int()
             while True:
@@ -619,6 +630,11 @@ class Parser:
             while self.at(","):
                 self.next(); ops.append(self.operand())
         self.expect(";")
+        # an array element as a memory operand, `ld.global.u32 s, a[0];` (6.4.1, 6.4.2): the location a + 0
+        base = opc.split(".")[0]
+        ai = {"ld": 1, "ldu": 1, "atom": 1, "st": 0, "red": 0}.get(base)
+        if ai is not None and len(ops) > ai and ops[ai][0] == "nameplus":
+            ops[ai] = ("mem", [("anameoff", ops[ai][1], ops[ai][2])])
         return opc, ops
 
     # -------------------------------------------------------------- operands
@@ -696,10 +712,10 @@ class Parser:
                 self.next(); return ("nameplus", s, ptx_int(self.next()[1]))
             if self.kind() == "int":
                 return ("nameint", s, ptx_int(self.next()[1]))
-            if self.at("[") and self.kind(1) == "int" and self.at("]", 2):
-                # a[1]: the address of the array element (PTX ISA 6.4.2); the index is a byte offset as in the
-                # example of 4.3 (array[r1] with r1 = tid << 2)
-                self.next(); i = ptx_int(self.next()[1]); self.next()
+            if self.at("[") and (self.lit_at(1) or self.cstart_at(1)):
+                # a[1], a[N-1]: the address of the array element (PTX ISA 6.4.2); the index is a byte offset as in
+                # the example of 4.3 (array[r1] with r1 = tid << 2)
+                self.next(); i = self.cint(); self.expect("]")
                 return ("nameplus", s, i)
             return ("name", s)
         if k == "int": return ("int", ptx_int(s))
