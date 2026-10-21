@@ -339,6 +339,12 @@ function do_call(fname, rs, args) = match lookup_func(fname) {
           };
           ps = pr; aa = ar
         },
+        /* an unsized last .param .b8 array may be omitted from the call when nothing is passed through it
+           (PTX ISA 11.2.2) */
+        ([|p|], [||]) => {
+          if p.palign >= 0 & p.psize == 0 then { smap_set(env, p.pname, mksym("param", alignUp(t_ptop[t], p.palign))); ps = [||] }
+          else { ok = false; fault(concat_str("call to ", concat_str(fname, ": too few arguments")), 0) }
+        },
         _ => { ok = false; fault(concat_str("call to ", concat_str(fname, ": too few arguments")), 0) }
       }
     };

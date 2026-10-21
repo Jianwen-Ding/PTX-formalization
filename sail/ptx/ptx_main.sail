@@ -92,6 +92,7 @@ function tk_initval() = match tok_str() {
   "NI" => { let n = tok_str(); let i = tok_int(); IVNI(n, i) },
   "ND" => { let a = tok_str(); let b = tok_str(); IVND(a, b) },
   "G" => IVG(tok_str()),
+  "M" => { let m = tok_int(); let k = tok_int(); let n = tok_str(); let o = tok_int(); IVM(m, k, n, o) },
   _ => { let n = tok_str(); let i = tok_int(); IVGO(n, i) }
 }
 
@@ -119,6 +120,10 @@ function symRaw(n) = if smap_has(SP_SYMS, n) then sym_addr(smap_get(SP_SYMS, n))
 val symGen : string -> int
 function symGen(n) = if smap_has(SP_SYMS, n) then winBase(sym_space(smap_get(SP_SYMS, n))) + sym_addr(smap_get(SP_SYMS, n)) else 0
 
+/* the number of trailing zero bits of a positive integer */
+val ctz : int -> int
+function ctz(m) = { var n : int = 0; while m > 0 & land_int(asr_int(m, n), 1) == 0 do n = n + 1; n }
+
 /* resolveV(S, V) then initBits(V, T); unresolvable initializers are stuck */
 val initBits : (initval, ty) -> int
 function initBits(v, t) = match v {
@@ -129,7 +134,9 @@ function initBits(v, t) = match v {
   IVNI(n, i) => intLit(symRaw(n) + i, t),
   IVND(a, b) => intLit(symRaw(a) - symRaw(b), t),
   IVG(n) => intLit(symGen(n), t),
-  IVGO(_, _) => { fault("initializer generic(sym)+offset is not resolved", 0); 0 }
+  IVGO(n, i) => intLit(symGen(n) + i, t),
+  /* mask(expr) (PTX ISA 5.4.4): the bits of the mask, moved to the lowest position */
+  IVM(m, k, n, o) => intLit(asr_int(land_int(if k == 0 then o else if k == 1 then symRaw(n) + o else symGen(n) + o, m), ctz(m)), t)
 }
 
 /* initBits without symbol resolution (buffer and .expect values) */
@@ -505,7 +512,7 @@ function main() = {
         isaver = f2int(rndInt(fv_add_exact(fv_mul_exact(f64v(f), FV_Fin(false, 10, 0)), FV_Fin(false, 1, -1), RN), "rmi"))
       },
       "TARGET" => { let ns = tk_strs(tok_int()); isasm = targetSm(ns); isaarch = targetArch(ns) },
-      "ASZ" => { let n = tok_int(); if n == 32 then { asz32 = true; smap_set(SP_SYMS, "%%asz", mksym("asz", 32)) } },
+      "ASZ" => { let n = tok_int(); asz32 = n == 32; if asz32 then smap_set(SP_SYMS, "%%asz", mksym("asz", 32)) },
       "ISACHECK" => isachk = true,
       "ALIAS" => {
         let a = tok_str(); let b = tok_str();

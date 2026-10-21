@@ -77,7 +77,8 @@ register isasm : int = 0
 register isaarch : string = ""
 register isachk : bool = false
 register tick : int = 1000
-register asz32 : bool = false
+/* without an .address_size directive the address size is 32 (PTX ISA 11.1.3) */
+register asz32 : bool = true
 register dynsmem : int = 0          /* dynamic shared memory of the launch (bytes) */
 register explcl : bool = false      /* the launch has an explicit cluster (.reqnctapercluster) */
 register nfaddr : int = 0

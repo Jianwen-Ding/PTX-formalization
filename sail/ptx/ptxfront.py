@@ -245,6 +245,20 @@ class Parser:
                     self.next(); vs.append(self.initval())
             self.expect("}")
             return ("brace", vs)
+        if k == "hex" and s[1] in "xX" and self.at("(", 1):
+            # mask(expr) (PTX ISA 5.4.4): an integer constant expression or a symbol expression
+            self.next(); self.next()
+            inner = self.initval()
+            if inner[0] == "hex" and inner[1][1] in "xX":
+                inner = ("int", int(inner[1].rstrip("uU")[2:], 16))
+            while inner[0] == "int" and ((self.at("+") and self.kind(1) == "int") or self.kind() == "int"):
+                if self.at("+"):
+                    self.next()
+                inner = ("int", inner[1] + self.take_int())
+            self.expect(")")
+            if inner[0] not in ("int", "name", "nameoff", "generic", "genericoff"):
+                raise PtxError("bad expression in the mask() operator %s" % s)
+            return ("mask", int(s.rstrip("uU")[2:], 16), inner)
         if k == "name" and s == "generic" and self.at("(", 1):
             self.next(); self.next(); n = self.take_name(); self.expect(")")
             if self.at("+"):
@@ -484,6 +498,11 @@ class Parser:
                 self.next(); return ("nameplus", s, int(self.next()[1]))
             if self.kind() == "int":
                 return ("nameint", s, int(self.next()[1]))
+            if self.at("[") and self.kind(1) == "int" and self.at("]", 2):
+                # a[1]: the address of the array element (PTX ISA 6.4.2); the index is a byte offset as in the
+                # example of 4.3 (array[r1] with r1 = tid << 2)
+                self.next(); i = int(self.next()[1]); self.next()
+                return ("nameplus", s, i)
             return ("name", s)
         if k == "int": return ("int", int(s))
         if k == "float": return ("float", float_bits(s))
@@ -989,6 +1008,12 @@ def ser_init(v):
     if t == "namediff": return "ND %s %s" % (v[1], v[2])
     if t == "generic": return "G " + v[1]
     if t == "genericoff": return "GO %s %d" % (v[1], v[2])
+    if t == "mask":
+        x = v[2]
+        kind, name, off = {"int": (0, "-", x[1]), "name": (1, x[1], 0), "generic": (2, x[1], 0),
+                           "nameoff": (1, x[1], x[2]) if len(x) > 2 else None,
+                           "genericoff": (2, x[1], x[2]) if len(x) > 2 else None}[x[0]]
+        return "M %d %d %s %d" % (v[1], kind, name, off)
     raise PtxError("bad initializer %r" % (v,))
 
 def ser_sdecl(d):
