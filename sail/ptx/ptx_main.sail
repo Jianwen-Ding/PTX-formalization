@@ -317,11 +317,12 @@ function lcHw(b, g) = {
   else ""
 }
 
+/* .maxntid bounds the total number of threads, the product of the extents (PTX ISA 11.4.2), not each dimension */
 val dimLe : (dim3, list(int)) -> bool
 function dimLe(d, l) = match l {
-  [|a, b, c|] => d.x <= a & d.y <= b & d.z <= c,
-  [|a, b|] => d.x <= a & d.y <= b & d.z == 1,
-  [|a|] => d.x <= a & d.y == 1 & d.z == 1,
+  [|a, b, c|] => d.x * d.y * d.z <= a * b * c,
+  [|a, b|] => d.x * d.y * d.z <= a * b,
+  [|a|] => d.x * d.y * d.z <= a,
   _ => true
 }
 val dimEq : (dim3, list(int)) -> bool
@@ -354,8 +355,11 @@ function argVal(a, t) = match a {
 }
 
 
-val do_launch : (string, dim3, dim3, list(sop)) -> unit
-function do_launch(k, g, b, args) = {
+val hasPerf : (list((string, list(int))), string) -> bool
+function hasPerf(p, d) = match p { [||] => false, (n, _) :: rest => n == d | hasPerf(rest, d) }
+
+val do_launch : (string, dim3, dim3, int, list(sop)) -> unit
+function do_launch(k, g, b, dyn, args) = {
   isa_check();
   if stuck then ()
   else match lookup_func(k) {
@@ -368,7 +372,10 @@ function do_launch(k, g, b, args) = {
         let hw = lcHw(b, g);
         if hw != "" then fault(concat_str("cannot launch ", concat_str(k, concat_str(": ", hw))), 0)
         else {
-          let le = lcErr(perf_of(k), b, cd);
+          /* the harness has no launch-time cluster dimensions: only .reqnctapercluster specifies them (PTX ISA 11.7.2) */
+          let le = if hasPerf(perf_of(k), "explicitcluster") & not_bool(hasPerf(perf_of(k), "reqnctapercluster"))
+                   then "a kernel with .explicitcluster launched without cluster dimensions"
+                   else lcErr(perf_of(k), b, cd);
           if le != "" then fault(concat_str("cannot launch: ", le), 0)
           else {
             /* kernel parameter image and environment */
@@ -397,6 +404,7 @@ function do_launch(k, g, b, args) = {
                 match dn { n :: rest => { if smap_get(SP_SYMS, n) == mksym("dynshared", 0) then smap_set(SP_SYMS, n, mksym("shared", alignUp(stop, DYNSHARED))); dn = rest }, [||] => () }
               };
               kernel = k; kfid = f; gridDim = g; blockDim = b; clusterDim = cd;
+              dynsmem = dyn; explcl = hasPerf(perf_of(k), "reqnctapercluster");
               nextcta = 0; resident = 0; nthreads = 0; ncta_slots = 0;
               colls = [||];
               let lim = if occ > 0 & occ < vol(g) then occ else vol(g);
@@ -510,19 +518,19 @@ function main() = {
         let k = tok_str();
         let g = mkdim(tok_int(), tok_int(), tok_int());
         let b = mkdim(tok_int(), tok_int(), tok_int());
-        let _ = tok_int();
+        let dyn = tok_int();
         let args = tk_sops(tok_int());
-        do_launch(k, g, b, args)
+        do_launch(k, g, b, dyn, args)
       },
       "COOPLAUNCH" => {
         let k = tok_str();
         let g = mkdim(tok_int(), tok_int(), tok_int());
         let b = mkdim(tok_int(), tok_int(), tok_int());
-        let _ = tok_int();
+        let dyn = tok_int();
         let args = tk_sops(tok_int());
         if occ > 0 & vol(g) > occ then
           fault(concat_str("cooperative launch of ", concat_str(dec_str(vol(g)), " CTAs exceeds the resident-CTA limit")), 0)
-        else do_launch(k, g, b, args)
+        else do_launch(k, g, b, dyn, args)
       },
       "PRINT" => { let n = tok_str(); let t = tk_ty(); let c = tok_int(); do_print(n, t, c) },
       "EXPECT" => { let n = tok_str(); let t = tk_ty(); let off = tok_int(); let vs = tk_initvals(tok_int()); do_expect(n, t, vs, off) },
