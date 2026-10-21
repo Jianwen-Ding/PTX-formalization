@@ -218,7 +218,8 @@ with run-time meaning (linking, static allocation, buffers, launches, `.print` /
 every instruction) is done by the Sail model (`ptx_main.sail` reads the stream).  `ptxtest.py`
 runs a test and compares stdout with the `.out` file (exit code from the model's `EXIT n` line).
 
-**Reference.**  The model was written as a re-expression of the K semantics in `semantics/`, and has since been
+**Reference.**  The K semantics (`semantics/`, `agx/agx.k`) is obsolete for now; these Sail models are the maintained
+ones.  The PTX model was written as a re-expression of the K semantics in `semantics/`, and has since been
 corrected against the public PTX ISA (Release 9.3) wherever the two differ; `docs/review-checklist.md` lists each
 correction with its ISA section and every place where this model and the K rules now disagree.
 
