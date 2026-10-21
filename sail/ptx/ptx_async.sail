@@ -532,6 +532,22 @@ function exec_async(o, ops) = {
 
 /* ---------------------------------------------------------------- PTX-EXEC-MISC (ptx-exec-misc.k): st.async, red.async, st.bulk,
  * clusterlaunchcontrol */
+/* the conditions of the mbarrier forms of st.async (9.7.9.12) and red.async (9.7.14.7), under .ub strict: a and mbar in
+ * the .shared::cluster window and in the same CTA; st.async: "%cluster_nctarank > 1 is true"; red.async: "The CTA to
+ * which they belong is different from the CTA of the executing thread" */
+val asyncUb : (string, loc, loc) -> bool
+function asyncUb(op, d, mb) =
+  if not_bool(ub) then true
+  else {
+    let kd = mbKey(d);
+    let km = mbKey(mb);
+    if kd == -1 | km == -1 then { fault(concat_str(op, ": address outside the .shared::cluster window"), 0); false }
+    else if tdiv_int(kd, 4294967296) != tdiv_int(km, 4294967296) then { fault(concat_str(op, ": a and mbar belong to different CTAs"), 0); false }
+    else if op == "st.async" & rreg("%cluster_nctarank") <= 1 then { fault("st.async: the cluster has a single CTA", 0); false }
+    else if op == "red.async" & tdiv_int(kd, 4294967296) == cur_cta() then { fault("red.async: a and mbar belong to the executing CTA", 0); false }
+    else true
+  }
+
 val exec_amisc : (opcode, list(xop)) -> bool
 function exec_amisc(o, ops) = {
   let m = o.mods;
@@ -543,6 +559,7 @@ function exec_amisc(o, ops) = {
         /* "If .ss is not specified, Generic Addressing is used" for a and mbar (PTX ISA 9.3 st.async ~13917) */
         let sp = if has(m, "shared::cluster") then "shared_cluster" else "generic";
         var l = ea(a, sp);
+        if not_bool(asyncUb("st.async", l, ea(mb, sp))) then return true;
         var n : int = 0;
         var r = vs;
         while is_cons(r) & not_bool(stuck) do {
@@ -557,14 +574,35 @@ function exec_amisc(o, ops) = {
         let t = ty1(o);
         /* "If .ss is not specified, Generic Addressing is used" (PTX ISA 9.3 red.async ~21414) */
         let sp = if has(m, "shared::cluster") then "shared_cluster" else "generic";
+        if not_bool(asyncUb("red.async", ea(a, sp), ea(mb, sp))) then return true;
         let _ = memop_do(ea(a, sp), AtOp(atomOp(m), t, rd(v, t), 0));
         if not_bool(stuck) then bulkTx(ea(mb, sp), bytes(t));
         true
       } else false
     },
     ("st", [|XB([|a|], [||]), sz, _|]) => {
-      /* "If no state space is specified then Generic Addressing is used" (PTX ISA 9.3 st.bulk ~14114) */
-      if has(m, "bulk") then { let _ = memop_do(ea(a, if has(m, "shared::cta") then "shared" else "generic"), WrOp(rdu32(sz), 0)); true } else false
+      /* "If no state space is specified then Generic Addressing is used"; "size must be a multiple of 8. If the value is
+         not a multiple of 8, then the behavior is undefined"; an address outside the .shared window is undefined
+         (9.7.9.14).  st.bulk states no alignment for a, so the region is written in 8-byte pieces when a is 8-byte
+         aligned and byte by byte otherwise (not as one access of size bytes, which the alignment check would treat as
+         a naturally aligned 16-byte access) */
+      if has(m, "bulk") then {
+        let n = rdu32(sz);
+        let l0 = ea(a, if has(m, "shared::cta") then "shared" else "generic");
+        match l0 {
+          Loc(sp, off) => {
+            if ub & sp != "shared" then fault("st.bulk: address outside the .shared window", off)
+            else if ub & tmod_int(n, 8) != 0 then fault("st.bulk: size is not a multiple of 8", n)
+            else {
+              let step = if tmod_int(off, 8) == 0 & tmod_int(n, 8) == 0 then 8 else 1;
+              var i : int = 0;
+              while i < n & not_bool(stuck) do { let _ = memop_do(Loc(sp, off + i), WrOp(step, 0)); i = i + step }
+            }
+          },
+          _ => { let _ = memop_do(l0, WrOp(n, 0)); () }
+        };
+        true
+      } else false
     },
     ("clusterlaunchcontrol", [|XB([|a|], [||]), XB([|mb|], [||])|]) => {
       if has(m, "try_cancel") then {

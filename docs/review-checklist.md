@@ -239,6 +239,12 @@ Open:
 - [x] `setmaxnreg` (§9.7.20.5): `.dec` above / `.inc` below the warp's current count is reported under `.ub strict`
       once the count is known (after the warp's first setmaxnreg) (tests/neg/setmaxnreg-ub.ptx); not checked: a
       setmaxnreg not executed by every warp of the warpgroup, the kernel's initial count
+- [x] `st.async` / `red.async` mbarrier forms (§9.7.9.12, §9.7.14.7) under `.ub strict`: a and mbar in the
+      `.shared::cluster` window and in one CTA; st.async needs `%cluster_nctarank > 1`; red.async's CTA differs from the
+      executing one (tests/neg/red-async-own.ptx, tests/misc-async-ub.ptx)
+- [x] `st.bulk` (§9.7.9.14) states no alignment for a but was written as one size-byte access, which `.ub strict` took
+      for a 16-byte naturally aligned access; it now writes 8-byte pieces (or bytes); size not a multiple of 8 and an
+      address outside `.shared` are reported under `.ub strict` (tests/neg/st-bulk-size.ptx)
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 
