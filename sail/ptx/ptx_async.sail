@@ -262,9 +262,14 @@ function ext_wait_ready() = {
 }
 
 /* ---------------------------------------------------------------- cp.async */
-val cpSrcN : (int, list(xop)) -> int
-function cpSrcN(n, rest) = match rest {
+/* the bytes read from src: the optional src-size / ignore-src operand, which comes before the
+ * cache_policy operand; with .L2::cache_hint the last operand is cache_policy (PTX ISA 9.3, cp.async
+ * syntax: cp-size{, src-size}{, cache_policy}, and "When the optional argument cache_policy is specified,
+ * the qualifier .level::cache_hint is required") */
+val cpSrcN : (int, list(xop), bool) -> int
+function cpSrcN(n, rest, hint) = match rest {
   [||] => n,
+  [|_|] if hint => n,
   XS(SI(x)) :: _ => min_int(x, n),
   x :: _ => if regW(x) == 1 then (if rdu32(x) == 0 then n else 0) else min_int(rdu32(x), n)
 }
@@ -321,7 +326,7 @@ function exec_async(o, ops) = {
       _ => false
     } else match ops {
       XB([|d|], [||]) :: XB([|s|], [||]) :: XS(SI(n)) :: rest => {
-        let k = cpSrcN(n, rest);
+        let k = cpSrcN(n, rest, has(m, "L2::cache_hint"));
         let dl = ea(d, "shared");
         let v = if k > 0 then memop_do(ea(s, "generic"), RdOp(k)) else 0;
         if not_bool(stuck) then { let _ = memop_do(dl, WrOp(n, v)); () };
