@@ -168,24 +168,29 @@ function lkAct(n, k) = {
   else 1
 }
 
-val do_static : list(sdecl) -> unit
-function do_static(l) = match l {
+/* static variables: module-scope ones are bound in SP_SYMS, function-scope ones in the function's own space (tg)
+   (externs always in SP_SYMS: they are linked, and `.extern .shared` arrays are placed at each launch) */
+val do_static_in : (list(sdecl), int) -> unit
+function do_static_in(l, tg) = match l {
   [||] => (),
   d :: rest => {
     if d.sspace == "shared" & d.sextern then { smap_set(SP_SYMS, d.sname, mksym("dynshared", 0)); dyn_names = d.sname :: dyn_names }
     else if d.sspace == "shared" then {
       let a = alignUp(stop, d.salign);
-      smap_set(SP_SYMS, d.sname, mksym("shared", a));
+      smap_set(tg, d.sname, mksym("shared", a));
       stop = a + d.ssize
     } else if (d.sspace == "global" | d.sspace == "const") & not_bool(d.sextern) then {
       let a = alignUp(gtop, d.salign);
       gtop = a + max_int(d.ssize, 1);
       initMem(a, d.sty, d.sinit, true);
-      smap_set(SP_SYMS, d.sname, mksym(d.sspace, a))
+      smap_set(tg, d.sname, mksym(d.sspace, a))
     };
-    do_static(rest)
+    do_static_in(rest, tg)
   }
 }
+
+val do_static : list(sdecl) -> unit
+function do_static(l) = do_static_in(l, SP_SYMS)
 
 /* A kernel's own .shared variables belong to its CTAs only (PTX ISA 5.1.5: .shared variables are per CTA, function-scope
    names are visible in the function): they are laid out per kernel after the module-scope / device-function .shared data
@@ -309,6 +314,8 @@ function read_func() = {
       nfuncs = nfuncs + 1;
       f_name[f] = name; f_kind[f] = kind; f_rets[f] = rets; f_params[f] = params;
       f_base[f] = base; f_len[f] = nc; f_rw[f] = rw; f_lab[f] = lab;
+      let fs = new_space();
+      f_syms[f] = fs;
       var x = tl;
       while is_cons(x) do { match x { (n, ts) :: rest => { tgts = (f, n, ts) :: tgts; x = rest }, [||] => () } };
       smap_set(SP_FUNCS, name, f + 1);
@@ -323,11 +330,12 @@ function read_func() = {
         let fa = sym_addr(smap_get(SP_SYMS, name));
         if smap_has(SP_FADDRS, dec_str(fa)) then smap_set(SP_FADDRS, dec_str(fa), f + 1)
       };
+      /* function-scope names are visible in their function only (ISA 5.1, 7.1) */
       if kind == "entry" then {
         let (own, rest) = kernel_statics(sh);
         kstat = (name, own) :: kstat;
-        do_static(rest)
-      } else do_static(sh)
+        do_static_in(rest, fs)
+      } else do_static_in(sh, fs)
     }
   }
 }
@@ -451,6 +459,7 @@ function do_launch(k, g, b, dyn, args) = {
             else {
               kptop = o;
               bind_kernel_statics(k);
+              smap_copy(SP_KENV, f_syms[fchk(f)]);
               /* fixDyn: `.extern .shared` arrays start after the kernel's static shared data */
               var dn = dyn_names;
               while is_cons(dn) do {

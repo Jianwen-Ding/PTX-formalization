@@ -1,0 +1,41 @@
+// function-scope variables are visible in their function only (PTX ISA 9.3 5.1, 7.1): two device functions that each
+// declare `.shared tmp` and an initialized `.global cnt` use their own variables (the model shared one symbol per name)
+.version 8.0
+.target sm_80
+.address_size 64
+.func (.reg .b32 r) f()
+{
+    .shared .align 4 .b32 tmp;
+    .global .align 4 .u32 cnt = 100;
+    .reg .b32 %a, %b;
+    st.shared.u32 [tmp], 1;
+    ld.global.u32 %a, [cnt];
+    ld.shared.u32 %b, [tmp];
+    add.u32 r, %a, %b;
+    ret;
+}
+.func (.reg .b32 r) g()
+{
+    .shared .align 4 .b32 tmp;
+    .global .align 4 .u32 cnt = 200;
+    .reg .b32 %a, %b;
+    st.shared.u32 [tmp], 2;
+    ld.global.u32 %a, [cnt];
+    ld.shared.u32 %b, [tmp];
+    add.u32 r, %a, %b;
+    ret;
+}
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %x, %y, %z;
+    ld.param.u64 %o, [po];
+    call (%x), f, ();
+    call (%y), g, ();
+    call (%z), f, ();
+    st.global.v4.u32 [%o], {%x, %y, %z, %z};
+    ret;
+}
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1 >>> (OUT);
+// f: 100 + its tmp (1); g: 200 + its tmp (2); f again: its own tmp still holds 1
+.expect OUT .u32 = { 101, 202, 101, 101 };

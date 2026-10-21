@@ -312,6 +312,7 @@ function enter_func(f, env, outs) = {
   t_fn[t] = f;
   t_pc[t] = 0;
   t_regs[t] = regs;
+  smap_copy(env, f_syms[fchk(f)]);   /* the function's own static variables */
   t_env[t] = env
 }
 

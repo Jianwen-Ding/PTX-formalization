@@ -152,7 +152,8 @@ Open:
       tcgen05 descriptor bit 52 and `cta_group::2` disable-output-lane (layouts not specified), inc / dec on floats
 - [ ] tcgen05 allocation patterns (alloc after relinquish, growing size, exit without dealloc) under `.ub strict`
 - [ ] sm_1x single-precision defaults (ftz, mad.f32 truncation); `brkpt` suspends
-- [ ] device-function `.shared` variables with equal names in different functions still share a symbol
+- [x] function-scope variables (`.shared`, `.global`, `.const`) are bound per function: equal names in two functions no
+      longer share a symbol (tests/func-scope-vars.ptx)
 - [ ] `.ashift` with `.sp`, f64 mma "fma-equivalent precision", Figure 187 lane placement (see the matrix section)
 
 ## Where the Sail model now differs from the K semantics

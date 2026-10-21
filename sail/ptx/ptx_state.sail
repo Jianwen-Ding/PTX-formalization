@@ -105,6 +105,7 @@ register f_base : vector(4096, int) = vector_init(0)
 register f_len : vector(4096, int) = vector_init(0)
 register f_rw : vector(4096, int) = vector_init(0)
 register f_lab : vector(4096, int) = vector_init(0)
+register f_syms : vector(4096, int) = vector_init(0)    /* the function's own static variables: name |-> symbol */
 
 val fchk : int -> range(0, 4095)
 function fchk(f) = { assert(0 <= f & f < 4096, "function table full"); f }
