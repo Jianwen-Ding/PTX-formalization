@@ -40,7 +40,9 @@ def t_replace():
     G2 = [random.randint(1, 60000) for _ in range(ROW * 7)]
     dims = (64, 6); box = (64, 4); est1 = 2; coords = (0, 1)
     img = []
-    for r in range(box[1]):
+    # tiled mode: the element (traversal) stride reduces the elements of a dimension to ceil(boxDim / elementStride)
+    # (PTX ISA 9.3 5.5.3.2, and 5.5.4.2: "does not impact the total number of elements ... unlike the tiled mode")
+    for r in range(-(-box[1] // est1)):
         for c in range(box[0]):
             x, y = coords[0] + c, coords[1] + r * est1
             img += [0xc0, 0x7f] if (x >= dims[0] or y >= dims[1]) else [G2[y * ROW + x] & 255, G2[y * ROW + x] >> 8]

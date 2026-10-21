@@ -67,13 +67,19 @@ function tmFill(b) =
   else 0
 
 /* ---------------------------------------------------------------- element addresses */
+/* tiled mode: the traversal stride "specifies the exact number of elements to be skipped" while the bounding box iterates
+ * a dimension (PTX ISA 9.3 section 5.5.3.2, ~3036), and it reduces the number of elements accessed, "unlike the tiled
+ * mode" in im2col mode (~3258-3259): dimension i holds ceil(boxDim[i] / elementStride[i]) elements, at coordinates
+ * c + k * elementStride[i] */
+val tmN : (int, int) -> int
+function tmN(b, i) = { let e = max_int(1, tmEst(b, i)); tdiv_int(tmBox(b, i) + e - 1, e) }
 val tmVol : (int, int) -> int
-function tmVol(b, i0) = { var a : int = 1; var i : int = i0; while i < tmRank(b) do { a = a * tmBox(b, i); i = i + 1 }; a }
+function tmVol(b, i0) = { var a : int = 1; var i : int = i0; while i < tmRank(b) do { a = a * tmN(b, i); i = i + 1 }; a }
 val tmCount : (int, bool) -> int
 function tmCount(b, g) = if g then 4 * tmBox(b, 0) else tmVol(b, 0)
 
 val gcoord : (int, list(int), int, int, int) -> int
-function gcoord(b, cs, e, i, dv) = nth(cs, i) + tmod_int(tdiv_int(e, dv), tmBox(b, i)) * tmEst(b, i)
+function gcoord(b, cs, e, i, dv) = nth(cs, i) + tmod_int(tdiv_int(e, dv), tmN(b, i)) * tmEst(b, i)
 
 val tmAddrT : (int, list(int), int) -> int
 function tmAddrT(b, cs, e) = {
@@ -84,7 +90,7 @@ function tmAddrT(b, cs, e) = {
   while i < tmRank(b) & not_bool(bad) do {
     let g = gcoord(b, cs, e, i, dv);
     if g < 0 | g >= tmDim(b, i) then bad = true
-    else { acc = acc + (if i == 0 then g * tmEb(b) else g * tmStride(b, i)); dv = dv * tmBox(b, i); i = i + 1 }
+    else { acc = acc + (if i == 0 then g * tmEb(b) else g * tmStride(b, i)); dv = dv * tmN(b, i); i = i + 1 }
   };
   if bad then -1 else tmAddrOf(b) + acc
 }
@@ -190,9 +196,9 @@ function tmGrpAddr(b, cs, q0) = {
     var acc : int = tmAddrOf(b) + tdiv_int(c0 * tmNb(b), 8);
     var bad : bool = false;
     while i < tmRank(b) & not_bool(bad) do {
-      let v = nth(cs, i) + tmod_int(q, tmBox(b, i)) * tmEst(b, i);
+      let v = nth(cs, i) + tmod_int(q, tmN(b, i)) * tmEst(b, i);
       if v < 0 | v >= tmDim(b, i) then bad = true
-      else { acc = acc + v * tmStride(b, i); q = tdiv_int(q, tmBox(b, i)); i = i + 1 }
+      else { acc = acc + v * tmStride(b, i); q = tdiv_int(q, tmN(b, i)); i = i + 1 }
     };
     if bad then -1 else acc
   }
@@ -349,8 +355,37 @@ function tmBad(b, cs, cnt) = {
   q
 }
 
+/* cp.reduce.async.bulk.tensor: "the valid combinations of .redOp and element type" (PTX ISA 9.3 ~17375-17380):
+ * .add .u32 .s32 .u64 .f32 .f16 .bf16; .min/.max .u32 .s32 .u64 .s64 .f16 .bf16; .inc/.dec .u32; .and/.or/.xor .b32 .b64.
+ * The tensor map gives the element type (tensormap.replace.elemtype values); f32 includes the .ftz variant (8), and the
+ * bit-size types .b32 / .b64 are taken as the 32- and 64-bit integer element types. */
+val tmRedOk : (string, int) -> bool
+function tmRedOk(op, c) = match op {
+  "add" => has([|"2", "3", "4", "7", "8", "6", "10"|], dec_str(c)),
+  "min" => has([|"2", "3", "4", "5", "6", "10"|], dec_str(c)),
+  "max" => has([|"2", "3", "4", "5", "6", "10"|], dec_str(c)),
+  "inc" => c == 2,
+  "dec" => c == 2,
+  "and" => c >= 2 & c <= 5,
+  "or" => c >= 2 & c <= 5,
+  "xor" => c >= 2 & c <= 5,
+  _ => false
+}
+
+/* the element type is known only when the instruction runs, so the table is checked then, under `.isacheck ;`; without it
+ * the other combinations run with the natural meaning (as for cp.reduce.async.bulk, bulkRedErr in ptx_async.sail):
+ * integer operations on the bits of integer types, .and / .or / .xor on the bits of any type, .add / .min / .max on
+ * floats; .inc / .dec on a floating-point element type stop with an error */
+val tmRedFloat : int -> bool
+function tmRedFloat(c) = c >= 6 & c <= 12
+
 val tm_store : (list(string), int, list(int), addr) -> unit
-function tm_store(m, b, cs, s) = {
+function tm_store(m, b, cs, s) = if has(m, "reduce") & isachk & not_bool(tmRedOk(atomOp(m), tmEtc(b))) then
+  fault(concat_str("cp.reduce.async.bulk.tensor: .", concat_str(atomOp(m),
+    " is not a valid combination with the tensor-map element type (PTX ISA 9.3 9.7.9.26.5.3), element type")), tmEtc(b))
+else if has(m, "reduce") & (atomOp(m) == "inc" | atomOp(m) == "dec") & tmRedFloat(tmEtc(b)) then
+  fault(concat_str("cp.reduce.async.bulk.tensor: .", concat_str(atomOp(m), " on a floating-point tensor-map element type")), tmEtc(b))
+else {
   let base = locOff(ea(s, "shared"));
   let op = if has(m, "reduce") then atomOp(m) else "";
   let t = tmTy(b);
