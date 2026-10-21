@@ -149,11 +149,32 @@ function src3Ty(op, m, t) = if op == "selp" then mkty("p", 1) else if op == "mad
 val oobNaN : int -> int
 function oobNaN(w) = match w { 16 => 32256, 116 => 32704, _ => -1 }
 
+/* mad.f32 on .target sm_1x (9.7.3.5): "computes the product of a and b at double precision, and then the mantissa is
+ * truncated to 23 bits, but the exponent is preserved ... when c = +/-0.0, mad.f32 is identical to the result computed
+ * using separate mul and add instructions"; inputs and results flush (sm_1x single precision) */
+val isaAny0 : (list(string), list(string)) -> bool
+function isaAny0(names, alts) = match alts { [||] => false, a :: rest => has(names, a) | isaAny0(names, rest) }
+
+val madSm1x : (fmods, int, int, int) -> int
+function madSm1x(fm, a, b, c) = {
+  let f = { fm with ftz = true };
+  let cf = decodeF(ftzIn(f, 32, c), 32);
+  if fv_is_zero(cf) then fpAdd(f, 32, fpMul(f, 32, a, b), c)
+  else {
+    let p : fv = match fv_mul_exact(decodeF(ftzIn(f, 32, a), 32), decodeF(ftzIn(f, 32, b), 32)) {
+      FV_Fin(s, m, e) => { let k = max_int(0, bitlen(m) - 24); FV_Fin(s, asr_int(m, k), e + k) },
+      v => v
+    };
+    fin(f, 32, fv_add_exact(p, cf, f.rm), false)
+  }
+}
+
 val tern : (string, list(string), ty, int, int, int) -> int
 function tern(op, m, t, a, b, c) = {
   if op == "selp" then (if c != 0 then a else b)
   /* fma.oob: "clamps the result to 0 if either of the operands is OOB NaN" (9.7.4.4) */
   else if has(m, "oob") & isF(t) & (a == oobNaN(fw(t)) | b == oobNaN(fw(t)) | c == oobNaN(fw(t))) then 0
+  else if op == "mad" & isasm > 0 & isasm < 20 & isF(t) & fw(t) == 32 & not_bool(isaAny0(m, [|"rn", "rz", "rm", "rp"|])) then madSm1x(fmods_of(m), a, b, c)
   else if isF(t) & is_some(nanPay(fw(t), [|a, b, c|])) then match nanPay(fw(t), [|a, b, c|]) { Some(v) => v, None() => 0 }
   else if isF(t) then fpFma(fmods_of(m), fw(t), a, b, c)
   else if has(m, "wide") then trunc(ival(a, t) * ival(b, t) + c, 2 * wid(t))
