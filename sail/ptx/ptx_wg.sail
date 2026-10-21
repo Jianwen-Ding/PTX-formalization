@@ -41,13 +41,25 @@ function swG(z) = match z { 1 => 8, 2 => 4, 3 => 2, 4 => 8, 5 => 8, 6 => 8, _ =>
 val swB : int -> int
 function swB(z) = match z { 1 => 3, 2 => 2, 3 => 1, _ => 0 }
 
-val swizzle : (int, int) -> int
-function swizzle(z, a) =
-  if z <= 3 then lxor_int(a, asr_int(land_int(a, shl_int(mask(swB(z)), 7)), 3))
-  else if z == 4 then lxor_int(a, shl_int(land_int(asr_int(a, 7), 3), 5))
-  else if z == 5 then lxor_int(lxor_int(a, shl_int(land_int(asr_int(a, 7), 3), 5)), shl_int(land_int(asr_int(a, 7), 1), 3))
-  else if z == 6 then lxor_int(a, shl_int(land_int(asr_int(a, 7), 1), 6))
+/* the matrix base offset, descriptor bits 49-51 (ISA 9.7.16.5.1, Table 45): (pattern start addr >> 7) & 7 when the
+   repeating pattern of the swizzle does not start on its 1024 / 512 / 256-byte boundary; the swizzle phase of an
+   address is then counted from the pattern start, i.e. from address bits 7.. minus the base offset */
+val dBase : int -> int
+function dBase(d) = land_int(asr_int(d, 49), 7)
+
+val swizzleB : (int, int, int) -> int
+function swizzleB(z, a, b) = {
+  let p = a - shl_int(b, 7);
+  if z == 0 then a
+  else if z <= 3 then lxor_int(a, asr_int(land_int(p, shl_int(mask(swB(z)), 7)), 3))
+  else if z == 4 then lxor_int(a, shl_int(land_int(asr_int(p, 7), 3), 5))
+  else if z == 5 then lxor_int(lxor_int(a, shl_int(land_int(asr_int(p, 7), 3), 5)), shl_int(land_int(asr_int(p, 7), 1), 3))
+  else if z == 6 then lxor_int(a, shl_int(land_int(asr_int(p, 7), 1), 6))
   else a
+}
+
+val swizzle : (int, int) -> int
+function swizzle(z, a) = swizzleB(z, a, 0)
 
 /* element offset of (mn, k) in the canonical layout; t = elements per 16 bytes */
 val wgEO : (int, bool, int, int, int, int, int) -> int
@@ -69,7 +81,7 @@ function wgBitOff(d, km, w, mn, k) =
 val wgElem : (int, bool, int, int, int) -> int
 function wgElem(d, km, w, mn, k) = {
   let bo = wgBitOff(d, km, w, mn, k);
-  let a = swizzle(dSwz(d), dStart(d) + tdiv_int(bo, 8));
+  let a = swizzleB(dSwz(d), dStart(d) + tdiv_int(bo, 8), dBase(d));
   land_int(asr_int(mem_rdn(cta_smem(), a, max_int(1, tdiv_int(w, 8))), fmod_int(bo, 8)), mask(w))
 }
 

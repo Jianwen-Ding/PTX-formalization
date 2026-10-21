@@ -198,7 +198,7 @@ val tcSwz : int -> int
 function tcSwz(c) = match c { 2 => 1, 4 => 2, 6 => 3, 1 => 4, _ => 0 }
 val tcDesc : int -> int
 function tcDesc(d) =
-  lor_int(lor_int(land_int(d, 16383), shl_int(land_int(asr_int(d, 16), 16383), 16)),
+  lor_int(lor_int(lor_int(land_int(d, 16383), shl_int(land_int(asr_int(d, 16), 16383), 16)), shl_int(dBase(d), 49)),
           lor_int(shl_int(land_int(asr_int(d, 32), 16383), 32),
                   lor_int(shl_int(land_int(tcSwz(land_int(asr_int(d, 61), 7)), 3), 62), shl_int(tdiv_int(tcSwz(land_int(asr_int(d, 61), 7)), 4), 56))))
 
@@ -254,7 +254,7 @@ function tcKS(m, i, meta) = if meta >= 0 then 2 * tcK(m, i) else tcK(m, i)
 val wgElemS : (int, int, bool, int, int, int) -> int
 function wgElemS(sp, d, km, w, mn, k) = {
   let bo = wgBitOff(d, km, w, mn, k);
-  let a = swizzle(dSwz(d), dStart(d) + tdiv_int(bo, 8));
+  let a = swizzleB(dSwz(d), dStart(d) + tdiv_int(bo, 8), dBase(d));
   land_int(asr_int(mem_rdn(sp, a, max_int(1, tdiv_int(w, 8))), fmod_int(bo, 8)), mask(w))
 }
 
