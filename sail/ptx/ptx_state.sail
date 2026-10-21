@@ -171,11 +171,12 @@ register t_pmem : vector(16384, int) = vector_init(0)
 register t_ptop : vector(16384, int) = vector_init(0)
 register t_lmem : vector(16384, int) = vector_init(0)
 register t_ltop : vector(16384, int) = vector_init(0)
+register t_lsp : vector(16384, int) = vector_init(0)    /* the stack pointer of alloca / stacksave / stackrestore */
 register t_cseq : vector(16384, int) = vector_init(0)
 register t_misc : vector(16384, int) = vector_init(0)
 register t_cont : vector(16384, tcont) = vector_init(K_none())
-/* call stack: frame(function, return pc, registers, environment, local top, (formal, caller register) outs) */
-register t_stack : vector(16384, list((int, int, int, int, int, list((string, string))))) = vector_init([||])
+/* call stack: frame(function, return pc, registers, environment, local top, stack pointer, (formal, caller register) outs) */
+register t_stack : vector(16384, list((int, int, int, int, int, int, list((string, string))))) = vector_init([||])
 
 val tchk : int -> range(0, 16383)
 function tchk(t) = { assert(0 <= t & t < 16384, "too many threads"); t }

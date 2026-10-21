@@ -262,6 +262,7 @@ function mkCtas(c0, n) = {
       t_ptop[s] = kptop;
       t_lmem[s] = new_space();
       t_ltop[s] = 0;
+      t_lsp[s] = LSTACK;
       t_cseq[s] = new_space();
       t_misc[s] = new_space();
       t_cont[s] = K_none();

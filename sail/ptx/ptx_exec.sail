@@ -40,12 +40,46 @@ function unpack(l, w, v) = match l { [||] => (), d :: rest => { wr_sop(d, trunc(
 
 val clToGeneric : (int, int) -> int
 function clToGeneric(a, own) =
-  CLBASE + shl_int(if asr_int(a, 24) == 0 then own else asr_int(a, 24) - 1, 24) + land_int(a, 16777215)
+  winBase("cluster") + shl_int(if asr_int(a, 24) == 0 then own else asr_int(a, 24) - 1, 24) + land_int(a, 16777215)
 val clFromGeneric : (int, int) -> int
 function clFromGeneric(a, own) = {
-  if a >= CLBASE then lor_int(shl_int(asr_int(a - CLBASE, 24) + 1, 24), land_int(a - CLBASE, 16777215))
-  else if a >= SHBASE & a < LOCBASE then lor_int(shl_int(own + 1, 24), a - SHBASE)
+  if genWin(a) == "cluster" then lor_int(shl_int(asr_int(a - winBase("cluster"), 24) + 1, 24), land_int(a - winBase("cluster"), 16777215))
+  else if genWin(a) == "shared" then lor_int(shl_int(own + 1, 24), a - winBase("shared"))
   else 0
+}
+
+/* size and alignment of the formal parameter N of a parameter list */
+val pdFind : (list(pdecl), string) -> option((int, int))
+function pdFind(l, n) = match l { [||] => None(), p :: rest => if p.pname == n then Some((p.psize, p.palign)) else pdFind(rest, n) }
+
+/* mov of the address of a device-function parameter: the parameter is copied onto the stack frame and its
+ * address is in the .local state space (PTX ISA 5.1 note 3, mov).  The name is bound to the copy, so that
+ * ld.param / st.param see the same bytes; ret copies it back to the argument ("@cpy:" entries of the frame). */
+val paramToLocal : string -> unit
+function paramToLocal(n) = {
+  let t = tchk(cur);
+  let f = fchk(t_fn[t]);
+  let s = smap_get(t_env[t], n);
+  let (sz, al) : (int, int) = match pdFind(f_params[f], n) {
+    Some(x) => x,
+    None() => match pdFind(f_rets[f], n) { Some(x) => x, None() => (0, 1) }
+  };
+  let a = alignUp(t_ltop[t], max_int(al, 1));
+  t_ltop[t] = a + sz;
+  mem_copy(t_lmem[t], a, t_pmem[t], sym_addr(s), sz);
+  smap_set(t_env[t], n, mksym("local", a));
+  smap_set(t_env[t], concat_str("@cpy:", n), s);
+  smap_set(t_env[t], concat_str("@cpysz:", n), sz)
+}
+
+/* is N a .param formal of the executing device function (not yet copied to the stack) */
+val isFuncParam : string -> bool
+function isFuncParam(n) = {
+  let t = tchk(cur);
+  let e = t_env[t];
+  f_kind[fchk(t_fn[t])] == "func" & not_bool(isRegName(n)) & smap_has(e, n) & not_bool(smap_has(e, concat_str("@cpy:", n)))
+  & sym_space(smap_get(e, n)) == "param"
+  & (is_some(pdFind(f_params[fchk(t_fn[t])], n)) | is_some(pdFind(f_rets[fchk(t_fn[t])], n)))
 }
 
 val exec_alu : (opcode, list(xop)) -> bool
@@ -74,6 +108,11 @@ function exec_alu(o, ops) = {
         let t = ty1(o);
         let d = xop_nth(ops, 0);
         let a = xop_nth(ops, 1);
+        match a {
+          XS(SN(nm)) => if isFuncParam(nm) then paramToLocal(nm),
+          XS(SNP(nm, _)) => if isFuncParam(nm) then paramToLocal(nm),
+          _ => ()
+        };
         match (d, a) {
           (XV(ds), XV(vs)) => { movv(ds, vs, t); true },
           (XV(ds), _) => { let v = rd(a, t); unpack(ds, tdiv_int(wid(t), sop_count(ds)), v); true },
@@ -248,7 +287,7 @@ function enter_func(f, env, outs) = {
     let k = smap_key(env, i);
     if string_startswith(k, "@in:") then smap_set(regs, sdrop(k, 4), sym_addr(smap_get(env, k)))
   };
-  t_stack[t] = (t_fn[t], t_pc[t], t_regs[t], t_env[t], t_ltop[t], outs) :: t_stack[t];
+  t_stack[t] = (t_fn[t], t_pc[t], t_regs[t], t_env[t], t_ltop[t], t_lsp[t], outs) :: t_stack[t];
   t_fn[t] = f;
   t_pc[t] = 0;
   t_regs[t] = regs;
@@ -316,8 +355,18 @@ function do_ret() = {
   let t = tchk(cur);
   match t_stack[t] {
     [||] => do_exit(),
-    (f, pc, regs, env, lt, outs) :: rest => {
+    (f, pc, regs, env, lt, sp, outs) :: rest => {
       let cr = t_regs[t];
+      /* parameters whose address was taken (paramToLocal): copy them back to the arguments */
+      let e = t_env[t];
+      foreach (i from 0 to (smap_size(e) - 1)) {
+        let k = smap_key(e, i);
+        if string_startswith(k, "@cpy:") then {
+          let n = sdrop(k, 5);
+          let s = smap_get(e, k);
+          mem_copy(t_pmem[t], sym_addr(s), t_lmem[t], sym_addr(smap_get(e, n)), smap_get(e, concat_str("@cpysz:", n)))
+        }
+      };
       var l = outs;
       while is_cons(l) do {
         match l { (p, d) :: lr => { smap_set(regs, d, smap_get(cr, p)); l = lr }, [||] => () }
@@ -329,7 +378,8 @@ function do_ret() = {
       t_pc[t] = pc;
       t_regs[t] = regs;
       t_env[t] = env;
-      t_ltop[t] = lt
+      t_ltop[t] = lt;
+      t_lsp[t] = sp
     }
   }
 }
