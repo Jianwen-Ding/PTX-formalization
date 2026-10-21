@@ -231,7 +231,7 @@ function mk_sregs(sp, c, t, g, b, cd) = {
      after the CTA's static and dynamic shared memory (its size and place are the implementation's choice) */
   let rb = alignUp(stop + dynsmem, unit);
   sreg_set(sp, "%reserved_smem_offset_begin", rb); sreg_set(sp, "%reserved_smem_offset_end", rb + 1024);
-  sreg_set(sp, "%reserved_smem_offset_cap", rb + 1024);
+  sreg_set(sp, "%reserved_smem_offset_cap", 1024);    /* "Total size of the reserved shared memory region" (10.29) */
   sreg_set(sp, "%reserved_smem_offset_0", rb); sreg_set(sp, "%reserved_smem_offset_1", rb + 512);
   foreach (i from 0 to 7) {
     sreg_set(sp, concat_str("%pm", dec_str(i)), 0);

@@ -202,6 +202,17 @@ function mem_apply(sp, a, op) = match op {
 /* hook for the cluster module: accesses of shared::cluster locations */
 val cluster_mem : (int, memop) -> option(int)
 
+/* [a, a + n) overlaps [%reserved_smem_offset_begin, %reserved_smem_offset_end) of the executing thread's CTA */
+val resvHit : (int, int) -> bool
+function resvHit(a, n) = {
+  let sp = t_sregs[tchk(cur)];
+  if smap_has(sp, "%reserved_smem_offset_begin") then {
+    let b = smap_get(sp, "%reserved_smem_offset_begin");
+    let e = smap_get(sp, "%reserved_smem_offset_end");
+    a < e & a + n > b
+  } else false
+}
+
 /* #mem(L, OP) => #res(V): one atomic step */
 val memop_do : (loc, memop) -> int
 function memop_do(l, op) = match l {
@@ -214,6 +225,10 @@ function memop_do(l, op) = match l {
       fault("global access outside the allocated data", a); 0
     } else if ub & s == "local" & nb > 0 & a + nb > t_ltop[tchk(cur)] & (a < t_lsp[tchk(cur)] | a + nb > LSTACK) then {
       fault("local access above the stack top", a); 0
+    } else if ub & s == "shared" & nb > 0 & cur >= 0 & resvHit(a, nb) then {
+      /* "This region of shared memory is not available to users, and accessing this region from user code results in
+         undefined behavior" (10.29) */
+      fault("shared access to the region reserved for system software", a); 0
     } else if s == "global" & a >= 4096 then mem_apply(SP_GMEM, a, op)
     else if s == "shared" & a >= 0 then mem_apply(cta_smem(), a, op)
     else if s == "local" & a >= 0 then mem_apply(t_lmem[tchk(cur)], a, op)
