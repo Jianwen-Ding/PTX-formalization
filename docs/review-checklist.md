@@ -170,8 +170,9 @@ Open:
 - [x] `fma.oob` gives +0 when an operand is the OOB-NaN (§9.7.4.4). The ISA gives no OOB-NaN bits; the model uses the
       pattern its own tensor copies fill with (f16 0x7E00, bf16 0x7FC0) (tests/half-oob-set.ptx)
 - [ ] `.sat` of −0 returns −0 ("clamps the result to [0.0, 1.0]" holds either way); hardware is said to give +0
-- [ ] `.isacheck` does not report `add.rz.f16`, `add.ftz.bf16`, `ex2.approx.bf16` without `.ftz`: check against the
-      half-precision syntax tables
+- [x] `.isacheck` reports half-precision forms outside the §9.7.4 syntax: rounding other than `.rn`, `.ftz` / `.sat` on
+      `.bf16`, `.relu` with `.sat`, `.oob` with `.ftz` / `.sat`, `ex2.approx` with / without `.ftz` on the wrong type
+      (tests/neg/isa-half-*.ptx)
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

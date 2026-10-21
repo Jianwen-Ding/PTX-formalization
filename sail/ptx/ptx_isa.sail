@@ -319,7 +319,19 @@ function isaQual(o, ops) = {
   let scope = isaAny(m, [|"cta", "cluster", "gpu", "sys"|]);
   let fl : bool = match o.tys { t :: _ => t.k == "f", _ => false };
   let w : int = match o.tys { t :: _ => t.w, _ => 0 };
-  if b == "fabric" & (has(m, "try_atom") | has(m, "tensor")) then
+  let hk : string = match o.tys { [|t|] => if (t.k == "f" & t.w == 16) | t.k == "f16x2" then "f16" else if t.k == "bf" | t.k == "bf16x2" then "bf16" else "", _ => "" };
+  let hArith = hk != "" & isaAny([|b|], [|"add", "sub", "mul", "fma"|]);
+  if hArith & isaAny(m, [|"rz", "rm", "rp"|]) then
+    concat_str(b, " on .f16 / .bf16 values rounds only with .rn [PTX ISA 9.3 9.7.4]")
+  else if hk == "bf16" & isaAny([|b|], [|"add", "sub", "mul", "fma", "min", "max"|]) & isaAny(m, [|"ftz", "sat"|]) then
+    concat_str(b, ": no .ftz / .sat form on .bf16 / .bf16x2 [PTX ISA 9.3 9.7.4]")
+  else if hk != "" & b == "fma" & has(m, "relu") & has(m, "sat") then
+    "fma: .relu and .sat are exclusive [PTX ISA 9.3 9.7.4.4]"
+  else if hk != "" & b == "fma" & has(m, "oob") & isaAny(m, [|"ftz", "sat"|]) then
+    "fma.oob takes no .ftz / .sat [PTX ISA 9.3 9.7.4.4]"
+  else if hk != "" & b == "ex2" & (if hk == "bf16" then not_bool(has(m, "ftz")) else has(m, "ftz")) then
+    "ex2.approx: .ftz is required on .bf16 / .bf16x2 and not allowed on .f16 / .f16x2 [PTX ISA 9.3 9.7.4.10]"
+  else if b == "fabric" & (has(m, "try_atom") | has(m, "tensor")) then
     "fabric: the .try_atom and .tensor forms are not in PTX ISA 9.3 (9.7.10.5 lists try_get / try_put / try_red / try_pullred / submit / wait)"
   else if (b == "ld" | b == "st") & isaCount(m, [|"weak", "volatile", "relaxed", sem|]) > 1 then
     concat_str(b, ": the .weak, .volatile, .relaxed and .acquire / .release qualifiers are mutually exclusive [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
