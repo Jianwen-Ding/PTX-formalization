@@ -124,6 +124,13 @@ function reduxStep(op, t, m, a, b) = match op {
   _ => a
 }
 
+/* redux.sync .abs: "the absolute value of the input is considered for the reduction operation" (.f32 only) */
+val reduxAbs : (ty, list(string), list(int)) -> list(int)
+function reduxAbs(t, m, l) = match l {
+  [||] => [||],
+  v :: rest => (if isF(t) & has(m, "abs") then land_int(v, 2147483647) else v) :: reduxAbs(t, m, rest)
+}
+
 val reduxFold : (string, ty, list(string), list(int)) -> int
 function reduxFold(op, t, m, l) = match l {
   [||] => 0,
@@ -159,7 +166,7 @@ function collCompute(k, d, arr) = {
     "coll_test.first" => sameAll(ls, listAt(arr, minLane(ls))),
     _ => {
       if k == "redux.add" | k == "redux.min" | k == "redux.max" | k == "redux.and" | k == "redux.or" | k == "redux.xor" then
-        sameAll(ls, [|reduxFold(k, cv_ty(d, 0), cv_mods(d, 1), preds(arr, ls))|])
+        sameAll(ls, [|reduxFold(k, cv_ty(d, 0), cv_mods(d, 1), reduxAbs(cv_ty(d, 0), cv_mods(d, 1), preds(arr, ls)))|])
       else match coll_compute_ext(k, d, arr) { Some(r) => r, None() => arr }
     }
   }
