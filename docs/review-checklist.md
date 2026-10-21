@@ -50,6 +50,41 @@ the reference for correctness.
       keeps CC.CF = carry of a + ~b + 1 (1 = no borrow), because ZLUDA's hardware-recorded `subc_cc_s32` reads
       CC.CF = 0 after `sub.cc` with a < b, which the ISA text would make 1. Needs a decision.
 
+## Sync / async / textures review against the ISA (fixed, Sail only)
+
+- [x] cp.async: with `.L2::cache_hint` a single trailing operand is the cache_policy (§9.7.9.26.3.1, ~15824-15880)
+- [x] warp collectives (shfl, vote, match, redux, bar.warp.sync) wait only for non-exited lanes of the membermask
+      (~12949, 21672-21767); match.all returns the participating lanes; elect.sync keeps the full mask ("all threads")
+- [x] redux.sync `.abs` (~21878)
+- [x] activemask: exited, inactive and predicated-off lanes contribute 0 (~21812-21818): the lanes executing the same
+      dynamic instance together under the round-robin schedule
+- [x] clusterlaunchcontrol.try_cancel `.multicast::cluster::all`: response and complete-tx in every CTA (~23576-23579)
+- [x] mbarrier test_wait / try_wait reportPredicate / reportValue operands (zero for `.layout::v0`, ~23064-23067)
+- [x] txq `.array_size` / `.num_mipmap_levels` 0 when not array / mipmapped, sampler queries, `txq.level` (~19255-19264)
+- [x] counted CTA barriers mark warp arrivals (~20252-20261)
+- [x] 96B swizzle (Table 33, Figure 31)
+
+## Matrix review against the ISA (fixed, Sail only)
+
+- [x] `mma.m8n8k4` with `.f16` inputs (§9.7.15.5.1, Figures 46-52); `.ctype .f32` requires `.dtype .f32` (~26898)
+- [x] f64 `mma` `.rn/.rz/.rm/.rp` (~26937-26942)
+- [x] sparse metadata of 16/32-bit `mma.sp` and `wgmma.sp` (Figures 122, 125, 176, 178)
+- [x] tcgen05.ld / st `.16x64b`, `.16x128b`, `.16x256b` cells (Figures 184-186)
+- [x] tcgen05 block-scale factor placement incl. K = 96 column groups (Figures 231, 234-251)
+- [x] tcgen05.mma.sp `kind::f16` / `tf32` metadata (Figures 262-265)
+- [x] matrix descriptor bit 52 (absolute leading-dimension mode): the ISA gives no layout, so the model stops with an error
+- [ ] open: f64 `mma` "precision ... identical to that of .f64 precision fused multiply-add" (the model rounds the exact
+      sum once); Figure 187 (`.16x32bx2`) draws threads 16-31 at lanes 16-31 while the text and the model use t % 16;
+      M = 64 "Layout F" lane placement is not modelled
+
+## Where the Sail model now differs from the K semantics
+
+The K semantics in `semantics/` is no longer kept in step for the fixes above (it cannot be built here). Differences:
+cp.async operand parsing; redux `.abs`; exit-tolerant collectives and match.all's mask; activemask; try_cancel multicast
+and generic addresses; mbarrier report operands; txq; per-warp barrier arrival; 96B swizzle; m8n8k4 `.f16` and the
+ctype/dtype check; f64 mma rounding modifiers (also wmma f64); sparse metadata layouts (`ptx-exec-sp.k`,
+`ptx-exec-wg.k`); tcgen05 `tcCell`, `tcScalesA`, `tcNib`, descriptor bit 52 (`ptx-exec-tc.k`).
+
 ## Next: review the Sail model against the ISA (not against K)
 
 - [ ] Integer and bit instructions (§9.7.1, §9.7.2)
