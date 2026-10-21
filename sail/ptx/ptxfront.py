@@ -21,11 +21,11 @@ TOKEN_RES = [
     ("dotword", r"\.[a-zA-Z_][a-zA-Z0-9_]*"),
     ("reg", r"%[a-zA-Z_$][a-zA-Z0-9_$]*(\.[a-zA-Z][a-zA-Z0-9]*)?"),
     ("qname", r"[a-z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)*::[a-zA-Z0-9_]+(:[0-9]+)*((\.|::)[a-zA-Z0-9_]+(:[0-9]+)*)*"),
-    ("hex", r"0[xXfFdDbB][0-9a-fA-F]+[uU]?"),
+    ("hex", r"[+-]?0[xXfFdDbB][0-9a-fA-F]+[uU]?"),
     ("float", r"([+-]?[0-9]+(\.[0-9]*)?|[+-]?\.[0-9]+)([eE][+-]?[0-9]+)?([fFdD]|[pP][0-9]+[xX][0-9]+)?"),
     ("int", r"[+-]?[0-9]+[uU]?"),
     ("name", r"[a-zA-Z_$][a-zA-Z0-9_$]*(\.[a-zA-Z0-9_$]+)*"),
-    ("punct", r"<<<|>>>|[,;:{}\[\]()<>=+\-!|@]"),
+    ("punct", r"<<<|>>>|<<|>>|<=|>=|==|!=|&&|\|\||[,;:{}\[\]()<>=+\-!|@*/%&^~?]"),
 ]
 TOKEN_CRE = [(k, re.compile(r)) for k, r in TOKEN_RES]
 PRIO = {"hex": 3, "int": 2, "float": 1}
@@ -110,6 +110,65 @@ def type_of(t):
 def tbytes(ty):
     return max(ty[1] // 8, 1)
 
+# ------------------------------------------------------------------ constant expressions (ISA 4.5.4 - 4.5.6)
+# A value is (v, unsigned, isfloat); integers are 64-bit .s64 / .u64, floats binary64.
+M64 = (1 << 64) - 1
+CPREC = {"||": 1, "&&": 2, "|": 3, "^": 4, "&": 5, "==": 6, "!=": 6, "<": 7, ">": 7, "<=": 7, ">=": 7,
+         "<<": 8, ">>": 8, "+": 9, "-": 9, "*": 10, "/": 10, "%": 10}
+
+def cnorm(v, u):
+    v &= M64
+    return v - (1 << 64) if not u and v >> 63 else v
+
+def cval(v, u):
+    return (cnorm(v, u), u, False)
+
+def cfloat(x):
+    return x[0] if x[2] else float(x[0])
+
+def cusual(a, b):
+    u = a[1] or b[1]
+    return cnorm(a[0], u), cnorm(b[0], u), u
+
+def cbin(op, a, b):
+    if a[2] or b[2]:
+        if op in ("<<", ">>", "%", "&", "|", "^"):
+            raise PtxError("operator %s needs integer operands in a constant expression" % op)
+        x, y = cfloat(a), cfloat(b)
+        if op in ("+", "-", "*", "/"):
+            if op == "/" and y == 0.0:
+                r = float("nan") if x == 0.0 or x != x else (float("inf") if (x > 0) == (str(y)[0] != "-") else float("-inf"))
+            else:
+                r = {"+": x + y, "-": x - y, "*": x * y, "/": (x / y) if y != 0.0 else 0.0}[op]
+            return (r, False, True)
+        if op in ("&&", "||"):
+            return (int((x != 0.0) and (y != 0.0)) if op == "&&" else int((x != 0.0) or (y != 0.0)), False, False)
+        return (int({"<": x < y, ">": x > y, "<=": x <= y, ">=": x >= y, "==": x == y, "!=": x != y}[op]), False, False)
+    if op in ("&&", "||"):
+        return (int((a[0] != 0) and (b[0] != 0)) if op == "&&" else int((a[0] != 0) or (b[0] != 0)), False, False)
+    if op in ("<<", ">>"):                       # 2nd operand .u64, result type of the 1st (4.5.5)
+        n = cnorm(b[0], True)
+        if op == "<<":
+            return cval(0 if n >= 64 else a[0] << n, a[1])
+        if a[1]:
+            return cval(0 if n >= 64 else cnorm(a[0], True) >> n, True)
+        return cval(a[0] >> min(n, 63), False)  # arithmetic shift of a signed value
+    if op == "%":                                # operands .u64, result .s64 (Table 5)
+        x, y = cnorm(a[0], True), cnorm(b[0], True)
+        if y == 0:
+            raise PtxError("remainder by zero in a constant expression")
+        return cval(x % y, False)
+    x, y, u = cusual(a, b)
+    if op in ("<", ">", "<=", ">=", "==", "!="):
+        return (int({"<": x < y, ">": x > y, "<=": x <= y, ">=": x >= y, "==": x == y, "!=": x != y}[op]), False, False)
+    if op == "/":
+        if y == 0:
+            raise PtxError("division by zero in a constant expression")
+        q = abs(x) // abs(y)
+        return cval(q if (x < 0) == (y < 0) else -q, u)   # C: truncation toward zero
+    # & | ^ keep the converted type (4.5.5; Table 5 says .u64 -- the same bits)
+    return cval({"+": x + y, "-": x - y, "*": x * y, "&": x & y, "|": x | y, "^": x ^ y}[op], u)
+
 # ------------------------------------------------------------------ parser
 class Parser:
     def __init__(self, toks):
@@ -135,6 +194,134 @@ class Parser:
 
     def kind(self, k=0):
         return self.t[self.i + k][0]
+
+    # -------------------------------------------------------------- constant expressions
+    def lit_at(self, k=0):
+        kk, ss = self.peek(k)
+        return kk in ("int", "float", "hex") or (kk == "name" and ss == "WARP_SZ")
+
+    def binop_at(self, k=0):
+        kk, ss = self.peek(k)
+        if kk == "punct" and (ss in CPREC or ss == "?"):
+            return True
+        return kk in ("int", "float", "hex") and ss[:1] in "+-"     # 1-2 lexes as 1, -2
+
+    def cstart_at(self, k=0):
+        """a constant expression (not a single literal) starts at token k"""
+        kk, ss = self.peek(k)
+        if self.lit_at(k):
+            return self.binop_at(k + 1) or (kk == "hex" and ss[:1] in "+-")   # -0x10
+        if kk == "punct" and ss == "(":
+            # not a list such as (a, b) or the launch arguments (0f40000000, X)
+            d, j = 0, k
+            while self.peek(j)[0] != "eof":
+                tj = self.peek(j)
+                if tj[0] == "punct" and tj[1] == "(":
+                    d += 1
+                elif tj[0] == "punct" and tj[1] == ")":
+                    d -= 1
+                    if d == 0:
+                        break
+                elif tj[0] == "punct" and tj[1] in (",", ";") and d == 1:
+                    return False
+                j += 1
+            k2, s2 = self.peek(k + 1)
+            return self.lit_at(k + 1) or (k2 == "dotword" and s2 in (".s64", ".u64")) or \
+                (k2 == "punct" and s2 in ("(", "-", "+", "!", "~")) or self.cstart_at(k + 1)
+        if kk == "punct" and ss in ("-", "+", "!", "~"):
+            k2, s2 = self.peek(k + 1)
+            return self.lit_at(k + 1) or (k2 == "punct" and s2 in ("(", "-", "+", "!", "~"))
+        return False
+
+    def split_sign(self):
+        """turn a sign-folded literal token (-2) into the operator and the literal"""
+        kk, ss = self.peek()
+        if kk in ("int", "float", "hex") and ss[:1] in "+-":
+            self.t[self.i:self.i + 1] = [("punct", ss[0]), (kk, ss[1:])]
+
+    def cprimary(self):
+        self.split_sign()
+        kk, ss = self.peek()
+        if kk == "punct" and ss in ("-", "+", "!", "~"):
+            self.next()
+            x = self.cprimary()
+            if ss == "+":
+                return x
+            if ss == "-":
+                return (-x[0], False, True) if x[2] else cval(-x[0], x[1])
+            if ss == "!":
+                return (int(x[0] == 0), False, False)
+            if x[2]:
+                raise PtxError("~ needs an integer operand in a constant expression")
+            return cval(~cnorm(x[0], True), True)
+        if kk == "punct" and ss == "(":
+            if self.peek(1)[0] == "dotword" and self.peek(1)[1] in (".s64", ".u64") and self.at(")", 2):
+                self.next(); c = self.next()[1]; self.next()
+                x = self.cprimary()
+                if x[2]:
+                    raise PtxError("cast of a floating-point constant expression")
+                return cval(x[0], c == ".u64")
+            self.next()
+            x = self.cexpr()
+            self.expect(")")
+            return x
+        self.next()
+        if kk == "name" and ss == "WARP_SZ":
+            return (32, False, False)
+        if kk == "int":
+            v = ptx_int(ss)
+            return cval(v, ss[-1] in "uU" or v > (1 << 63) - 1)
+        if kk == "hex" and ss[1] in "fF":     # loose: 0f / 0d literals by their value (the ISA keeps them out)
+            return (struct.unpack("<f", struct.pack("<I", int(ss.rstrip("uU")[2:], 16)))[0], False, True)
+        if kk == "hex" and ss[1] in "dD":
+            return (struct.unpack("<d", struct.pack("<Q", int(ss.rstrip("uU")[2:], 16)))[0], False, True)
+        if kk == "hex":
+            d = ss.rstrip("uU")
+            v = int(d[2:], 16 if d[1] in "xX" else 2)
+            return cval(v, ss[-1] in "uU" or v > (1 << 63) - 1)
+        if kk == "float":
+            return (struct.unpack("<d", struct.pack("<Q", float_bits(ss)))[0], False, True)
+        raise PtxError("bad constant expression at %r" % ss)
+
+    def cbinrest(self, lhs, minp):
+        while True:
+            self.split_sign()
+            kk, op = self.peek()
+            if kk != "punct" or op not in CPREC or CPREC[op] < minp:
+                return lhs
+            self.next()
+            rhs = self.cprimary()
+            while True:
+                self.split_sign()
+                k2, op2 = self.peek()
+                if k2 == "punct" and op2 in CPREC and CPREC[op2] > CPREC[op]:
+                    rhs = self.cbinrest(rhs, CPREC[op2])
+                else:
+                    break
+            lhs = cbin(op, lhs, rhs)
+
+    def cexpr(self, lhs=None):
+        c = self.cbinrest(self.cprimary() if lhs is None else lhs, 1)
+        if self.at("?"):
+            self.next()
+            a = self.cexpr(); self.expect(":"); b = self.cexpr()
+            if c[2]:
+                raise PtxError("the condition of ?: must be an integer")
+            if a[2] or b[2]:
+                return (cfloat(a) if c[0] != 0 else cfloat(b), False, True)
+            x, y, u = cusual(a, b)
+            return cval(x if c[0] != 0 else y, u)
+        return c
+
+    def cint(self):
+        x = self.cexpr()
+        if x[2]:
+            raise PtxError("an integer constant expression is required")
+        return x[0]
+
+    def cop(self, x):
+        """the operand / initializer of a constant expression's value"""
+        return ("float", struct.unpack("<Q", struct.pack("<d", x[0]))[0]) if x[2] else ("int", x[0])
 
     def take_int(self):
         tok = self.next()
@@ -234,7 +421,7 @@ class Parser:
                 if self.at("]"):
                     dims.append(None)
                 else:
-                    dims.append(self.take_int())
+                    dims.append(self.cint())
                 self.expect("]")
             return ("array", s, dims)
         return ("plain", k, s)
@@ -246,6 +433,8 @@ class Parser:
         return items
 
     def initval(self):
+        if self.cstart_at():
+            return self.cop(self.cexpr())
         k, s = self.peek()
         if s == "{":
             self.next()
@@ -435,25 +624,23 @@ class Parser:
     # -------------------------------------------------------------- operands
     def addr_or_op(self):
         k, s = self.peek()
-        if k == "reg":
+        if k in ("reg", "name"):
             self.next()
-            if self.kind() == "int":
-                return ("aregoff", s, ptx_int(self.next()[1]))
-            if self.at("+") and self.kind(1) == "int":
-                self.next(); return ("aregoff", s, ptx_int(self.next()[1]))
-            return ("areg", s)
-        if k == "name":
-            self.next()
-            if self.kind() == "int":
-                return ("anameoff", s, ptx_int(self.next()[1]))
-            if self.at("+") and self.kind(1) == "int":
-                self.next(); return ("anameoff", s, ptx_int(self.next()[1]))
-            return ("aname", s)
-        if k == "int":
-            self.next(); return ("aint", ptx_int(s))
+            # [r + off], [r - off], [r+8-4], [r + (2*4)]: the offset is an integer constant expression (6.4.1)
+            self.split_sign()
+            if (self.at("+") or self.at("-")) and not self.at("]", 1):
+                off = self.cexpr((0, False, False))
+                if off[2]:
+                    raise PtxError("the address offset must be an integer")
+                return ("aregoff" if k == "reg" else "anameoff", s, off[0])
+            return ("areg" if k == "reg" else "aname", s)
+        if k == "int" or self.cstart_at():
+            return ("aint", self.cint())
         return ("op", self.operand())
 
     def operand(self):
+        if self.cstart_at():
+            return self.cop(self.cexpr())
         k, s = self.peek()
         if k == "punct" and s == "[":
             self.next()
