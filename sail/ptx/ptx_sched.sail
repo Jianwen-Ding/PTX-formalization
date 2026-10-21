@@ -25,7 +25,7 @@ function isVisible(it) = match it {
     let op = o.base;
     let m = o.mods;
     (has([|"ld", "st", "atom", "red", "multimem", "fabric"|], op) & not_bool(spaceOf(m) == "param" | spaceOf(m) == "local"))
-    | isBar(op, m) | isBarRed(op, m) | isBarWarp(op, m) | isBarCluster(op, m) | op == "exit" | isCollective(op)
+    | isBar(op, m) | isBarRed(op, m) | isBarWarp(op, m) | isBarCluster(op, m) | op == "exit" | isCollective(op) | op == "activemask"
   },
   _ => false
 }

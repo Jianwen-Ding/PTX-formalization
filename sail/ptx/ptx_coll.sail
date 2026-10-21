@@ -335,6 +335,56 @@ function coll_take() = {
 val dests : xop -> list(xop)
 function dests(dp) = match dual_regs(dp) { Some((d, p)) => [|XS(d), XS(p)|], None() => [|dp|] }
 
+/* activemask without `.convergence its`: "An active thread will contribute 1 for its entry in the result and exited
+ * or inactive or predicated-off thread will contribute 0" (PTX ISA 9.3, activemask).  The model reports the lanes that
+ * execute this activemask together with the executing lane: activemask ends a turn (isVisible), so the first lane of
+ * the warp to execute it finds the lanes that will execute the same instruction next (same function and pc, not
+ * blocked, guard true; an unguarded lane whose collective just completed counts too) and records the mask for all of
+ * them.  Exited lanes, lanes elsewhere (divergent paths) and predicated-off lanes contribute 0.  The visit count of the
+ * instruction keys the recorded mask (t_misc "act:<site>:<visit>"). */
+val actKey : (int, string) -> string
+function actKey(s, site) = concat_str("act:", concat_str(site, concat_str(":", dec_str(smap_get(t_cseq[tchk(s)], seqKey(site, 0))))))
+
+val actJoins : (int, int, string) -> bool
+function actJoins(t, s, site) = {
+  let me = tchk(t);
+  let o = tchk(s);
+  let pc = t_pc[me] - 1;
+  if not_bool(t_alive[o]) | t_status[o] != 0 | t_cta[o] != t_cta[me] | tdiv_int(t_tid[o], 32) != tdiv_int(t_tid[me], 32)
+     | t_fn[o] != t_fn[me] | t_pc[o] != pc | smap_get(t_misc[o], actKey(s, site)) != 0 then false
+  else match get_item(f_base[fchk(t_fn[o])] + pc) {
+    INS(None(), _, _) => t_cont[o] == K_none() | coll_ready(s),
+    INS(Some((p, neg)), _, _) => {
+      if t_cont[o] != K_none() then false
+      else { let sv = cur; cur = s; let v = rreg(p); cur = sv; (v != 0) != neg }
+    },
+    _ => false
+  }
+}
+
+val actGroup : int -> int
+function actGroup(t) = {
+  let s = tchk(t);
+  let site = concat_str("act@", concat_str(f_name[fchk(t_fn[s])], concat_str(":", dec_str(t_pc[s]))));
+  let key = actKey(t, site);
+  let cs = t_cseq[s];
+  let sk = seqKey(site, 0);
+  let mine = smap_get(t_misc[s], key);
+  var msk : int = mine;
+  if mine == 0 then {
+    let lane = fmod_int(t_tid[s], 32);
+    msk = pow2(lane);
+    var grp : list(int) = [||];
+    foreach (j from 0 to 31) {
+      let o = t - lane + j;
+      if j != lane & o >= 0 & o < nthreads then { if actJoins(t, o, site) then { msk = lor_int(msk, pow2(j)); grp = o :: grp } }
+    };
+    while is_cons(grp) do match grp { o :: rest => { smap_set(t_misc[tchk(o)], actKey(o, site), msk); grp = rest }, [||] => () }
+  } else smap_del(t_misc[s], key);
+  smap_set(cs, sk, smap_get(cs, sk) + 1);
+  msk
+}
+
 val exec_warp : (opcode, list(xop)) -> bool
 function exec_warp(o, ops) = {
   let m = o.mods;
@@ -384,7 +434,7 @@ function exec_warp(o, ops) = {
         var l = arr_lanes(arr);
         while is_cons(l) do { match l { x :: rest => { msk = lor_int(msk, pow2(x)); l = rest }, [||] => () } };
         wr(d, msk)
-      } else wr(d, smap_get(c_wlive[cchk(cur_cta())], dec_str(tdiv_int(t_tid[t], 32))));
+      } else wr(d, actGroup(t));
       true
     },
     _ => false
