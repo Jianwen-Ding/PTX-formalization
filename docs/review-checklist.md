@@ -190,8 +190,9 @@ Open:
       default mode rounds it to the nearest power of two, ties to the even code (tests/cvt-ue8m0-rn.ptx)
 - [x] deprecated non-`.sync` `vote` / `shfl` (targets below sm_70): the same exchange among the active lanes, found as
       for `activemask` (tests/warp-nosync.ptx)
-- [ ] `elect.sync` with exited lanes in the membermask waits for them (the text does not say "non-exited"); consider a
-      `.ub strict` report instead of the deadlock
+- [x] `elect.sync` with exited lanes in the membermask waits for them: "wait until all threads in the membermask execute
+      the elect instruction" (§9.7.13 elect, isa.txt 22011) has no "non-exited" exception, unlike vote / match / redux /
+      shfl, so the model follows the text and reports the resulting deadlock
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 
