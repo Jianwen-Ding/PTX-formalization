@@ -286,7 +286,7 @@ of programs the K semantics passes).
 |---|---|---|---|
 | `tests/*.ptx` | 285 | 281 | 4 (`ldm2-1` .. `ldm2-4`, see below) |
 | `tests/neg/*.ptx` | 21 | 21 | 0 |
-| `tests/zluda/*.ptx` | 184 (181 expected to pass) | 181 of 181 | 0 (the 3 others also fail in K: `reg_local`, `vote_all_sub`, `vote_ballot_nosync`) |
+| `tests/zluda/*.ptx` | 184 (182 expected to pass) | 182 of 182 | 0 (`reg_local` also fails in K; `subc_cc_s32` records the hardware's carry polarity of `sub.cc`, the model follows the ISA's borrow) |
 
 `tests/*.ptx` by subsystem:
 

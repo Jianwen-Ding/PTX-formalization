@@ -18,11 +18,13 @@ function ccOp(op, m, t, cin, a, b, c) = {
   let s : int = match op {
     "add" => trunc(a, w) + trunc(b, w) + cin,
     "addc" => trunc(a, w) + trunc(b, w) + cin,
-    "sub" => trunc(a, w) + trunc(lnot_int(b), w) + 1,
-    "subc" => trunc(a, w) + trunc(lnot_int(b), w) + cin,
+    /* sub.cc: "borrow-out written to CC.CF"; subc: "d = a - (b + CC.CF)" with borrow-in / borrow-out (PTX ISA 9.3
+       9.7.2.3, 9.7.2.4).  The flag is 1 when the subtraction borrows. */
+    "sub" => trunc(a, w) - trunc(b, w),
+    "subc" => trunc(a, w) - trunc(b, w) - cin,
     _ => madHalf(m, t, a, b) + trunc(c, w) + cin
   };
-  (trunc(s, w), asr_int(s, w))
+  (trunc(s, w), if s < 0 then 1 else asr_int(s, w))
 }
 
 val isCCOp : (string, list(string)) -> bool

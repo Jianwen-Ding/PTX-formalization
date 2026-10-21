@@ -49,9 +49,9 @@ the reference for correctness.
 - [x] `vset d.dsel, a, b, c`: "d = optMerge( dsel, tmp, c )" (the merge form wrote nothing).
 - [x] `lop3.BoolOp _|p`: "The sink symbol '_' may be used in place of the destination operand d" (was unsupported).
 - [x] `setp` / `set` / `slct`: "Modifier .ftz applies only to .f32 comparisons" (f64 subnormals were flushed).
-- [ ] **ISA vs hardware, not changed:** `sub.cc` "borrow-out written to CC.CF" and `subc` "d = a - (b + CC.CF)". The model
-      keeps CC.CF = carry of a + ~b + 1 (1 = no borrow), because ZLUDA's hardware-recorded `subc_cc_s32` reads
-      CC.CF = 0 after `sub.cc` with a < b, which the ISA text would make 1. Needs a decision.
+- [x] **ISA vs hardware, decided for the ISA:** `sub.cc` "borrow-out written to CC.CF" and `subc` "d = a - (b + CC.CF)"
+      (§9.7.2.3, §9.7.2.4): CC.CF = 1 when the subtraction borrows (tests/sub-borrow.ptx). ZLUDA's hardware-recorded
+      `subc_cc_s32` reads the opposite polarity (carry of a + ~b + 1), so it is no longer in tests/zluda/EXPECTED_PASS.
 
 ## Sync / async / textures review against the ISA (fixed, Sail only)
 
@@ -142,7 +142,7 @@ Instructions and resources:
 - [x] `.isacheck` legality data generated from the ISA 9.3 text, exact / family target rules, `compute_xx` targets
 
 Open:
-- [ ] `sub.cc` / `subc` borrow vs carry (ISA text vs ZLUDA hardware results), needs a decision
+- [x] `sub.cc` / `subc` borrow vs carry: the model follows the ISA text (borrow)
 - [x] register-indexed array operands of ld / st / atom / red (`a[%r1]`, `a[%r1+4]`); in `mov` still unsupported (error)
 - [x] qualifier rules under `.isacheck` (default mode accepts): ld / st `.weak` `.volatile` `.relaxed` `.acquire` / `.release`
       exclusive, no cache ops with them, scope required, `.mmio` only `.relaxed.sys`; `fma` needs a rounding modifier;

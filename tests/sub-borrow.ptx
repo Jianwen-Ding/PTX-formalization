@@ -1,0 +1,22 @@
+// sub.cc writes the borrow-out into CC.CF; subc computes d = a - (b + CC.CF) (PTX ISA 9.3 9.7.2.3, 9.7.2.4).
+// The flag is read back with addc d, 0, 0.  The last pair is a 64-bit subtraction from two 32-bit halves.
+.version 8.0
+.target sm_80
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %r<8>; .reg .b64 %o;
+    ld.param.u64 %o, [po];
+    sub.cc.u32 %r0, 1, 2;  addc.u32 %r1, 0, 0;
+    sub.cc.u32 %r2, 5, 3;  addc.u32 %r3, 0, 0;
+    sub.cc.u32 %r4, 3, 5;  subc.cc.u32 %r5, 10, 4;  addc.u32 %r6, 0, 0;
+    st.global.v4.u32 [%o], {%r0, %r1, %r2, %r3};
+    st.global.v2.u32 [%o+16], {%r5, %r6};
+    sub.cc.u32 %r0, 0, 1;  subc.cc.u32 %r1, 0, 0;  addc.u32 %r2, 0, 0;
+    sub.cc.u32 %r3, 0, 0;  subc.u32 %r4, 7, 2;
+    st.global.v4.u32 [%o+24], {%r0, %r1, %r2, %r4};
+    ret;
+}
+.buffer O .u32 [10];
+.launch k <<< 1, 1 >>> (O);
+.expect O .u32 = { 0xffffffff, 1, 2, 0, 5, 0, 0xffffffff, 0xffffffff, 1, 5 };
