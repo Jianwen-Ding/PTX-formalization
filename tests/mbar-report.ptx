@@ -1,0 +1,35 @@
+// mbarrier.test_wait / try_wait .phase_type::primary with reportPredicate and reportValue (PTX ISA 9.3): "For .layout::v0,
+// reportPredicate and reportValue are always zero".  waitComplete is 1 after the phase completed; both report operands,
+// set to 1 / 77 before, become 0, in the d|p form and in the d|p, reportValue form, for test_wait and try_wait.
+.version 9.3
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %st, %mb; .reg .b32 %r<12>; .reg .pred %c, %rp, %c2, %rp2, %c3, %rp3;
+    .shared .align 8 .b64 bar[1];
+    ld.param.u64 %o, [po];
+    mov.u64 %mb, bar;
+    mbarrier.init.shared.b64 [%mb], 1;
+    setp.eq.u32 %rp, 0, 0;
+    setp.eq.u32 %rp2, 0, 0;
+    setp.eq.u32 %rp3, 0, 0;
+    mov.u32 %r3, 77;
+    mov.u32 %r6, 77;
+    mbarrier.arrive.shared.b64 %st, [%mb];
+    mbarrier.test_wait.phase_type::primary.shared.b64 %c|%rp, [%mb], %st;
+    mbarrier.test_wait.phase_type::primary.shared.b64 %c2|%rp2, %r3, [%mb], %st;
+    mbarrier.try_wait.parity.phase_type::primary.shared.b64 %c3|%rp3, %r6, [%mb], 0;
+    selp.u32 %r1, 1, 0, %c;
+    selp.u32 %r2, 1, 0, %rp;
+    selp.u32 %r4, 1, 0, %c2;
+    selp.u32 %r5, 1, 0, %rp2;
+    selp.u32 %r7, 1, 0, %c3;
+    selp.u32 %r8, 1, 0, %rp3;
+    st.global.v4.b32 [%o], {%r1, %r2, %r4, %r5};
+    st.global.v4.b32 [%o+16], {%r3, %r7, %r8, %r6};
+    ret;
+}
+.buffer O .u32 [8];
+.launch k <<< 1, 1 >>> (O);
+.expect O .u32 = { 1, 0, 1, 0, 0, 1, 0, 0 };

@@ -179,6 +179,28 @@ function xlast(l) = match l { [||] => None(), [|x|] => Some(x), _ :: rest => xla
 val wrFirst : (list(xop), int) -> unit
 function wrFirst(ds, v) = match ds { d :: _ => wr(d, v), [||] => () }
 
+/* test_wait / try_wait: waitComplete, then the payload report of .phase_type::primary (reportPredicate, reportValue).
+ * "For .layout::v0, reportPredicate and reportValue are always zero" (PTX ISA 9.3, mbarrier.test_wait); for
+ * .layout::v1 the report is zero unless a tracked operation reported a failure, which no operation of the model does. */
+val wrZeros : list(xop) -> unit
+function wrZeros(ds) = match ds { d :: rest => { wr(d, 0); wrZeros(rest) }, [||] => () }
+val wrWait : (list(xop), int) -> unit
+function wrWait(ds, v) = match ds { d :: rest => { wr(d, v); wrZeros(rest) }, [||] => () }
+
+val mbWaitOp : (list(string), string, list(xop), addr, xop) -> unit
+function mbWaitOp(m, sp, ds, a, s) = {
+  let k = mbKey(ea(a, sp));
+  let v = rd(s, mkty("b", 64));
+  let t = tchk(cur);
+  if has(m, "try_wait") then {
+    t_wd[t] = [|k, b2i(has(m, "parity")), v|];
+    t_wx[t] = ds;
+    t_cont[t] = K_wait("mbtry", 0);
+    yielded = true
+  } else if mbHas(k) then wrWait(ds, b2i(mbDone(k, m, v)))
+  else fault("mbarrier.test_wait on an object that is not initialised", 0)
+}
+
 val exec_mbar : (opcode, list(xop)) -> bool
 function exec_mbar(o, ops) = {
   let m = o.mods;
@@ -221,17 +243,9 @@ function exec_mbar(o, ops) = {
       wr(d, mbState(s));
       true
     },
-    d :: XB([|a|], [||]) :: s :: _ if has(m, "test_wait") | has(m, "try_wait") => {
-      let k = mbKey(ea(a, sp));
-      let v = rd(s, mkty("b", 64));
-      let t = tchk(cur);
-      if has(m, "try_wait") then {
-        t_wd[t] = [|k, b2i(has(m, "parity")), v|];
-        t_wx[t] = dests(d);
-        t_cont[t] = K_wait("mbtry", 0);
-        yielded = true
-      } else if mbHas(k) then wrFirst(dests(d), b2i(mbDone(k, m, v)))
-      else fault("mbarrier.test_wait on an object that is not initialised", 0);
+    d :: XB([|a|], [||]) :: s :: _ if has(m, "test_wait") | has(m, "try_wait") => { mbWaitOp(m, sp, dests(d), a, s); true },
+    d :: rv :: XB([|a|], [||]) :: s :: _ if (has(m, "test_wait") | has(m, "try_wait")) & has(m, "phase_type::primary") => {
+      mbWaitOp(m, sp, pend_append(dests(d), [|rv|]), a, s);
       true
     },
     [|d, s|] if has(m, "pending_count") => { wr(d, land_int(asr_int(rd(s, mkty("b", 64)), 32), 1048575)); true },
@@ -255,7 +269,7 @@ function ext_wait_ready() = {
     K_wait("mbtry", _) => {
       let k = at(t_wd[t], 0);
       let m : list(string) = if at(t_wd[t], 1) == 1 then [|"parity"|] else [||];
-      if mbHas(k) & mbDone(k, m, at(t_wd[t], 2)) then { wrFirst(t_wx[t], 1); t_cont[t] = K_none(); true } else false
+      if mbHas(k) & mbDone(k, m, at(t_wd[t], 2)) then { wrWait(t_wx[t], 1); t_cont[t] = K_none(); true } else false
     },
     _ => ext_wait_ready2()
   }
