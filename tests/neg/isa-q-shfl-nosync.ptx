@@ -1,4 +1,4 @@
-// expect: without .sync was removed
+// expect: not supported from PTX ISA 6.4 on sm_70 or higher
 .version 7.0
 .target sm_80
 .address_size 64
