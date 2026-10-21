@@ -369,7 +369,8 @@ function inSpace(m, a, own) = {
   | (has(m, "const") & w == "const")
   | ((has(m, "param") | has(m, "param::entry")) & w == "param")
   | ((has(m, "shared") | has(m, "shared::cta")) & (w == "shared" | (w == "cluster" & asr_int(a - winBase("cluster"), 24) == own)))
-  | (has(m, "shared::cluster") & (w == "shared" | w == "cluster"))
+  /* shared::cluster: shared memory accessible to the threads in the cluster (the ranks of the executing cluster) */
+  | (has(m, "shared::cluster") & (w == "shared" | (w == "cluster" & asr_int(a - winBase("cluster"), 24) < rreg("%cluster_nctarank"))))
   | (has(m, "local") & w == "local")
 }
 
