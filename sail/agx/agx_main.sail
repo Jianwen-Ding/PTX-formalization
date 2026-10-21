@@ -82,6 +82,13 @@ function rd_instr() = match tok_str() {
   },
   "FMADD" => { let h = rd_bool(); let st = rd_bool(); let d = rd_reg(); let a = rd_op(); let b = rd_op(); let c = rd_op(); FMADD(h, st, d, a, b, c) },
   "RCP" => { let st = rd_bool(); let d = rd_reg(); let a = rd_op(); RCP(st, d, a) },
+  "FUNOP" => {
+    let o : funop = match tok_str() {
+      "floor" => FU_floor, "ceil" => FU_ceil, "trunc" => FU_trunc, "rint" => FU_rint, "rsqrt" => FU_rsqrt,
+      "rsqrt_special" => FU_rsqrt_special, "sin_pt_1" => FU_sin_pt_1, "sin_pt_2" => FU_sin_pt_2, "log2" => FU_log2, _ => FU_exp2
+    };
+    let st = rd_bool(); let d = rd_reg(); let a = rd_op(); FUNOP(o, st, d, a)
+  },
   "CMPSEL" => { let f = rd_bool(); let cc = rd_cc(); let d = rd_reg(); let a = rd_op(); let b = rd_op(); let x = rd_op(); let y = rd_op(); CMPSEL(f, cc, d, a, b, x, y) },
   "STACKOP" => {
     let k : stkkind = match tok_str() { "if" => SK_if, "else" => SK_else, _ => SK_while };

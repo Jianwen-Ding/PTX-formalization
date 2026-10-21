@@ -113,10 +113,32 @@ let C_TGATOMIC = cls(45, 6, 10, 15, [|(0, 6, 25)|])
 let C_MEMBAR = cls(46, 2, 2, 15, [|(0, 8, 245)|])
 let C_TRAP = cls(47, 2, 2, 15, [|(0, 16, 8)|])
 
+/* the float unary operations: the rcp class with another op field (28, 6); ceil, trunc and rint set bit 32 or 33,
+ * so they have only the long form */
+val funop_code : funop -> int
+function funop_code(o) = match o {
+  FU_floor => 0, FU_rsqrt_special => 1, FU_rsqrt => 9, FU_sin_pt_1 => 10, FU_log2 => 12, FU_exp2 => 13,
+  FU_sin_pt_2 => 14, FU_ceil => 16, FU_trunc => 32, FU_rint => 48
+}
+val funop_cls : funop -> icls
+function funop_cls(o) = cls(48 + funop_code(o), 4, 6, 15, [|(0, 6, 10), (34, 8, 0), (28, 6, funop_code(o))|])
+let C_FLOOR = funop_cls(FU_floor)
+let C_RSQRT_SPECIAL = funop_cls(FU_rsqrt_special)
+let C_RSQRT = funop_cls(FU_rsqrt)
+let C_SIN_PT_1 = funop_cls(FU_sin_pt_1)
+let C_LOG2 = funop_cls(FU_log2)
+let C_EXP2 = funop_cls(FU_exp2)
+let C_SIN_PT_2 = funop_cls(FU_sin_pt_2)
+let C_CEIL = funop_cls(FU_ceil)
+let C_TRUNC = funop_cls(FU_trunc)
+let C_RINT = funop_cls(FU_rint)
+let funops : list(funop) = [|FU_floor, FU_rsqrt_special, FU_rsqrt, FU_sin_pt_1, FU_log2, FU_exp2, FU_sin_pt_2, FU_ceil,
+  FU_trunc, FU_rint|]
+
 /* the classes in applegpu's matching order (the first matching descriptor wins) */
 let all_classes : list(icls) = [|C_MOVI16, C_MOVI32, C_GETSR, C_IADD, C_IMADD, C_BFI, C_BFEIL, C_ASR,
   C_BITOP, C_BITREV, C_POPCOUNT, C_FFS, C_FMADD32, C_FMADD16, C_FADD32, C_FADD16, C_FMUL32, C_FMUL16,
-  C_RCP, C_STOP, C_JMPANY, C_JMPNONE, C_POPEXEC, C_IFICMP, C_IFFCMP, C_WHILEICMP, C_WHILEFCMP,
+  C_RCP, C_FLOOR, C_RSQRT_SPECIAL, C_RSQRT, C_SIN_PT_1, C_LOG2, C_EXP2, C_SIN_PT_2, C_CEIL, C_TRUNC, C_RINT, C_STOP, C_JMPANY, C_JMPNONE, C_POPEXEC, C_IFICMP, C_IFFCMP, C_WHILEICMP, C_WHILEFCMP,
   C_ELSEICMP, C_ELSEFCMP, C_ICMPSEL, C_FCMPSEL, C_ICMPBALLOT, C_FCMPBALLOT, C_SHUF, C_SHUFDOWN,
   C_SHUFUP, C_SHUFXOR, C_WAIT, C_DEVLOAD, C_DEVSTORE, C_TGLOAD, C_TGSTORE, C_TGBARRIER, C_ATOMIC,
   C_TGATOMIC, C_MEMBAR, C_TRAP|]
@@ -658,6 +680,20 @@ function e_rcp(sat, d, a) = { start_enc(); finish(C_RCP, e_flt(fput(e_dst(0, d, 
 val d_rcp : int -> option(ast)
 function d_rcp(w) = { start_dec(); fin_dec(RCP(bit_int(w, 6), d_dst(w, 44, true, false), d_flt(w, 16, 42))) }
 
+val e_funop : (funop, bool, areg, aop) -> option(int)
+function e_funop(o, sat, d, a) = { start_enc(); finish(funop_cls(o), e_flt(fput(e_dst(0, d, 44, true, false), 6, 1, bool_bit(sat)), a, 16, 42)) }
+val d_funop : (funop, int) -> option(ast)
+function d_funop(o, w) = { start_dec(); fin_dec(FUNOP(o, bit_int(w, 6), d_dst(w, 44, true, false), d_flt(w, 16, 42))) }
+
+/* the funop of class number n, if any */
+val cid_funop : int -> option(funop)
+function cid_funop(n) = {
+  var r : option(funop) = None();
+  var l = funops;
+  while is_cons(l) do { match l { o :: rest => { if funop_cls(o).cid == n then r = Some(o); l = rest }, [||] => () } };
+  r
+}
+
 /* icmpsel / fcmpsel: cc (61, 3), D (9,6)+(76,2), A (16,74), B (28,72), X (40,70), Y (52,68) */
 val e_cmpsel : (bool, acc, areg, aop, aop, aop, aop) -> option(int)
 function e_cmpsel(isf, cc, d, a, b, x, y) = {
@@ -896,6 +932,7 @@ function agx_encode(i) = match i {
   FBIN(o, h, s, d, a, b) => e_fbin(o, h, s, d, a, b),
   FMADD(h, s, d, a, b, c) => e_fmadd(h, s, d, a, b, c),
   RCP(s, d, a) => e_rcp(s, d, a),
+  FUNOP(o, s, d, a) => e_funop(o, s, d, a),
   CMPSEL(isf, cc, d, a, b, x, y) => e_cmpsel(isf, cc, d, a, b, x, y),
   STACKOP(k, isf, cc, a, b, n) => e_stack(k, isf, cc, a, b, n),
   POP_EXEC(n) => e_pop(n),
@@ -947,6 +984,7 @@ function agx_decode(win) = {
       else if k.cid == C_FMUL32.cid then d_fbin(FB_mul, false, w)
       else if k.cid == C_FMUL16.cid then d_fbin(FB_mul, true, w)
       else if k.cid == C_RCP.cid then d_rcp(w)
+      else if is_some(cid_funop(k.cid)) then match cid_funop(k.cid) { Some(o) => d_funop(o, w), None() => None() }
       else if k.cid == C_STOP.cid then Some(STOP())
       else if k.cid == C_JMPANY.cid then d_jmp(true, w)
       else if k.cid == C_JMPNONE.cid then d_jmp(false, w)
@@ -1007,6 +1045,7 @@ mapping clause encdec = forwards (ASR(_) as i) if is_some_int(agx_encode(i)) => 
 mapping clause encdec = forwards (IUNOP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (FBIN(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (FMADD(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (FUNOP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (RCP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (CMPSEL(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (STACKOP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))

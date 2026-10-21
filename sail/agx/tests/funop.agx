@@ -1,0 +1,40 @@
+// Float unary operations: special values and the rules of agx_run's hardware-fitted model (round_op, transcendental)
+.all r4 = 3217031168;            // -1.5
+.all r5 = 1;                     // fp32 subnormal: reads as +0
+.all r6 = 1082130432;            // 4.0
+.all r7 = 2147483648;            // -0.0
+.all r8 = 1056964608;            // 0.5
+.all r9 = 3221225472;            // -2.0
+.all r10 = 3221225472;           // -2.0
+floor r11, r4;                   // -2.0
+ceil r12, r4;                    // -1.0
+trunc r13, r4;                   // -1.0
+rint r14, r8;                    // ties to even: +0
+ceil r15, r5;                    // denormal reads as zero: +0
+rsqrt r16, r6;                   // 0.5
+rsqrt r17, r7;                   // -inf
+rsqrt_special r18, r7;           // 1.0
+log2 r19, r6;                    // 2.0
+exp2 r20, r9;                    // 0.25
+sin_pt_1 r21, r10;               // sign(x) (2 - |x|) = -0
+sin_pt_2 r22, r7;                // pi / 2
+log2 r23, r4;                    // NaN
+exp2.sat r24, r6;                // 16 clamped to 1
+floor r25l, r4;                  // -2.0 in binary16
+stop;
+.run;
+.expectall r11 = 3221225472;
+.expectall r12 = 3212836864;
+.expectall r13 = 3212836864;
+.expectall r14 = 0;
+.expectall r15 = 0;
+.expectall r16 = 1056964608;
+.expectall r17 = 4286578688;
+.expectall r18 = 1065353216;
+.expectall r19 = 1073741824;
+.expectall r20 = 1048576000;
+.expectall r21 = 2147483648;
+.expectall r22 = 1070141403;
+.expectall r23 = 2143289344;
+.expectall r24 = 1065353216;
+.expectall r25l = 49152

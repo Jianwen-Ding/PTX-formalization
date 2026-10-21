@@ -32,6 +32,7 @@ DEV_PAIR = ("cmpxchg", "umin64", "umax64")
 DEV_MODES = dict({o: (0, 1, 2, 3) for o in AOPS}, sub=(0, 2), cmpxchg=(0, 2), fadd=(1, 3), umin64=(3,), umax64=(1,),
                  **{"end%d" % n: (0,) for n in range(11, 16)})
 FMTS = ["u8", "u16", "u32"]
+FUNOPS = ["floor", "ceil", "trunc", "rint", "rsqrt", "rsqrt_special", "sin_pt_1", "sin_pt_2", "log2", "exp2"]
 
 
 def fimm_value(n):
@@ -200,6 +201,9 @@ def schemas():
             _srcmods(c, 1, g, c["s1"], "f") + _srcmods(c, 2, g, c["s2"], "f"))
     add("rcp", [("sat", BOOL), ("d", DST), ("dhint", [0, 1])] + srcdims(0, FLT_SRC, "f"),
         lambda c, g: ["RCP", c["sat"]] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "f"))
+    for o in FUNOPS:
+        add(o, [("sat", BOOL), ("d", DST), ("dhint", [0, 1])] + srcdims(0, FLT_SRC, "f"),
+            lambda c, g, o=o: ["FUNOP", o, c["sat"]] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "f"))
     for f in (0, 1):
         nm = "fcmpsel" if f else "icmpsel"
         add(nm, [("cc", FCCS_SEL if f else ICCS_SEL), ("d", DST), ("dhint", [0, 1])] + srcdims(0, FLT_SRC if f else INT_SRC, "f" if f else "") +
@@ -443,6 +447,10 @@ def form_key(t):
             d, i = _dkind(t, 2)
             a, i = _okind(t, i)
             return "rcp%s %s, %s" % (".sat" if t[1] else "", d, a)
+        if c == "FUNOP":
+            d, i = _dkind(t, 3)
+            a, i = _okind(t, i)
+            return "%s%s %s, %s" % (t[1], ".sat" if t[2] else "", d, a)
         if c == "CMPSEL":
             d, i = _dkind(t, 3)
             ops = []

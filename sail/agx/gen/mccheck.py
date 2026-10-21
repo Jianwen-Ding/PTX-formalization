@@ -195,6 +195,10 @@ def llvm_text(toks):
         sat = T.int()
         d = T.reg()
         return "rcp%s %s, %s" % (".sat" if sat else "", reg_text(*d), T.op())
+    if c == "FUNOP":
+        o, sat = T.next(), T.int()
+        d = T.reg()
+        return "%s%s %s, %s" % (o, ".sat" if sat else "", reg_text(*d), T.op())
     if c == "CMPSEL":
         f, cc = T.int(), T.next()
         d = T.reg()

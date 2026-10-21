@@ -26,6 +26,7 @@ AOPS = ["add", "sub", "xchg", "min", "imin", "max", "imax", "and", "or", "xor"]
 DEV_AOPS = AOPS + ["cmpxchg", "fadd", "umin64", "umax64", "end11", "end12", "end13", "end14", "end15"]
 ATOM_MODE_DEFAULT = {"fadd": 1, "umax64": 1, "umin64": 3}
 FMTS = ["u8", "u16", "u32"]
+FUNOPS = ["floor", "ceil", "trunc", "rint", "rsqrt", "rsqrt_special", "sin_pt_1", "sin_pt_2", "log2", "exp2"]
 
 class ParseError(Exception):
     pass
@@ -133,6 +134,8 @@ def instr(stmt):
         want(3); return ["FBIN", m.group(1)[1:], h, sat] + reg(ops[0]) + op(ops[1]) + op(ops[2])
     if base == "rcp":
         want(2); return ["RCP", sat] + reg(ops[0]) + op(ops[1])
+    if base in FUNOPS:
+        want(2); return ["FUNOP", base, sat] + reg(ops[0]) + op(ops[1])
     if mnem in ("icmpsel", "fcmpsel"):
         if len(pre) != 1 or pre[0] not in CCS:
             raise ParseError("bad condition in %r" % stmt)

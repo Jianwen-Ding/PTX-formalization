@@ -84,7 +84,7 @@ class ProgGen:
         self.depth = 0
         self.loops = 0
         alu = ["mov_imm", "mov", "get_sr", "iadd", "isub", "iadd.sat", "isub.sat", "imadd", "imsub", "imadd.sat", "imsub.sat", "bitop",
-               "bfi", "bfeil", "asr", "popcount", "bitrev", "ffs", "fadd32", "fadd16", "fmul32", "fmul16", "fmadd32", "fmadd16", "rcp",
+               "bfi", "bfeil", "asr", "popcount", "bitrev", "ffs", "fadd32", "fadd16", "fmul32", "fmul16", "fmadd32", "fmadd16", "rcp"] + agxgen.FUNOPS + [
                "icmpsel", "fcmpsel", "icmp_ballot", "fcmp_ballot", "simd_shuffle", "simd_shuffle_xor", "simd_shuffle_up",
                "simd_shuffle_down"]
         self.alu = [a for a in alu if only is None or a in only]
@@ -97,8 +97,8 @@ class ProgGen:
         if name == "get_sr":
             c["sr"] = self.R.choice(sorted(SRS))
         t = build(c, self.g)
-        if t[0] == "IADD" or t[0] == "IMADD":
-            pass
+        if t[0] == "FUNOP" and t[1] in ("floor", "ceil", "trunc", "rint"):
+            t[2] = 0   # agx_run ignores .sat on the roundings (sail/README.md)
         return t
 
     def fix_pairs(self, t):

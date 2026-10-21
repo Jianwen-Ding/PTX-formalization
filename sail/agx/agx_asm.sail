@@ -244,6 +244,10 @@ mapping ftype = { true <-> "f", false <-> "i" }
 val half16 : bool <-> string
 mapping half16 = { true <-> "16", false <-> "" }
 
+val funop_mnem : funop <-> string
+mapping funop_mnem = { FU_floor <-> "floor", FU_ceil <-> "ceil", FU_trunc <-> "trunc", FU_rint <-> "rint", FU_rsqrt <-> "rsqrt",
+  FU_rsqrt_special <-> "rsqrt_special", FU_sin_pt_1 <-> "sin_pt_1", FU_sin_pt_2 <-> "sin_pt_2", FU_log2 <-> "log2", FU_exp2 <-> "exp2" }
+
 val fbin_mnem : fbinop <-> string
 mapping fbin_mnem = { FB_add <-> "fadd", FB_mul <-> "fmul" }
 
@@ -273,6 +277,7 @@ mapping clause assembly = IUNOP(o, d, a) <-> iunop_mnem(o) ^ spc() ^ asm_reg(d) 
 mapping clause assembly = FBIN(o, h, s, d, a, b) <-> fbin_mnem(o) ^ half16(h) ^ asm_sat(s) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b)
 mapping clause assembly = FMADD(h, s, d, a, b, c) <-> "fmadd" ^ half16(h) ^ asm_sat(s) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b) ^ comma() ^ asm_op(c)
 mapping clause assembly = RCP(s, d, a) <-> "rcp" ^ asm_sat(s) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a)
+mapping clause assembly = FUNOP(o, s, d, a) <-> funop_mnem(o) ^ asm_sat(s) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a)
 mapping clause assembly = CMPSEL(f, cc, d, a, b, x, y) <-> ftype(f) ^ "cmpsel" ^ spc() ^ asm_cc(cc) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b) ^ comma() ^ asm_op(x) ^ comma() ^ asm_op(y)
 mapping clause assembly = STACKOP(k, f, cc, a, b, n) <-> stk_mnem(k) ^ "_" ^ ftype(f) ^ "cmp" ^ spc() ^ asm_cc(cc) ^ spc() ^ asm_op(a) ^ comma() ^ asm_op(b) ^ asm_push(n)
 mapping clause assembly = POP_EXEC(n) <-> "pop_exec" ^ spc() ^ asm_int(n)

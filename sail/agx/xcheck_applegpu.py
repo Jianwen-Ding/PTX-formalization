@@ -142,6 +142,9 @@ def applegpu_text(toks):
     if c == "RCP":
         sat = T.int(); d = rd_reg(T); a = rd_op(T)
         return "rcp" + (".sat" if sat else ""), [reg_text(*d), a]
+    if c == "FUNOP":
+        o = T.next(); sat = T.int(); d = rd_reg(T); a = rd_op(T)
+        return o + (".sat" if sat else ""), [reg_text(*d), a]
     if c == "CMPSEL":
         f = T.int(); cc = T.next(); d = rd_reg(T); a = rd_op(T); b = rd_op(T)
         def csel():
@@ -270,7 +273,7 @@ ICCS = list(ICC)
 FCCS = list(FCC)
 
 def rinstr():
-    c = R.choice(["MOVI", "MOVR", "GET_SR", "IADD", "IMADD", "BITOP", "BFI", "BFEIL", "ASR", "IUNOP", "FBIN", "FMADD", "RCP",
+    c = R.choice(["MOVI", "MOVR", "GET_SR", "IADD", "IMADD", "BITOP", "BFI", "BFEIL", "ASR", "IUNOP", "FBIN", "FMADD", "RCP", "FUNOP",
                   "ICMPSEL", "FCMPSEL", "STACKOP", "POP_EXEC", "JMP", "BALLOT", "SHUFFLE", "DEVMEM", "TGMEM", "DEVATOM",
                   "TGATOM", "WAIT", "TG_BARRIER", "STOP", "MEMORY_BARRIER", "TRAP"])
     if c == "MOVI":
@@ -305,6 +308,8 @@ def rinstr():
         return ["FMADD", h, R.randrange(2)] + rdst(v) + rsrc(v, fmods=True, fimm=True) + rsrc(v, fmods=True, fimm=True) + rsrc(v, fmods=True, fimm=True)
     if c == "RCP":
         return ["RCP", R.randrange(2)] + rdst() + rsrc(fmods=True, fimm=True)
+    if c == "FUNOP":
+        return ["FUNOP", R.choice(agxtest.FUNOPS), R.randrange(2)] + rdst() + rsrc(fmods=True, fimm=True)
     if c in ("ICMPSEL", "FCMPSEL"):
         f = int(c == "FCMPSEL")
         d = rdst()
@@ -339,8 +344,7 @@ def rinstr():
     if c == "TGMEM":
         st = R.randrange(2)
         r = rreg(hints=False)
-        if r[2] == 0:
-            r[1] = R.randrange(124)
+        r[1] = R.randrange(124 if r[2] == 0 else 126)
         base = ["I", 0] if R.random() < 0.4 else ["R"] + [R.randrange(2), R.randrange(128), R.choice((1, 2)), 0, 0, 0, 0]
         idx = ["I", R.randrange(-32768, 32768)] if R.random() < 0.5 else ["R", 0, R.randrange(128), R.choice((1, 2)), 0, 0, 0, 0]
         return ["TGMEM", st, R.choice(["u8", "u16", "u32"]), R.randrange(16)] + r + base + idx + [0]
@@ -365,7 +369,7 @@ def rinstr():
 # ------------------------------------------------------------------ checks
 MODELLED = {"mov_imm", "get_sr", "iadd", "isub", "iadd.sat", "isub.sat", "imadd", "imsub", "imadd.sat", "imsub.sat", "bfi",
             "bfeil", "asr", "bitop", "popcount", "bitrev", "ffs", "fmadd32", "fmadd16", "fadd32", "fadd16", "fmul32", "fmul16",
-            "rcp", "stop", "jmp_exec_any", "jmp_exec_none", "pop_exec", "if_icmp", "if_fcmp", "while_icmp", "while_fcmp",
+            "rcp", "floor", "ceil", "trunc", "rint", "rsqrt", "rsqrt_special", "sin_pt_1", "sin_pt_2", "log2", "exp2", "stop", "jmp_exec_any", "jmp_exec_none", "pop_exec", "if_icmp", "if_fcmp", "while_icmp", "while_fcmp",
             "else_icmp", "else_fcmp", "icmpsel", "fcmpsel", "icmp_ballot", "fcmp_ballot", "simd_shuffle", "simd_shuffle_down",
             "simd_shuffle_up", "simd_shuffle_xor", "wait", "device_load", "device_store", "threadgroup_load",
             "threadgroup_store", "threadgroup_barrier", "atomic", "threadgroup_atomic", "memory_barrier", "trap"}

@@ -412,6 +412,199 @@ function clause execute(RCP(sat, d, a)) = {
   foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
 }
 
+/* ---------------------------------------------------------------- float unary operations */
+/* floor / ceil / trunc / rint of an exact value: IEEE, the sign of the source kept on zero results (agx_run
+ * round_op, Apple-M2-Playground 2026-10-16-conversions); the caller reads fp32 denormal sources as zero */
+val roundv : (funop, fv) -> fv
+function roundv(op, x) = match x {
+  FV_Fin(s, m, e) => {
+    if e >= 0 | m == 0 then x
+    else {
+      let q = negate(e);
+      let t = shr_int(m, q);
+      let fr = m - t * pow2(q);
+      let half = pow2(q - 1);
+      let up : bool = match op {
+        FU_floor => s & fr != 0,
+        FU_ceil => not_bool(s) & fr != 0,
+        FU_rint => fr > half | (fr == half & fmod_int(t, 2) == 1),
+        _ => false
+      };
+      FV_Fin(s, if up then t + 1 else t, 0)
+    }
+  },
+  _ => x
+}
+
+/* the binary32 value nearest to (-1)^s * (m + d) * 2^e for some 0 < d < 1 (m: a many-bit approximation of an
+ * irrational value, from below), results below 2^-126 flushed to a zero of their sign */
+val r32_sticky : (bool, int, int) -> fv
+function r32_sticky(s, m, e) = {
+  if fv_lt(FV_Fin(false, m, e), FV_Fin(false, 1, -126)) then FV_Fin(s, 0, 0)
+  else fround(s, m, e, true, 24, 8, RN)
+}
+
+/* fixed-point constants with TP = 192 fraction bits: ln 2 and pi / 2 (truncated) */
+let TP : int = 192
+let LN2_FX : int = 4350955369971217654477563090224794165364344896676135745069
+let PIH_FX : int = 9860048348863269281198066682114134445731725432595044866280
+
+/* rsqrt (special = false) and rsqrt_special: 1 / sqrt(x) correctly rounded to binary32.  rsqrt(+-0) = +-inf,
+ * rsqrt(+inf) = +0; rsqrt_special(+-0) = rsqrt_special(+inf) = 1; negative sources give NaN (agx_run trans_f64) */
+val rsqrtv : (bool, fv) -> fv
+function rsqrtv(special, x) = match x {
+  FV_NaN() => FV_NaN(),
+  FV_Inf(s) => if s then FV_NaN() else if special then fv_one() else FV_Fin(false, 0, 0),
+  FV_Fin(s, m, e) =>
+    if m == 0 then (if special then fv_one() else FV_Inf(s))
+    else if s then FV_NaN()
+    else {
+      let odd = fmod_int(e, 2) != 0;
+      let m2 = if odd then 2 * m else m;
+      let e2 = if odd then e - 1 else e;
+      let k = 100;
+      let n = pow2(2 * k);
+      let q = tdiv_int(n, m2);
+      let r = isqrt(q);
+      let exact = r * r == q & q * m2 == n;
+      fround(false, r, negate(k) - tdiv_int(e2, 2), not_bool(exact), 24, 8, RN)
+    }
+}
+
+/* log2, correctly rounded to binary32: x = f * 2^E with f in [1, 2), log2 f = 2 atanh((f - 1) / (f + 1)) / ln 2
+ * in fixed point (exact for powers of two); log2(+-0) = -inf, negative sources NaN, log2(+inf) = +inf */
+val log2v : fv -> fv
+function log2v(x) = match x {
+  FV_NaN() => FV_NaN(),
+  FV_Inf(s) => if s then FV_NaN() else x,
+  FV_Fin(s, m, e) =>
+    if m == 0 then FV_Inf(true)
+    else if s then FV_NaN()
+    else {
+      let b = bitlen(m);
+      let ex = e + b - 1;
+      if m == pow2(b - 1) then FV_Fin(ex < 0, abs_int(ex), 0)
+      else {
+        let one = pow2(TP);
+        let f = m * pow2(TP - (b - 1));
+        let z = tdiv_int((f - one) * one, f + one);
+        let z2 = shr_int(z * z, TP);
+        var term : int = z;
+        var sum : int = 0;
+        var k : int = 1;
+        while term != 0 do { sum = sum + tdiv_int(term, k); term = shr_int(term * z2, TP); k = k + 2 };
+        let l = tdiv_int(2 * sum * one, LN2_FX);
+        let tot = ex * one + l;
+        r32_sticky(tot < 0, abs_int(tot), negate(TP))
+      }
+    }
+}
+
+/* exp2, correctly rounded to binary32 (exact for integers): 2^n * exp(f ln 2) with x = n + f, f in (0, 1), in
+ * fixed point; results below 2^-126 (x < -126) flush to +0, overflow gives +inf, exp2(-inf) = +0 */
+val exp2v : fv -> fv
+function exp2v(x) = match x {
+  FV_NaN() => FV_NaN(),
+  FV_Inf(s) => if s then FV_Fin(false, 0, 0) else x,
+  FV_Fin(s, m, e) =>
+    if m == 0 then fv_one()
+    else if not_bool(s) & fv_cmp(x, FV_Fin(false, 128, 0)) >= 0 then FV_Inf(false)
+    else if s & fv_cmp(fv_abs(x), FV_Fin(false, 126, 0)) > 0 then FV_Fin(false, 0, 0)
+    else if e >= 0 then { let n = m * pow2(e) in FV_Fin(false, 1, if s then negate(n) else n) }
+    else {
+      let q = negate(e);
+      let xi = if s then negate(m) else m;
+      let n = asr_int(xi, q);
+      let fr = xi - n * pow2(q);
+      if fr == 0 then FV_Fin(false, 1, n)
+      else {
+        let one = pow2(TP);
+        let y = shr_int(fr * pow2(TP - q) * LN2_FX, TP);
+        var term : int = one;
+        var sum : int = one;
+        var k : int = 1;
+        while term != 0 do { term = tdiv_int(term * y, k * one); sum = sum + term; k = k + 1 };
+        r32_sticky(false, sum, n - TP)
+      }
+    }
+}
+
+/* sin_pt_2: sin(pi x / 2) / x correctly rounded to binary32 for |x| < 1 (pi / 2 at x = 0, 1 at |x| = 1), NaN for
+ * |x| > 1 and NaN (agx_run trans_f64; the hardware's recorded table is within one ulp of this, see sail/README.md) */
+val sinpt2v : fv -> fv
+function sinpt2v(x) = match x {
+  FV_NaN() => FV_NaN(),
+  FV_Inf(_) => FV_NaN(),
+  FV_Fin(s, m, e) => {
+    let c = fv_cmp(fv_abs(x), fv_one());
+    if c > 0 then FV_NaN()
+    else if c == 0 then fv_one()
+    else {
+      let one = pow2(TP);
+      let xf = m * pow2(TP + e);
+      let yh = shr_int(PIH_FX * xf, TP);
+      let y2 = shr_int(yh * yh, TP);
+      var term : int = one;
+      var sum : int = one;
+      var k : int = 1;
+      while term != 0 do {
+        term = tdiv_int(term * y2, 2 * k * (2 * k + 1) * one);
+        sum = if fmod_int(k, 2) == 1 then sum - term else sum + term;
+        k = k + 1
+      };
+      r32_sticky(false, shr_int(PIH_FX * sum, TP), negate(TP))
+    }
+  }
+}
+
+/* sin_pt_1: the exact piecewise-linear first step of sin (agx_run trans_f64): x for |x| <= 1, sign(x) (2 - |x|) for
+ * |x| <= 3 (-0 at x = -2), sign(x) (|x| - 4) for |x| <= 4 with zero results +0, NaN beyond and for NaN; +0 for +-0 */
+val sinpt1v : fv -> fv
+function sinpt1v(x) = match x {
+  FV_NaN() => FV_NaN(),
+  FV_Inf(_) => FV_NaN(),
+  FV_Fin(s, m, e) => {
+    let ax = fv_abs(x);
+    if m == 0 then FV_Fin(false, 0, 0)
+    else if fv_cmp(ax, FV_Fin(false, 4, 0)) > 0 then FV_NaN()
+    else if fv_cmp(ax, fv_one()) <= 0 then x
+    else if fv_cmp(ax, FV_Fin(false, 3, 0)) <= 0 then {
+      let r = fv_add_exact(FV_Fin(false, 2, 0), fv_neg(ax), RN);
+      if s then fv_neg(r) else r
+    } else {
+      let r = fv_add_exact(ax, FV_Fin(true, 4, 0), RN);
+      let r2 = if s then fv_neg(r) else r;
+      if fv_is_zero(r2) then FV_Fin(false, 0, 0) else r2
+    }
+  }
+}
+
+/* the operation's value: exact for the roundings, else the binary32 result (which a 16-bit destination rounds
+ * again to binary16, as on the hardware: results/2026-10-16-f16-transcendentals of AGX-Performance-Simulator) */
+val funv : (funop, fv) -> fv
+function funv(op, x) = match op {
+  FU_rsqrt => rsqrtv(false, x),
+  FU_rsqrt_special => rsqrtv(true, x),
+  FU_log2 => log2v(x),
+  FU_exp2 => exp2v(x),
+  FU_sin_pt_1 => sinpt1v(x),
+  FU_sin_pt_2 => sinpt2v(x),
+  _ => roundv(op, x)
+}
+
+/* float unary operations: the source as a float source of the 32-bit forms (fp32 denormals read as zero, fp16
+ * registers binary16 with denormals), then the operation, .sat, and the rounding to the destination (fres) */
+function clause execute(FUNOP(op, sat, d, a)) = {
+  var r : vector(32, int) = vector_init(0);
+  foreach (t from 0 to 31) {
+    if is_active(t) then {
+      let y = funv(op, fval(t, a, true));
+      r[t] = fres(if sat then agx_sat(y) else y, false, d)
+    }
+  };
+  foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
+}
+
 function clause execute(CMPSEL(isf, cc, d, a, b, x, y)) = {
   var r : vector(32, int) = vector_init(0);
   foreach (t from 0 to 31) {
