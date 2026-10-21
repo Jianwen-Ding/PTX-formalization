@@ -23,7 +23,7 @@ TOKEN_RES = [
     ("qname", r"[a-z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)*::[a-zA-Z0-9_]+(:[0-9]+)*((\.|::)[a-zA-Z0-9_]+(:[0-9]+)*)*"),
     ("hex", r"0[xXfFdDbB][0-9a-fA-F]+[uU]?"),
     ("float", r"([+-]?[0-9]+(\.[0-9]*)?|[+-]?\.[0-9]+)([eE][+-]?[0-9]+)?([fFdD]|[pP][0-9]+[xX][0-9]+)?"),
-    ("int", r"[+-]?[0-9]+"),
+    ("int", r"[+-]?[0-9]+[uU]?"),
     ("name", r"[a-zA-Z_$][a-zA-Z0-9_$]*(\.[a-zA-Z0-9_$]+)*"),
     ("punct", r"<<<|>>>|[,;:{}\[\]()<>=+\-!|@]"),
 ]
@@ -54,6 +54,17 @@ def lex(text):
         toks.append((kind, s))
     toks.append(("eof", ""))
     return toks
+
+def ptx_int(s):
+    """an integer literal (ISA 4.5.1): decimal, octal 0{octal digit}+, optional U suffix (0x / 0b go through hex)"""
+    s = s.rstrip("uU")
+    neg = s.startswith("-")
+    d = s.lstrip("+-")
+    if len(d) > 1 and d[0] == "0" and all(c in "01234567" for c in d):
+        v = int(d, 8)
+    else:
+        v = int(d)   # loose: a leading 0 followed by 8 / 9 is read as decimal
+    return -v if neg else v
 
 def float_bits(s):
     """the value of a K Float token as binary64 bits (f/F suffix: binary32 precision)"""
@@ -129,7 +140,7 @@ class Parser:
         tok = self.next()
         if tok[0] != "int":
             raise PtxError("expected an integer, got %r" % (tok[1],))
-        return int(tok[1])
+        return ptx_int(tok[1])
 
     def take_name(self):
         tok = self.next()
@@ -267,7 +278,7 @@ class Parser:
                 return ("genericoff", n, self.take_int())
             return ("generic", n)
         self.next()
-        if k == "int": return ("int", int(s))
+        if k == "int": return ("int", ptx_int(s))
         if k == "float": return ("float", float_bits(s))
         if k == "hex": return ("hex", s)
         if k == "name":
@@ -427,19 +438,19 @@ class Parser:
         if k == "reg":
             self.next()
             if self.kind() == "int":
-                return ("aregoff", s, int(self.next()[1]))
+                return ("aregoff", s, ptx_int(self.next()[1]))
             if self.at("+") and self.kind(1) == "int":
-                self.next(); return ("aregoff", s, int(self.next()[1]))
+                self.next(); return ("aregoff", s, ptx_int(self.next()[1]))
             return ("areg", s)
         if k == "name":
             self.next()
             if self.kind() == "int":
-                return ("anameoff", s, int(self.next()[1]))
+                return ("anameoff", s, ptx_int(self.next()[1]))
             if self.at("+") and self.kind(1) == "int":
-                self.next(); return ("anameoff", s, int(self.next()[1]))
+                self.next(); return ("anameoff", s, ptx_int(self.next()[1]))
             return ("aname", s)
         if k == "int":
-            self.next(); return ("aint", int(s))
+            self.next(); return ("aint", ptx_int(s))
         return ("op", self.operand())
 
     def operand(self):
@@ -495,16 +506,16 @@ class Parser:
                     raise PtxError("bad operand after %s|: %r" % (s, b[1]))
                 return ("pipe", ("name", s), ("name", b[1]))
             if self.at("+") and self.kind(1) == "int":
-                self.next(); return ("nameplus", s, int(self.next()[1]))
+                self.next(); return ("nameplus", s, ptx_int(self.next()[1]))
             if self.kind() == "int":
-                return ("nameint", s, int(self.next()[1]))
+                return ("nameint", s, ptx_int(self.next()[1]))
             if self.at("[") and self.kind(1) == "int" and self.at("]", 2):
                 # a[1]: the address of the array element (PTX ISA 6.4.2); the index is a byte offset as in the
                 # example of 4.3 (array[r1] with r1 = tid << 2)
-                self.next(); i = int(self.next()[1]); self.next()
+                self.next(); i = ptx_int(self.next()[1]); self.next()
                 return ("nameplus", s, i)
             return ("name", s)
-        if k == "int": return ("int", int(s))
+        if k == "int": return ("int", ptx_int(s))
         if k == "float": return ("float", float_bits(s))
         if k == "hex": return ("hex", s)
         raise PtxError("bad operand %r" % s)

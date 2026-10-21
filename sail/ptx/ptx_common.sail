@@ -116,13 +116,16 @@ function hexBits(h0, t) = {
   let d = sdrop(h, 2);
   if (p == "f" | p == "F") & isF(t) & wid(t) != 32 then encodeF(decodeF(str2base(d, 16), 32), fw(t))
   else if (p == "d" | p == "D") & isF(t) & wid(t) != 64 then encodeF(decodeF(str2base(d, 16), 64), fw(t))
+  else if t.k == "p" then (if str2base(d, if p == "b" | p == "B" then 2 else 16) != 0 then 1 else 0)
   else if p == "b" | p == "B" then trunc(str2base(d, 2), wid(t))
   else trunc(str2base(d, 16), wid(t))
 }
 
 /* intLit / fltLit: an integer / float literal at a type */
 val intLit : (int, ty) -> int
-function intLit(i, t) = if isF(t) then encodeF(roundW(fv_of_int(i), fw(t)), fw(t)) else trunc(i, wid(t))
+function intLit(i, t) =
+  if t.k == "p" then (if i != 0 then 1 else 0)   /* ISA 4.5.3: as predicates, non-zero integer constants are True */
+  else if isF(t) then encodeF(roundW(fv_of_int(i), fw(t)), fw(t)) else trunc(i, wid(t))
 val fltLit : (int, ty) -> int
 function fltLit(f, t) = if isF(t) then encodeF(f64v(f), fw(t)) else trunc(f2int(rndInt(f64v(f), "rzi")), wid(t))
 
