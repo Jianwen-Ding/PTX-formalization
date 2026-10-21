@@ -155,6 +155,14 @@ Open:
 - [x] function-scope variables (`.shared`, `.global`, `.const`) are bound per function: equal names in two functions no
       longer share a symbol (tests/func-scope-vars.ptx)
 - [ ] `.ashift` with `.sp`, f64 mma "fma-equivalent precision", Figure 187 lane placement (see the matrix section)
+- [x] `tcgen05.alloc` without `.shared::cta` takes a generic address (§9.7.17.7.1: "If no state space is specified then
+      Generic Addressing is used"); the model read it as a shared offset (tests/tc-alloc-generic.ptx)
+- [x] `.multimem` fabric operations with counted completion bump the counter on every destination device, each counting
+      the accesses at that device (§9.7.10.4); the model bumped only the first device's (tests/fabric-mm-counted.ptx)
+- [x] `fabric.try_atom` and the `.tensor` fabric forms are not in the 9.3 text: they run in the default mode, `.isacheck`
+      reports them (tests/neg/isa-rule-fabric94.ptx)
+- [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
+      qualifier name; the model's pairing follows the name and is unconfirmed
 
 ## Where the Sail model now differs from the K semantics
 

@@ -1,0 +1,20 @@
+// expect: fabric: the .try_atom and .tensor forms are not in PTX ISA 9.3
+// forms beyond the 9.3 reference run in the default mode; .isacheck reports them
+.version 9.4
+.target sm_100a
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .u32 %le; .reg .b64 %off;
+    .shared .align 16 .b8 d[32]; .shared .align 16 .b8 s[32];
+    .shared .align 8 .b64 bar;
+    mbarrier.init.shared.b64 [bar], 1;
+    mov.u32 %le, 1; mov.u64 %off, 0;
+    fabric.try_atom.async.shared::cta.mbarrier::complete_tx::16B.mbarrier::report::fabric.relaxed.sys.add.u32 [%le, %off], [d], [s], [bar];
+    ret;
+}
+.buffer B .u8 [64];
+.fabric 1 .size 64 { B } ;
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

@@ -319,7 +319,9 @@ function isaQual(o, ops) = {
   let scope = isaAny(m, [|"cta", "cluster", "gpu", "sys"|]);
   let fl : bool = match o.tys { t :: _ => t.k == "f", _ => false };
   let w : int = match o.tys { t :: _ => t.w, _ => 0 };
-  if (b == "ld" | b == "st") & isaCount(m, [|"weak", "volatile", "relaxed", sem|]) > 1 then
+  if b == "fabric" & (has(m, "try_atom") | has(m, "tensor")) then
+    "fabric: the .try_atom and .tensor forms are not in PTX ISA 9.3 (9.7.10.5 lists try_get / try_put / try_red / try_pullred / submit / wait)"
+  else if (b == "ld" | b == "st") & isaCount(m, [|"weak", "volatile", "relaxed", sem|]) > 1 then
     concat_str(b, ": the .weak, .volatile, .relaxed and .acquire / .release qualifiers are mutually exclusive [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
   else if (b == "ld" & has(m, "release")) | (b == "st" & has(m, "acquire")) then
     concat_str(b, concat_str(": no .", concat_str(if b == "ld" then "release" else "acquire", " form [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")))

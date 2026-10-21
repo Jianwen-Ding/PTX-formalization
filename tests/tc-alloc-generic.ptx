@@ -1,0 +1,38 @@
+// tcgen05.alloc / commit with no state space use generic addressing (9.7.17.7.1)
+.version 8.8
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %r<40>, %ta, %tl; .reg .b64 %o, %g, %gm; .reg .pred %p, %q, %w;
+    .shared .align 16 .b32 slot[4];
+    .shared .align 8 .b64 mbar;
+    ld.param.u64 %o, [po];
+    mov.u32 %tl, %tid.x; setp.eq.u32 %q, %tl, 0;
+    st.shared.u32 [slot], 0xdead; st.shared.u32 [slot+4], 0xdead;
+    // first allocation 64 cols -> col 0 ; second, generic address dst, no state space
+    tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [slot], 64;
+    cvta.shared.u64 %g, slot; add.u64 %g, %g, 4;
+    tcgen05.alloc.cta_group::1.sync.aligned.b32 [%g], 64;
+    ld.shared.u32 %r0, [slot]; ld.shared.u32 %r1, [slot+4];
+    @%q st.global.u32 [%o], %r0; @%q st.global.u32 [%o+4], %r1;
+    // commit with generic mbar address, no state space
+    @%q mbarrier.init.shared.b64 [mbar], 1;
+    bar.warp.sync 0xffffffff;
+    cvta.shared.u64 %gm, mbar;
+    @%q tcgen05.commit.cta_group::1.mbarrier::arrive::one.b64 [%gm];
+    mbarrier.test_wait.parity.shared.b64 %w, [mbar], 0;
+    selp.u32 %r2, 1, 0, %w;
+    @%q st.global.u32 [%o+8], %r2;
+    // shift in the spec-example order
+    mov.u32 %r3, 0;
+    @%q tcgen05.shift.down.cta_group::1 [%r3];
+    tcgen05.wait::st.sync.aligned;
+    tcgen05.wait::ld.sync.aligned;
+    tcgen05.fence::before_thread_sync;
+    tcgen05.fence::after_thread_sync;
+    ret;
+}
+.buffer O .u32 = { 7, 7, 7 };
+.launch k <<< 1, 32 >>> (O);
+.expect O .u32 = { 0, 64, 1 };

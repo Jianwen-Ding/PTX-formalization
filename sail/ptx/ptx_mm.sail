@@ -212,13 +212,21 @@ function fbHead(l) = match l { a :: _ => a, [||] => -1 }
 val fbCnt : (int, int) -> unit
 function fbCnt(cn, n) = if cn >= 0 & not_bool(stuck) then { let _ = memop_do(Loc("global", cn), AtOp("add", mkty("u", 64), n, 0)); () }
 
+/* counted completion: a .multimem operation bumps the counter on every destination device,
+   each counting only the accesses at that device (9.7.10.4) */
+val fbCnts : (list(int), int) -> unit
+function fbCnts(cs, n) = {
+  var x = cs;
+  while is_cons(x) do { match x { c :: rest => { fbCnt(c, n); x = rest }, [||] => () } }
+}
+
 val fbOff : list(iop) -> int
 function fbOff(l) = match l { IS(o) :: _ => rd_sop(o, mkty("u", 64)), _ => 0 }
 
 val xtake1 : list(xop) -> list(xop)
 function xtake1(l) = match l { x :: _ => [|x|], [||] => [||] }
 
-val fb_put : (list(string), list(int), loc, loc, int, int, int) -> unit
+val fb_put : (list(string), list(int), loc, loc, int, int, list(int)) -> unit
 function fb_put(m, ds, s, b, n, mk, cn) = {
   if not_bool(is_cons(ds)) then fault("fabric access outside the logical endpoint", 0)
   else {
@@ -235,12 +243,12 @@ function fb_put(m, ds, s, b, n, mk, cn) = {
         x = rest
       }, [||] => () }
     };
-    fbCnt(cn, n);
+    fbCnts(cn, n);
     if not_bool(stuck) then bulkTx(b, tdiv_int(n, 16))
   }
 }
 
-val fb_red : (list(string), list(int), loc, loc, int, ty, int) -> unit
+val fb_red : (list(string), list(int), loc, loc, int, ty, list(int)) -> unit
 function fb_red(m, ds, s, b, n, t, cn) = {
   if not_bool(is_cons(ds)) then fault("fabric access outside the logical endpoint", 0)
   else {
@@ -254,7 +262,7 @@ function fb_red(m, ds, s, b, n, t, cn) = {
         x = rest
       }, [||] => () }
     };
-    fbCnt(cn, n);
+    fbCnts(cn, n);
     if not_bool(stuck) then bulkTx(b, tdiv_int(n, 16))
   }
 }
@@ -287,7 +295,7 @@ function exec_fabric(o, ops) = {
       while is_cons(x) & not_bool(stuck) do {
         match x { a :: rest => { tm_store(fbTM(m), tmOv(blob, a, tmCoords(ov), [||], 0), tmCoords(cs), s); x = rest }, [||] => () }
       };
-      if cn >= 0 then fbCnt(fbHead(fbBases(hAddrA(l), cn, 8, false)), rdu32(sz));
+      if cn >= 0 then fbCnts(fbBases(hAddrA(l), cn, 8, has(m, "multimem")), rdu32(sz));
       if not_bool(stuck) then bulkTx(ea(b, "shared"), tdiv_int(rdu32(sz), 16));
       true
     },
@@ -335,24 +343,24 @@ function exec_fabric(o, ops) = {
     XB([|l|], [|IS(off)|]) :: XB([|s|], [||]) :: sz :: XB([|b|], [||]) :: rest if has(m, "try_put") => {
       let n = rdu32(sz);
       fb_put(m, fbBases(hAddrA(l), rd_sop(off, mkty("u", 64)), n, has(m, "multimem")), ea(s, "shared"), ea(b, "shared"), n,
-             if has(m, "cp_mask") & xop_count(rest) > 0 then lastArg(xtake1(rest)) else -1, -1);
+             if has(m, "cp_mask") & xop_count(rest) > 0 then lastArg(xtake1(rest)) else -1, [||]);
       true
     },
     XB([|l, off|], [|IS(cn)|]) :: XB([|s|], [||]) :: sz :: XB([|b|], [||]) :: _ if has(m, "try_put") => {
       let n = rdu32(sz);
       fb_put(m, fbBases(hAddrA(l), hAddrA(off), n, has(m, "multimem")), ea(s, "shared"), ea(b, "shared"), n, -1,
-             fbHead(fbBases(hAddrA(l), rd_sop(cn, mkty("u", 64)), 8, false)));
+             fbBases(hAddrA(l), rd_sop(cn, mkty("u", 64)), 8, has(m, "multimem")));
       true
     },
     XB([|l|], [|IS(off)|]) :: XB([|s|], [||]) :: sz :: XB([|b|], [||]) :: _ if has(m, "try_red") => {
       let n = rdu32(sz);
-      fb_red(m, fbBases(hAddrA(l), rd_sop(off, mkty("u", 64)), n, has(m, "multimem")), ea(s, "shared"), ea(b, "shared"), n, ty1(o), -1);
+      fb_red(m, fbBases(hAddrA(l), rd_sop(off, mkty("u", 64)), n, has(m, "multimem")), ea(s, "shared"), ea(b, "shared"), n, ty1(o), [||]);
       true
     },
     XB([|l, off|], [|IS(cn)|]) :: XB([|s|], [||]) :: sz :: XB([|b|], [||]) :: _ if has(m, "try_red") => {
       let n = rdu32(sz);
       fb_red(m, fbBases(hAddrA(l), hAddrA(off), n, has(m, "multimem")), ea(s, "shared"), ea(b, "shared"), n, ty1(o),
-             fbHead(fbBases(hAddrA(l), rd_sop(cn, mkty("u", 64)), 8, false)));
+             fbBases(hAddrA(l), rd_sop(cn, mkty("u", 64)), 8, has(m, "multimem")));
       true
     },
     /* try_atom [leId, off], [smem_dst], [smem_src], [mbar] */

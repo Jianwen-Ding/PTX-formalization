@@ -592,7 +592,7 @@ function exec_tc(o, ops) = {
   else if has(m, "wait") | has(m, "fence") | has(m, "relinquish_alloc_permit") then true
   else if has(m, "alloc") then match ops {
     [|XB([|d|], [||]), n|] => {
-      t_post[t] = P_tcalloc(ea(d, "shared"), rdu32(n));
+      t_post[t] = P_tcalloc(ea(d, if has(m, "shared::cta") | has(m, "shared") then "shared" else "generic"), rdu32(n));
       do_coll("tcgen05.alloc", full, [||], [|0|], [||]);
       true
     },
