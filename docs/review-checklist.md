@@ -144,8 +144,7 @@ Open:
 - [x] qualifier rules under `.isacheck` (default mode accepts): ld / st `.weak` `.volatile` `.relaxed` `.acquire` / `.release`
       exclusive, no cache ops with them, scope required, `.mmio` only `.relaxed.sys`; `fma` needs a rounding modifier;
       `setmaxnreg` 24 .. 256 step 8; `pmevent` 0 .. 15; `alloca` alignment a power of 2 (tests/neg/isa-rule-*.ptx)
-- [ ] the relaxed type-checking tables (6.4) under `.isacheck` (needs register kinds, not only widths),
-      `fma.f32` without rounding, `setmaxnreg` range, ...) reported under `.isacheck` only; default mode accepts them
+- [ ] the relaxed type-checking tables (6.4) under `.isacheck` (needs register kinds, not only widths)
 - [ ] tcgen05 allocation patterns (alloc after relinquish, growing size, exit without dealloc) under `.ub strict`
 - [ ] sm_1x single-precision defaults (ftz, mad.f32 truncation); `brkpt` suspends
 - [ ] device-function `.shared` variables with equal names in different functions still share a symbol
