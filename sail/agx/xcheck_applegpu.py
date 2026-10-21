@@ -135,7 +135,15 @@ def applegpu_text(toks):
         if tts in ('0011', '1100'):
             return "bitop_mov_a", [tts, reg_text(*d), a, b]
         return "bitop", [tts, reg_text(*d), a, b]
-    if c in ("BFI", "BFEIL"):
+    if c == "INTL":
+        d = rd_reg(T); a = rd_op(T); b = rd_op(T)
+        return "intl", [reg_text(*d), a, b]
+    if c == "CONVERT":
+        m = T.int(); i2f = T.int(); d = rd_reg(T); a = rd_op(T)
+        names = {0: "u8_to_f", 1: "s8_to_f", 4: "f_to_u16", 5: "f_to_s16", 6: "u16_to_f", 7: "s16_to_f", 8: "f_to_u32",
+                 9: "f_to_s32", 10: "u32_to_f", 11: "s32_to_f"}
+        return "convert", [names[m], reg_text(*d), a, "rte" if i2f else "rtz"]
+    if c in ("BFI", "BFEIL", "EXTR"):
         m = T.int(); d = rd_reg(T); a = rd_op(T); b = rd_op(T); x = rd_op(T)
         return c.lower(), [reg_text(*d), a, b, x] + (["mask 0x%X" % ((1 << m) - 1)] if m else [])
     if c == "ASR":
@@ -300,7 +308,7 @@ ICCS = list(ICC)
 FCCS = list(FCC)
 
 def rinstr():
-    c = R.choice(["MOVI", "MOVR", "GET_SR", "IADD", "IMADD", "BITOP", "BFI", "BFEIL", "ASR", "IUNOP", "FBIN", "FMADD", "RCP", "FUNOP",
+    c = R.choice(["MOVI", "MOVR", "GET_SR", "IADD", "IMADD", "BITOP", "BFI", "BFEIL", "EXTR", "INTL", "CONVERT", "ASR", "IUNOP", "FBIN", "FMADD", "RCP", "FUNOP",
                   "ICMPSEL", "FCMPSEL", "STACKOP", "POP_EXEC", "JMP", "BALLOT", "SHUFFLE", "DEVMEM", "TGMEM", "DEVATOM",
                   "TGATOM", "WAIT", "TG_BARRIER", "STOP", "MEMORY_BARRIER", "TRAP"])
     if c == "MOVI":
@@ -319,8 +327,12 @@ def rinstr():
             t = ["BITOP", R.randrange(16)] + rdst() + rsrc() + rsrc()
             if not (t[1] == 10 and t[-2:] == ["I", 0]):
                 return t
-    if c in ("BFI", "BFEIL"):
+    if c in ("BFI", "BFEIL", "EXTR"):
         return [c, R.randrange(32)] + rdst() + rsrc() + rsrc() + rsrc()
+    if c == "INTL":
+        return ["INTL"] + rdst() + rsrc() + rsrc()
+    if c == "CONVERT":
+        return ["CONVERT", R.choice([0, 1, 4, 5, 6, 7, 8, 9, 10, 11]), R.randrange(2)] + rdst() + rsrc()
     if c == "ASR":
         return ["ASR"] + rdst() + rsrc() + rsrc()
     if c == "IUNOP":
@@ -362,8 +374,7 @@ def rinstr():
         st = R.randrange(2)
         r = rreg(hints=False)
         r[2] = R.choice((0, 1, 2))
-        if r[2] == 0:
-            r[1] = R.randrange(124)
+        r[1] = R.randrange(124 if r[2] == 0 else 126)
         fmt = R.choice(agxtest.DEV_FMTS)
         lo = R.randrange(127)
         idx = ["I", R.randrange(-32768, 32768)] if R.random() < 0.5 else ["R", 0, R.randrange(128), 0, 0, 0, 0, 0]
@@ -395,7 +406,7 @@ def rinstr():
 
 # ------------------------------------------------------------------ checks
 MODELLED = {"mov_imm", "get_sr", "iadd", "isub", "iadd.sat", "isub.sat", "imadd", "imsub", "imadd.sat", "imsub.sat", "bfi",
-            "bfeil", "asr", "bitop", "popcount", "bitrev", "ffs", "fmadd32", "fmadd16", "fadd32", "fadd16", "fmul32", "fmul16",
+            "bfeil", "extr", "intl", "convert", "asr", "bitop", "popcount", "bitrev", "ffs", "fmadd32", "fmadd16", "fadd32", "fadd16", "fmul32", "fmul16",
             "rcp", "floor", "ceil", "trunc", "rint", "rsqrt", "rsqrt_special", "sin_pt_1", "sin_pt_2", "log2", "exp2", "stop", "jmp_exec_any", "jmp_exec_none", "pop_exec", "if_icmp", "if_fcmp", "while_icmp", "while_fcmp",
             "else_icmp", "else_fcmp", "icmpsel", "fcmpsel", "icmp_ballot", "fcmp_ballot", "simd_shuffle", "simd_shuffle_down",
             "simd_shuffle_up", "simd_shuffle_xor", "wait", "device_load", "device_store", "threadgroup_load",

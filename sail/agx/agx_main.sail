@@ -76,6 +76,9 @@ function rd_instr() = match tok_str() {
   "BITOP" => { let tt = tok_int(); let d = rd_reg(); let a = rd_op(); let b = rd_op(); BITOP(tt, d, a, b) },
   "BFI" => { let m = tok_int(); let d = rd_reg(); let a = rd_op(); let b = rd_op(); let c = rd_op(); BFI(m, d, a, b, c) },
   "BFEIL" => { let m = tok_int(); let d = rd_reg(); let a = rd_op(); let b = rd_op(); let c = rd_op(); BFEIL(m, d, a, b, c) },
+  "EXTR" => { let m = tok_int(); let d = rd_reg(); let a = rd_op(); let b = rd_op(); let c = rd_op(); EXTR(m, d, a, b, c) },
+  "INTL" => { let d = rd_reg(); let a = rd_op(); let b = rd_op(); INTL(d, a, b) },
+  "CONVERT" => { let m = tok_int(); let i2f = rd_bool(); let d = rd_reg(); let a = rd_op(); CONVERT(m, i2f, d, a) },
   "ASR" => { let d = rd_reg(); let a = rd_op(); let b = rd_op(); ASR(d, a, b) },
   "IUNOP" => {
     let o : iunop = match tok_str() { "popcount" => U_popcount, "bitrev" => U_bitrev, _ => U_ffs };

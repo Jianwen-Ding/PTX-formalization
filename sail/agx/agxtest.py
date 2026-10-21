@@ -128,7 +128,14 @@ def instr(stmt):
         want(3); return ["IADD", int(base == "isub"), sat] + reg(ops[0]) + op(ops[1]) + op(ops[2]) + [shift_of(ops[3:])]
     if base in ("imadd", "imsub"):
         want(4); return ["IMADD", int(base == "imsub"), sat] + reg(ops[0]) + op(ops[1]) + op(ops[2]) + op(ops[3]) + [shift_of(ops[4:])]
-    if base in ("bitop", "bfi", "bfeil"):
+    m = re.match(r"^convert\.(f2i|i2f)\.([su])(8|16|32)\.(rte|rtz)$", mnem)
+    if m:
+        want(2)
+        mode = {"8": 0, "16": 4, "32": 8}[m.group(3)] | (2 if m.group(4) == "rte" else 0) | (1 if m.group(2) == "s" else 0)
+        return ["CONVERT", mode, int(m.group(1) == "i2f")] + reg(ops[0]) + op(ops[1])
+    if base == "intl":
+        want(3); return ["INTL"] + reg(ops[0]) + op(ops[1]) + op(ops[2])
+    if base in ("bitop", "bfi", "bfeil", "extr"):
         if len(pre) != 1:
             raise ParseError("missing field in %r" % stmt)
         if base == "bitop":

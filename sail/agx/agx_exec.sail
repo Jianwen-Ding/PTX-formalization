@@ -344,6 +344,79 @@ function clause execute(BFEIL(m, d, a, b, c)) = {
   foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
 }
 
+/* extr: (B:A >> (C & 127)) masked as bfi / bfeil (agx_run, applegpu) */
+function clause execute(EXTR(m, d, a, b, c)) = {
+  var r : vector(32, int) = vector_init(0);
+  foreach (t from 0 to 31) {
+    if is_active(t) then
+      r[t] = land_int(shr_int(opv(t, b, 32) * pow2(32) + opv(t, a, 32), land_int(opv(t, c, 32), 127)), fmask(m))
+  };
+  foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
+}
+
+/* intl: the low 16 bits of A in the even and those of B in the odd result bits (agx_run) */
+val spread16 : int -> int
+function spread16(v) = {
+  var r : int = 0;
+  foreach (i from 0 to 15) { if bit_int(v, i) then r = r + pow2(2 * i) };
+  r
+}
+
+function clause execute(INTL(d, a, b)) = {
+  var r : vector(32, int) = vector_init(0);
+  foreach (t from 0 to 31) { if is_active(t) then r[t] = spread16(opv(t, a, 32)) + 2 * spread16(opv(t, b, 32)) };
+  foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
+}
+
+/* convert (Apple-M2-Playground 2026-10-16-conversions, every input class over 1.37 billion inputs; agx_run's
+ * model): mode = width << 2 | rte << 1 | signed, width 8 / 16 / 32 bits.
+ *   float -> integer: the float source (fp32 denormals read as zero, 16-bit registers binary16); NaN -> 0; rounded
+ *     to nearest even (rte) or toward zero; saturated to the integer range; masked to the width (zero-extended)
+ *   integer -> float: the low `width` bits of the source, sign-extended if signed; rounded to binary32, or binary16
+ *     for a 16-bit destination, to nearest even (rte) or toward zero, except that toward zero still gives +-inf
+ *     for |v| >= 65536 into binary16 */
+val convertv : (int, bool, bool, int, fv) -> int
+function convertv(mode, i2f, d16, v, x) = {
+  let w = 8 * pow2(shr_int(mode, 2));
+  let sgn = bit_int(mode, 0);
+  let rte = bit_int(mode, 1);
+  if i2f then {
+    let iv = if sgn then sext_int(trunc_int(v, w), w) else trunc_int(v, w);
+    let f = FV_Fin(iv < 0, abs_int(iv), 0);
+    if d16 then {
+      if not_bool(rte) & abs_int(iv) >= 65536 then (if iv < 0 then 64512 else 31744)
+      else encExact(round_fv(f, 11, 5, if rte then RN else RZ), 16)
+    } else encExact(round_fv(f, 24, 8, if rte then RN else RZ), 32)
+  } else {
+    let lo = if sgn then negate(pow2(w - 1)) else 0;
+    let hi = if sgn then pow2(w - 1) - 1 else pow2(w) - 1;
+    let n : int = match x {
+      FV_NaN() => 0,
+      FV_Inf(s) => if s then lo else hi,
+      FV_Fin(s, m, e) => {
+        let mag : int = if e >= 0 then m * pow2(e) else {
+          let q : int = negate(e);
+          let t : int = shr_int(m, q);
+          let fr : int = m - t * pow2(q);
+          if rte & (2 * fr > pow2(q) | (2 * fr == pow2(q) & fmod_int(t, 2) == 1)) then t + 1 else t
+        };
+        let iv = if s then negate(mag) else mag;
+        if iv < lo then lo else if iv > hi then hi else iv
+      }
+    };
+    trunc_int(n, w)
+  }
+}
+
+function clause execute(CONVERT(mode, i2f, d, a)) = {
+  var r : vector(32, int) = vector_init(0);
+  foreach (t from 0 to 31) {
+    if is_active(t) then
+      r[t] = convertv(mode, i2f, view_bits(d) == 16, if i2f then opv(t, a, 32) else 0, if i2f then FV_Fin(false, 0, 0) else fval(t, a, true))
+  };
+  foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
+}
+
 function clause execute(ASR(d, a, b)) = {
   var r : vector(32, int) = vector_init(0);
   foreach (t from 0 to 31) {

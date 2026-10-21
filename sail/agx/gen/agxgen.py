@@ -38,6 +38,7 @@ DEV_FMTS = FMTS + ["f16", "u8norm", "s8norm", "u16norm", "s16norm", "rgb10a2", "
                    "rgb9e5.rtz"]
 # formats whose device accesses the model does not define (they stop it with an error)
 PACKED_FMTS = ["rgb10a2", "srgba8", "rg11b10f", "rgb9e5", "rg11b10f.rtz", "rgb9e5.rtz"]
+CONVERT_MODES = [0, 1, 4, 5, 6, 7, 8, 9, 10, 11]
 FUNOPS = ["floor", "ceil", "trunc", "rint", "rsqrt", "rsqrt_special", "sin_pt_1", "sin_pt_2", "log2", "exp2"]
 
 
@@ -193,7 +194,11 @@ def schemas():
                 _srcmods(c, 1, g, c["s1"], "sx") + _srcmods(c, 2, g, c["s2"], "sx") + [c["shift"]])
     add("bitop", [("tt", list(range(16))), ("d", DST), ("dhint", [0, 1])] + srcdims(0, INT_SRC) + srcdims(1, INT_SRC),
         lambda c, g: _bitop(c, g))
-    for nm in ("bfi", "bfeil"):
+    add("intl", [("d", DST), ("dhint", [0, 1])] + srcdims(0, INT_SRC) + srcdims(1, INT_SRC),
+        lambda c, g: ["INTL"] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "") + _srcmods(c, 1, g, c["s1"], ""))
+    add("convert", [("mode", CONVERT_MODES), ("i2f", BOOL), ("d", DST), ("dhint", [0, 1])] + srcdims(0, INT_SRC),
+        lambda c, g: ["CONVERT", c["mode"], c["i2f"]] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], ""))
+    for nm in ("bfi", "bfeil", "extr"):
         add(nm, [("m", list(range(32))), ("d", DST), ("dhint", [0, 1])] + srcdims(0, INT_SRC) + srcdims(1, INT_SRC) + srcdims(2, INT_SRC),
             lambda c, g, nm=nm: [nm.upper(), c["m"]] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "") +
             _srcmods(c, 1, g, c["s1"], "") + _srcmods(c, 2, g, c["s2"], ""))
@@ -433,7 +438,16 @@ def form_key(t):
             a, i = _okind(t, i)
             b, i = _okind(t, i)
             return "bitop %d %s, %s, %s" % (t[1], d, a, b)
-        if c in ("BFI", "BFEIL"):
+        if c == "INTL":
+            d, i = _dkind(t, 1)
+            a, i = _okind(t, i)
+            b, i = _okind(t, i)
+            return "intl %s, %s, %s" % (d, a, b)
+        if c == "CONVERT":
+            d, i = _dkind(t, 3)
+            a, i = _okind(t, i)
+            return "convert m%d %s %s, %s" % (t[1], "i2f" if t[2] else "f2i", d, a)
+        if c in ("BFI", "BFEIL", "EXTR"):
             d, i = _dkind(t, 2)
             ops = []
             for _ in range(3):

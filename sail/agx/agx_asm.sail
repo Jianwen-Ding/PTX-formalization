@@ -270,6 +270,12 @@ mapping asm_aop = { A_add <-> "add", A_sub <-> "sub", A_xchg <-> "xchg", A_umin 
   A_fadd <-> "fadd", A_umin64 <-> "umin64", A_umax64 <-> "umax64", A_end11 <-> "end11", A_end12 <-> "end12",
   A_end13 <-> "end13", A_end14 <-> "end14", A_end15 <-> "end15" }
 
+/* convert.f2i / convert.i2f, then the mode: s / u, width, rte / rtz (convert.f2i.s16.rte) */
+val convert_str : (int, bool) -> string
+function convert_str(m, i2f) =
+  concat_str(if i2f then "convert.i2f." else "convert.f2i.", concat_str(if bit_int(m, 0) then "s" else "u",
+    concat_str(dec_str(8 * pow2(shr_int(m, 2))), if bit_int(m, 1) then ".rte" else ".rtz")))
+
 val assembly : ast <-> string
 scattered mapping assembly
 
@@ -288,6 +294,9 @@ mapping clause assembly = FBIN(o, h, s, d, a, b) <-> fbin_mnem(o) ^ half16(h) ^ 
 mapping clause assembly = FMADD(h, s, d, a, b, c) <-> "fmadd" ^ half16(h) ^ asm_sat(s) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b) ^ comma() ^ asm_op(c)
 mapping clause assembly = RCP(s, d, a) <-> "rcp" ^ asm_sat(s) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a)
 mapping clause assembly = FUNOP(o, s, d, a) <-> funop_mnem(o) ^ asm_sat(s) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a)
+mapping clause assembly = EXTR(m, d, a, b, c) <-> "extr" ^ spc() ^ asm_int(m) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b) ^ comma() ^ asm_op(c)
+mapping clause assembly = INTL(d, a, b) <-> "intl" ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b)
+mapping clause assembly = forwards CONVERT(m, i2f, d, a) => concat_str(convert_str(m, i2f), concat_str(" ", concat_str(reg_str(d), concat_str(", ", op_str(a)))))
 mapping clause assembly = CMPSEL(f, cc, d, a, b, x, y) <-> ftype(f) ^ "cmpsel" ^ spc() ^ asm_cc(cc) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b) ^ comma() ^ asm_op(x) ^ comma() ^ asm_op(y)
 mapping clause assembly = STACKOP(k, f, cc, a, b, n) <-> stk_mnem(k) ^ "_" ^ ftype(f) ^ "cmp" ^ spc() ^ asm_cc(cc) ^ spc() ^ asm_op(a) ^ comma() ^ asm_op(b) ^ asm_push(n)
 mapping clause assembly = POP_EXEC(n) <-> "pop_exec" ^ spc() ^ asm_int(n)

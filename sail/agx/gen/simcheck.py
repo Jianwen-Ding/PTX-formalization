@@ -84,7 +84,7 @@ class ProgGen:
         self.depth = 0
         self.loops = 0
         alu = ["mov_imm", "mov", "get_sr", "iadd", "isub", "iadd.sat", "isub.sat", "imadd", "imsub", "imadd.sat", "imsub.sat", "bitop",
-               "bfi", "bfeil", "asr", "popcount", "bitrev", "ffs", "fadd32", "fadd16", "fmul32", "fmul16", "fmadd32", "fmadd16", "rcp"] + agxgen.FUNOPS + [
+               "bfi", "bfeil", "extr", "intl", "convert", "asr", "popcount", "bitrev", "ffs", "fadd32", "fadd16", "fmul32", "fmul16", "fmadd32", "fmadd16", "rcp"] + agxgen.FUNOPS + [
                "icmpsel", "fcmpsel", "icmp_ballot", "fcmp_ballot", "simd_shuffle", "simd_shuffle_xor", "simd_shuffle_up",
                "simd_shuffle_down"]
         self.alu = [a for a in alu if only is None or a in only]

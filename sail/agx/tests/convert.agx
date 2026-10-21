@@ -1,0 +1,28 @@
+// convert (Apple-M2-Playground 2026-10-16-conversions), intl and extr
+.all r4 = 3212836864;            // -1.0
+.all r5 = 1075838976;            // 2.5
+.all r6 = 2143289344;            // NaN
+.all r7 = 2139095040;            // +inf
+.all r8 = 4294967295;
+.all r9 = 65536;
+.all r10 = 1080033280;           // 3.5
+convert.f2i.s8.rtz r11, r4;      // signed results are zero-extended: 0xff
+convert.f2i.s32.rte r12, r5;     // ties to even: 2
+convert.f2i.u32.rte r13, r6;     // NaN -> 0
+convert.f2i.u16.rtz r14, r7;     // saturates: 0xffff
+convert.i2f.u32.rte r15, r8;     // 2^32
+convert.i2f.u32.rtz r16l, r9;    // toward zero into binary16 still overflows at 65536: +inf
+convert.f2i.s32.rte r17, r10;    // 4
+intl r18, r8, 0;                 // 0x55555555
+extr 8 r19, r8, r9, 28;          // (0x10000:0xffffffff >> 28) & 0xff = 0x0f
+stop;
+.run;
+.expectall r11 = 255;
+.expectall r12 = 2;
+.expectall r13 = 0;
+.expectall r14 = 65535;
+.expectall r15 = 1333788672;
+.expectall r16l = 31744;
+.expectall r17 = 4;
+.expectall r18 = 1431655765;
+.expectall r19 = 15

@@ -132,12 +132,15 @@ let C_SIN_PT_2 = funop_cls(FU_sin_pt_2)
 let C_CEIL = funop_cls(FU_ceil)
 let C_TRUNC = funop_cls(FU_trunc)
 let C_RINT = funop_cls(FU_rint)
+let C_EXTR = cls(200, 8, 8, 15, [|(0, 7, 46), (15, 1, 0), (26, 2, 1)|])
+let C_INTL = cls(201, 6, 6, 15, [|(0, 7, 62), (15, 1, 0), (38, 2, 0), (26, 2, 0)|])
+let C_CONVERT = cls(202, 6, 6, 15, [|(0, 7, 62), (15, 1, 1), (22, 4, 0), (38, 2, 0), (42, 2, 0)|])
 let funops : list(funop) = [|FU_floor, FU_rsqrt_special, FU_rsqrt, FU_sin_pt_1, FU_log2, FU_exp2, FU_sin_pt_2, FU_ceil,
   FU_trunc, FU_rint|]
 
 /* the classes in applegpu's matching order (the first matching descriptor wins) */
 let all_classes : list(icls) = [|C_MOVI16, C_MOVI32, C_GETSR, C_IADD, C_IMADD, C_BFI, C_BFEIL, C_ASR,
-  C_BITOP, C_BITREV, C_POPCOUNT, C_FFS, C_FMADD32, C_FMADD16, C_FADD32, C_FADD16, C_FMUL32, C_FMUL16,
+  C_BITOP, C_BITREV, C_POPCOUNT, C_FFS, C_EXTR, C_INTL, C_CONVERT, C_FMADD32, C_FMADD16, C_FADD32, C_FADD16, C_FMUL32, C_FMUL16,
   C_RCP, C_FLOOR, C_RSQRT_SPECIAL, C_RSQRT, C_SIN_PT_1, C_LOG2, C_EXP2, C_SIN_PT_2, C_CEIL, C_TRUNC, C_RINT, C_STOP, C_JMPANY, C_JMPNONE, C_POPEXEC, C_IFICMP, C_IFFCMP, C_WHILEICMP, C_WHILEFCMP,
   C_ELSEICMP, C_ELSEFCMP, C_ICMPSEL, C_FCMPSEL, C_ICMPBALLOT, C_FCMPBALLOT, C_SHUF, C_SHUFDOWN,
   C_SHUFUP, C_SHUFXOR, C_WAIT, C_DEVLOAD, C_DEVSTORE, C_TGLOAD, C_TGSTORE, C_TGBARRIER, C_ATOMIC,
@@ -652,6 +655,34 @@ function d_bitop(w) = {
   if tt == 10 & is_imm0(b) then fin_dec(MOV(d, a)) else fin_dec(BITOP(tt, d, a, b))
 }
 
+val d_extr : int -> option(ast)
+function d_extr(w) = { start_dec(); fin_dec(EXTR(fget3(w, 38, 2, 50, 2, 63, 1), d_dst(w, 60, true, false), d_alu(w, 16, 58), d_alu(w, 28, 56), d_alu(w, 40, 54))) }
+
+/* intl: D (44), A (16, 42), B (28, 40) */
+val e_intl : (areg, aop, aop) -> option(int)
+function e_intl(d, a, b) = { start_enc(); finish(C_INTL, e_alu(e_alu(e_dst(0, d, 44, true, false), a, 16, 42), b, 28, 40)) }
+val d_intl : int -> option(ast)
+function d_intl(w) = { start_dec(); fin_dec(INTL(d_dst(w, 44, true, false), d_alu(w, 16, 42), d_alu(w, 28, 40))) }
+
+/* convert: mode (16, 6) (Mesa's first source, an immediate: bits 22-25 and 42-43 clear), direction (26, 2): 0 float
+ * -> integer, 1 integer -> float (applegpu's `round` field), D (44), the source (28, 40).  Modes 2, 3 and 12-63 are
+ * rejected: Mesa does not emit them and they were not run on the hardware (Apple-M2-Playground 2026-10-16-conversions) */
+val convert_mode_ok : int -> bool
+function convert_mode_ok(m) = m == 0 | m == 1 | (m >= 4 & m <= 11)
+val e_convert : (int, bool, areg, aop) -> option(int)
+function e_convert(m, i2f, d, a) = {
+  start_enc();
+  if not_bool(convert_mode_ok(m)) then enc_err = true;
+  finish(C_CONVERT, fput(fput(e_alu(e_dst(0, d, 44, true, false), a, 28, 40), 16, 6, m), 26, 2, bool_bit(i2f)))
+}
+val d_convert : int -> option(ast)
+function d_convert(w) = {
+  start_dec();
+  let m = fget(w, 16, 6);
+  dchk(convert_mode_ok(m) & fget(w, 26, 2) <= 1);
+  fin_dec(CONVERT(m, fget(w, 26, 2) == 1, d_dst(w, 44, true, false), d_alu(w, 28, 40)))
+}
+
 val iunop_cls : iunop -> icls
 function iunop_cls(o) = match o { U_popcount => C_POPCOUNT, U_bitrev => C_BITREV, U_ffs => C_FFS }
 val e_iunop : (iunop, areg, aop) -> option(int)
@@ -952,6 +983,9 @@ function agx_encode(i) = match i {
   BITOP(tt, d, a, b) => e_bitop(tt, d, a, b),
   BFI(m, d, a, b, c) => e_bf(C_BFI, m, d, a, b, c),
   BFEIL(m, d, a, b, c) => e_bf(C_BFEIL, m, d, a, b, c),
+  EXTR(m, d, a, b, c) => e_bf(C_EXTR, m, d, a, b, c),
+  INTL(d, a, b) => e_intl(d, a, b),
+  CONVERT(m, i2f, d, a) => e_convert(m, i2f, d, a),
   ASR(d, a, b) => e_asr(d, a, b),
   IUNOP(o, d, a) => e_iunop(o, d, a),
   FBIN(o, h, s, d, a, b) => e_fbin(o, h, s, d, a, b),
@@ -1002,6 +1036,9 @@ function agx_decode(win) = {
       else if k.cid == C_BITREV.cid then d_iunop(U_bitrev, w)
       else if k.cid == C_POPCOUNT.cid then d_iunop(U_popcount, w)
       else if k.cid == C_FFS.cid then d_iunop(U_ffs, w)
+      else if k.cid == C_EXTR.cid then d_extr(w)
+      else if k.cid == C_INTL.cid then d_intl(w)
+      else if k.cid == C_CONVERT.cid then d_convert(w)
       else if k.cid == C_FMADD32.cid then d_fmadd(false, w)
       else if k.cid == C_FMADD16.cid then d_fmadd(true, w)
       else if k.cid == C_FADD32.cid then d_fbin(FB_add, false, w)
@@ -1070,6 +1107,9 @@ mapping clause encdec = forwards (ASR(_) as i) if is_some_int(agx_encode(i)) => 
 mapping clause encdec = forwards (IUNOP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (FBIN(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (FMADD(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (EXTR(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (INTL(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (CONVERT(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (FUNOP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (RCP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (CMPSEL(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))

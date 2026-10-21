@@ -39,6 +39,9 @@ ICC = {"eq": "ueq", "ult": "ult", "ugt": "ugt", "seq": "seq", "slt": "slt", "sgt
 MASKS = {a: ('x' if a & 1 else '') + ('y' if a & 2 else '') + ('z' if a & 4 else '') + ('w' if a & 8 else '') for a in range(16)}
 
 
+# applegpu's / LLVM's names of the convert modes (the direction field prints as rtz / rte)
+CONVERT_NAMES = {0: "u8_to_f", 1: "s8_to_f", 4: "f_to_u16", 5: "f_to_s16", 6: "u16_to_f", 7: "s16_to_f", 8: "f_to_u32",
+                 9: "f_to_s32", 10: "u32_to_f", 11: "s32_to_f"}
 SR_NAMES = dict(XA.applegpu.SR_NAMES) if XA is not None else {}
 
 
@@ -174,7 +177,14 @@ def llvm_text(toks):
         if tt in alias:
             return "%s %s, %s, %s" % (alias[tt], reg_text(*d), a, b)
         return "bitop %s, %s, %s, %s" % ("".join(str((tt >> i) & 1) for i in range(4)), reg_text(*d), a, b)
-    if c in ("BFI", "BFEIL"):
+    if c == "INTL":
+        d = T.reg()
+        return "intl %s, %s, %s" % (reg_text(*d), T.op(), T.op())
+    if c == "CONVERT":
+        m, i2f = T.int(), T.int()
+        d = T.reg()
+        return "convert %s, %s, %s, %s" % (CONVERT_NAMES[m], reg_text(*d), T.op(), "rte" if i2f else "rtz")
+    if c in ("BFI", "BFEIL", "EXTR"):
         m = T.int()
         d = T.reg()
         ops = [T.op() for _ in range(3)]
