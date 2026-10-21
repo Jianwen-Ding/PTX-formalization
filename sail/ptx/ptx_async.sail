@@ -137,6 +137,33 @@ function mbDel(k) = {
   smap_del(SP_MBARS, concat_str("t", ks)); smap_del(SP_MBARS, concat_str("l", ks))
 }
 
+/* "Performing any mbarrier operation except mbarrier.init on a memory location that does not contain a valid mbarrier
+ * object, results in undefined behaviour"; an address outside the .shared::cta (or cluster shared) window is undefined
+ * too (9.7.14.16).  Neither has a meaning the model could give, so both stop the run. */
+/* an mbarrier object is a .b64 with "Alignment (bytes) 8" in .shared (9.7.14.16.1): a misaligned
+   address is reported under .ub strict */
+val mbAligned : (string, int) -> bool
+function mbAligned(op, k) =
+  if ub & tmod_int(k, 8) != 0 then { fault(concat_str("mbarrier.", concat_str(op, ": address not aligned to 8 bytes")), k); false }
+  else true
+
+val mbOk : (string, int) -> bool
+function mbOk(op, k) =
+  if k == -1 then { fault(concat_str("mbarrier.", concat_str(op, ": address outside the shared memory windows")), 0); false }
+  else if not_bool(mbHas(k)) then { fault(concat_str("mbarrier.", concat_str(op, " on an object that is not initialised")), 0); false }
+  else mbAligned(op, k)
+
+/* Table 37 (9.7.14.16.3): the counts' ranges, checked under .ub strict */
+val mbMaxCount : int -> int
+function mbMaxCount(l) = if l == 1 then 511 else 1048575
+val mbUbState : (string, (int, int, int, int, int)) -> bool
+function mbUbState(op, s) = {
+  let (_, q, e, t, l) = s;
+  if ub & (t > 1048575 | t < negate(1048575)) then { fault(concat_str("mbarrier.", concat_str(op, ": tx-count outside -(2^20 - 1) .. 2^20 - 1")), t); false }
+  else if ub & (q < 0 | q > mbMaxCount(l)) then { fault(concat_str("mbarrier.", concat_str(op, ": arrive count larger than the pending count")), q); false }
+  else true
+}
+
 val mbCheck : ((int, int, int, int, int)) -> (int, int, int, int, int)
 function mbCheck(s) = { let (p, q, e, t, l) = s; if q == 0 & t == 0 then (p + 1, e, e, 0, l) else s }
 val mbArrive : ((int, int, int, int, int), int) -> (int, int, int, int, int)
@@ -192,13 +219,19 @@ function mbWaitOp(m, sp, ds, a, s) = {
   let k = mbKey(ea(a, sp));
   let v = rd(s, mkty("b", 64));
   let t = tchk(cur);
-  if has(m, "try_wait") then {
+  if has(m, "try_wait") & not_bool(mbOk("try_wait", k)) then ()
+  else if has(m, "try_wait") then {
     t_wd[t] = [|k, b2i(has(m, "parity")), v|];
     t_wx[t] = ds;
     t_cont[t] = K_wait("mbtry", 0);
     yielded = true
-  } else if mbHas(k) then wrWait(ds, b2i(mbDone(k, m, v)))
-  else fault("mbarrier.test_wait on an object that is not initialised", 0)
+  } else if mbOk("test_wait", k) then {
+    /* waitPhase "must be ... the current phase or the immediately preceding phase" (9.7.14.16.19): an older state is
+       reported under .ub strict */
+    if ub & not_bool(has(m, "parity")) & mbPhase(k) > land_int(v, 4294967295) + 1 then
+      fault("mbarrier.test_wait: the state is older than the immediately preceding phase", v)
+    else wrWait(ds, b2i(mbDone(k, m, v)))
+  }
 }
 
 val exec_mbar : (opcode, list(xop)) -> bool
@@ -210,20 +243,31 @@ function exec_mbar(o, ops) = {
   else match ops {
     [|XB([|a|], [||]), n|] if has(m, "init") => {
       let c = rdu32(n);
-      mbPut(mbKey(ea(a, sp)), (0, c, c, 0, if has(m, "layout::v1") then 1 else 0));
+      let k = mbKey(ea(a, sp));
+      let l = if has(m, "layout::v1") then 1 else 0;
+      if k == -1 then fault("mbarrier.init: address outside the shared memory windows", 0)
+      /* "The behavior of performing an mbarrier.init operation on a memory location containing a valid mbarrier object
+         is undefined"; count in [1, 2^20 - 1] (v0) or [1, 2^9 - 1] (v1) (9.7.14.16.12): under .ub strict */
+      else if not_bool(mbAligned("init", k)) then ()
+      else if ub & mbHas(k) then fault("mbarrier.init on a valid mbarrier object", 0)
+      else if ub & (c < 1 | c > mbMaxCount(l)) then fault("mbarrier.init: count outside the range of the layout", c)
+      else mbPut(k, (0, c, c, 0, l));
       true
     },
-    [|XB([|a|], [||])|] if has(m, "inval") => { mbDel(mbKey(ea(a, sp))); true },
+    [|XB([|a|], [||])|] if has(m, "inval") => { let k = mbKey(ea(a, sp)); if mbOk("inval", k) then mbDel(k); true },
     [|XB([|a|], [||]), n, mk|] if (has(m, "expect_tx") | has(m, "complete_tx")) & not_bool(has(m, "arrive")) & mc => {
       let v = if has(m, "complete_tx") then negate(rdu32(n)) else rdu32(n);
       var ks = mbMcKeys(land_int(locOffA(ea(a, sp)), 16777215), rdu32(mk));
       while is_cons(ks) do { match ks { k :: rest => { if mbHas(k) then mbPut(k, mbTx(mbGet(k), v)); ks = rest }, [||] => () } };
       true
     },
-    XB([|a|], [||]) :: n :: _ if (has(m, "expect_tx") | has(m, "complete_tx")) & not_bool(has(m, "arrive") | has(m, "arrive_drop")) & not_bool(mc)
-                                  & mbHas(mbKey(ea(a, sp))) => {
+    XB([|a|], [||]) :: n :: _ if (has(m, "expect_tx") | has(m, "complete_tx")) & not_bool(has(m, "arrive") | has(m, "arrive_drop")) & not_bool(mc) => {
       let k = mbKey(ea(a, sp));
-      mbPut(k, mbTx(mbGet(k), if has(m, "complete_tx") then negate(rdu32(n)) else rdu32(n)));
+      if mbOk(if has(m, "complete_tx") then "complete_tx" else "expect_tx", k) then {
+        let (p, q, e, t, l) = mbGet(k);
+        let t1 = t + (if has(m, "complete_tx") then negate(rdu32(n)) else rdu32(n));
+        if mbUbState("expect_tx", (p, q, e, t1, l)) then mbPut(k, mbCheck((p, q, e, t1, l)))
+      };
       true
     },
     _ :: XB([|a|], [||]) :: rest if has(m, "arrive") & mc => {
@@ -235,12 +279,23 @@ function exec_mbar(o, ops) = {
       while is_cons(ks) do { match ks { k :: rr => { if mbHas(k) then mbPut(k, mbArrive(mbTx(mbGet(k), tx), cnt)); ks = rr }, [||] => () } };
       true
     },
-    d :: XB([|a|], [||]) :: rest if (has(m, "arrive") | has(m, "arrive_drop")) & not_bool(mc) & mbHas(mbKey(ea(a, sp))) => {
+    d :: XB([|a|], [||]) :: rest if (has(m, "arrive") | has(m, "arrive_drop")) & not_bool(mc) => {
       let k = mbKey(ea(a, sp));
-      let s = mbGet(k);
-      let s1 = mbTx(s, mbTxArg(m, rest));
-      mbPut(k, if has(m, "arrive_drop") then mbDrop(s1, mbCountArg(m, rest)) else mbArrive(s1, mbCountArg(m, rest)));
-      wr(d, mbState(s));
+      if mbOk(if has(m, "arrive_drop") then "arrive_drop" else "arrive", k) then {
+        let s = mbGet(k);
+        let (p0, q0, e0, t0, l0) = s;
+        let n = mbCountArg(m, rest);
+        let t1 = t0 + mbTxArg(m, rest);
+        /* count "must be in the range" of Table 37, so at most the pending count; a .noComplete arrive "must not
+           cause the mbarrier to complete its current phase" (9.7.14.16.16): under .ub strict */
+        if ub & (n < 1 | n > q0) then fault("mbarrier.arrive: arrive count larger than the pending count", n)
+        else if mbUbState("arrive", (p0, q0, e0, t1, l0)) then {
+          let s2 = if has(m, "arrive_drop") then mbDrop((p0, q0, e0, t1, l0), n) else mbArrive((p0, q0, e0, t1, l0), n);
+          let (p2, _, _, _, _) = s2;
+          if ub & has(m, "noComplete") & p2 != p0 then fault("mbarrier.arrive.noComplete completes the current phase", 0)
+          else { mbPut(k, s2); wr(d, mbState(s)) }
+        }
+      };
       true
     },
     d :: XB([|a|], [||]) :: s :: _ if has(m, "test_wait") | has(m, "try_wait") => { mbWaitOp(m, sp, dests(d), a, s); true },
@@ -250,12 +305,27 @@ function exec_mbar(o, ops) = {
     },
     [|d, s|] if has(m, "pending_count") => { wr(d, land_int(asr_int(rd(s, mkty("b", 64)), 32), 1048575)); true },
     [|d, XB([|a|], [||])|] if has(m, "check_layout") => {
-      let (_, _, _, _, l) = mbGet(mbKey(ea(a, sp)));
-      wr(d, b2i(l == (if has(m, "layout::v1") then 1 else 0)));
+      let k = mbKey(ea(a, sp));
+      if mbOk("check_layout", k) then { let (_, _, _, _, l) = mbGet(k); wr(d, b2i(l == (if has(m, "layout::v1") then 1 else 0))) };
       true
     },
     _ => false
   }
+}
+
+/* try_wait: "Suspended thread resumes execution when the specified phase completes OR before the phase completes
+ * following a system-dependent time limit" (9.7.14.16.19).  The model's time limit expires when no thread can otherwise
+ * make progress: every suspended try_wait then returns False. */
+function ext_timeout() = {
+  var any : bool = false;
+  foreach (t from 0 to (nthreads - 1)) {
+    let s = tchk(t);
+    if t_alive[s] then match t_cont[s] {
+      K_wait("mbtry", _) => { let sv = cur; cur = t; wrWait(t_wx[s], 0); cur = sv; t_cont[s] = K_none(); any = true },
+      _ => ()
+    }
+  };
+  any
 }
 
 /* the blocked waits */
@@ -380,10 +450,10 @@ function exec_async(o, ops) = {
     if has(m, "commit_group") | has(m, "wait_group") | has(m, "wait_all") then true
     else if has(m, "mbarrier") then match ops {
       [|XB([|a|], [||])|] => {
-        if has(m, "noinc") then {
-          let k = mbKey(ea(a, "shared"));
-          if mbHas(k) then { mbPut(k, mbArrive(mbGet(k), 1)); true } else false
-        } else true
+        /* "If no state space is specified then Generic Addressing is used" (9.7.14.16.18) */
+        let k = mbKey(ea(a, if has(m, "shared") then "shared" else "generic"));
+        if mbOk("arrive", k) & has(m, "noinc") then mbPut(k, mbArrive(mbGet(k), 1));
+        true
       },
       _ => false
     } else match ops {

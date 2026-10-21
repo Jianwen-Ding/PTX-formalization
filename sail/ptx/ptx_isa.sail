@@ -342,6 +342,30 @@ function isaQual(o, ops) = {
   else if (b == "ld" | b == "st") & (has(m, "v8") | (has(m, "v4") & w == 64))
           & isaAny(m, [|"shared", "local", "param", "const", "shared::cta", "shared::cluster"|]) then
     concat_str(b, ": .v8, and .v4 with a 64-bit type, need the .global state space or generic addressing [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
+  else if b == "mbarrier" & has(m, "multicast::cluster::32b") then
+    "mbarrier: the .multicast::cluster::32b forms are not in PTX ISA 9.3 (9.7.14.16)"
+  else if b == "mbarrier" & isaAny(m, [|"relaxed", "release", "acquire"|]) != isaAny(m, [|"cta", "cluster", "gpu", "sys"|]) then
+    "mbarrier: qualifiers .sem and .scope must be specified together [PTX ISA 9.3 9.7.14.16]"
+  else if b == "mbarrier" & isaAny(m, [|"gpu", "sys"|]) then
+    "mbarrier: .scope is .cta or .cluster [PTX ISA 9.3 9.7.14.16]"
+  else if b == "mbarrier" & isaAny(m, [|"arrive", "arrive_drop"|]) & has(m, "acquire") then
+    "mbarrier.arrive: .sem is .release or .relaxed [PTX ISA 9.3 9.7.14.16.16]"
+  else if b == "mbarrier" & isaAny(m, [|"test_wait", "try_wait"|]) & has(m, "release") then
+    "mbarrier.test_wait / try_wait: .sem is .acquire or .relaxed [PTX ISA 9.3 9.7.14.16.19]"
+  else if b == "mbarrier" & isaAny(m, [|"expect_tx", "complete_tx"|]) & not_bool(isaAny(m, [|"arrive", "arrive_drop"|]))
+          & isaAny(m, [|"release", "acquire"|]) then
+    "mbarrier.expect_tx / complete_tx: .sem is .relaxed [PTX ISA 9.3 9.7.14.16.14 / .15]"
+  else if b == "mbarrier" & isaAny(m, [|"test_wait", "try_wait"|]) & has(m, "shared::cluster") then
+    "mbarrier.test_wait / try_wait: the state space is .shared::cta [PTX ISA 9.3 9.7.14.16.19]"
+  else if b == "mbarrier" & has(m, "noComplete") & isaAny(m, [|"relaxed", "acquire", "cluster"|]) then
+    "mbarrier.arrive.noComplete: only .release.cta [PTX ISA 9.3 9.7.14.16.16]"
+  else if b == "mbarrier" & has(m, "check_layout") & not_bool(isaAny(m, [|"layout::v0", "layout::v1"|])) then
+    "mbarrier.check_layout: a .layout qualifier is required [PTX ISA 9.3 9.7.14.16.21]"
+  else if b == "mbarrier" & has(m, "init") & isaBadImm(ops, 2, 1, 1, if has(m, "layout::v1") then 511 else 1048575, 1) then
+    "mbarrier.init: count outside the range of the layout [PTX ISA 9.3 9.7.14.16.12]"
+  else if b == "mbarrier" & isaAny(m, [|"test_wait", "try_wait"|]) & has(m, "parity")
+          & (isaBadImm(ops, 3, 2, 0, 1, 1) | isaBadImm(ops, 4, 2, 0, 1, 1) | isaBadImm(ops, 4, 3, 0, 1, 1) | isaBadImm(ops, 5, 3, 0, 1, 1)) then
+    "mbarrier.test_wait / try_wait.parity: the phase parity is 0 or 1 [PTX ISA 9.3 9.7.14.16.19]"
   else if (b == "discard" | b == "applypriority") & isaBadImm(ops, 2, 1, 128, 128, 1) then
     concat_str(b, if b == "discard" then ": the only supported size is 128 [PTX ISA 9.3 9.7.9.18]"
                   else ": the only supported size is 128 [PTX ISA 9.3 9.7.9.17]")

@@ -217,6 +217,22 @@ Open:
 - [x] ld / st `.v8` only with 32-bit types, and `.v8` / `.v4` with 64-bit types only with `.global` or generic
       addressing (§9.7.9.8, §9.7.9.11): reported under `.isacheck` (tests/neg/isa-ld-v8-*.ptx); ld.global.nc with sink
       elements (tests/ld-nc-vec-sink.ptx)
+- [x] mbarrier (§9.7.14.16) review:
+      - `try_wait` resumes "following a system-dependent time limit": when no thread can otherwise progress, suspended
+        try_waits return False (it deadlocked) (tests/mbar-trywait-timeout.ptx)
+      - `cp.async.mbarrier.arrive.noinc` without a state space uses generic addressing (tests/mbar-cpasync-noinc-generic.ptx)
+      - an operation on an object that is not initialised (or after inval), or at an address outside the shared windows,
+        stops with one message for every operation (it fell through to "unsupported instruction" or deadlocked)
+      - `.ub strict`: init on a valid object, init count outside Table 37, tx-count outside ±(2^20 - 1), an arrive count
+        of 0 or beyond the pending count, a `.noComplete` arrive that completes the phase, test_wait with a state older
+        than the preceding phase, an address not 8-byte aligned (tests/neg/mbar-ub-*.ptx)
+      - `.isacheck`: .sem / .scope together, .scope only .cta / .cluster, arrive not .acquire, waits not .release,
+        expect_tx / complete_tx only .relaxed, waits only on .shared::cta, noComplete only .release.cta, check_layout needs
+        .layout, init count and parity immediates in range, the `.multicast::cluster::32b` forms (not in 9.3)
+        (tests/neg/isa-mbar-*.ptx)
+- [ ] mbarrier, not reported: ld / st on an initialised object, cp.async.mbarrier.arrive pending overflow, reading the
+      v1 report operands when waitComplete is False, a primary phase with no successful wait before the next arrive;
+      whether expect_tx alone may complete a phase (22188-22192 vs 22227-22231) is left as is (it can)
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

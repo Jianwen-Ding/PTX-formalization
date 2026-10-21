@@ -1,0 +1,22 @@
+// expect: mbarrier.test_wait: the state is older than the immediately preceding phase
+// test_wait with a state older than the preceding phase is undefined (9.7.14.16.19), reported under .ub strict
+.version 9.3
+.target sm_90
+.address_size 64
+.ub strict;
+.visible .entry k(.param .u64 po)
+{
+ .reg .b64 %o, %st, %st2, %mb, %g, %x; .reg .b32 %r<16>; .reg .pred %p, %q, %c;
+ .shared .align 8 .b64 bar[4];
+ .global .align 8 .b64 gbar[1];
+ ld.param.u64 %o, [po];
+ mov.u64 %mb, bar;
+ cvta.shared.u64 %g, %mb;
+mbarrier.init.shared.b64 [%mb], 1; mbarrier.arrive.shared.b64 %st2, [%mb]; mbarrier.arrive.shared.b64 %st, [%mb]; mbarrier.arrive.shared.b64 %st, [%mb]; mbarrier.test_wait.shared.b64 %p, [%mb], %st2; selp.u32 %r0,1,0,%p;
+st.global.v4.b32 [%o], {%r0,%r1,%r2,%r3};
+ st.global.v4.b32 [%o+16], {%r4,%r5,%r6,%r7};
+ ret;
+}
+.buffer O .u32 [8];
+.launch k <<< 1, 1 >>> (O);
+.expect O .u32 = {1,0,0,0,0,0,0,0};

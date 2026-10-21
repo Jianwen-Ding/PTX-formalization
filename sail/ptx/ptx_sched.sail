@@ -17,6 +17,7 @@ val exec_dispatch : (opcode, list(xop)) -> unit
 /* other modules' blocking continuations */
 val ext_wait_ready : unit -> bool
 val ext_wait_ready2 : unit -> bool
+val ext_timeout : unit -> bool
 val mkCtas : (int, int) -> unit
 
 val isVisible : item -> bool
@@ -162,6 +163,7 @@ function run_grid() = {
       if nextcta >= vol(gridDim) then go = false
       else if occ > 0 & resident < occ then { mkCtas(nextcta, nextcta + 1); progress = true }
     } else if occ > 0 & resident < occ & nextcta < vol(gridDim) then { mkCtas(nextcta, nextcta + 1); progress = true };
+    if go & not_bool(progress) & not_bool(stuck) then { if ext_timeout() then progress = true };
     if go & not_bool(progress) then { fault("deadlock: no thread can make progress", 0); go = false }
   };
   turn = -2
