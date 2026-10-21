@@ -89,15 +89,19 @@ function tcNum(m) = if has(m, "x128") then 128 else if has(m, "x64") then 64 els
 val tcPer : list(string) -> int
 function tcPer(m) = if has(m, "16x256b") then 4 else if has(m, "16x128b") then 2 else 1
 
-/* (lane, column) of register i of thread t */
+/* (lane, column) of register i of thread t (ISA 9.7.17.2.3, Figures 183-187): in the 16-lane shapes thread t covers
+   lane t / 4 (and lane t / 4 + 8): .16x64b lane t / 4 + 8 (t % 2), column (t / 2) % 2 of each 64-bit repetition;
+   .16x128b column t % 4 of each 128-bit repetition, r0 / r1 in lanes t / 4 / t / 4 + 8; .16x256b columns
+   2 (t % 4), 2 (t % 4) + 1 of each 256-bit repetition, r0 r1 / r2 r3 in lanes t / 4 / t / 4 + 8 */
 val tcCell : (list(string), int, int, int, int) -> int
 function tcCell(m, a, t, i, h) = {
   let l = tcLane(a);
   let c = tcCol(a);
+  let g = tdiv_int(t, 4);
   if has(m, "32x32b") then tcKey(l + t, c + i)
-  else if has(m, "16x64b") then tcKey(l + fmod_int(t, 16), c + 2 * i + tdiv_int(t, 16))
-  else if has(m, "16x128b") then tcKey(l + fmod_int(t, 16), c + 4 * tdiv_int(i, 2) + 2 * tdiv_int(t, 16) + fmod_int(i, 2))
-  else if has(m, "16x256b") then tcKey(l + fmod_int(t, 16), c + 8 * tdiv_int(i, 4) + 4 * tdiv_int(t, 16) + fmod_int(i, 4))
+  else if has(m, "16x64b") then tcKey(l + g + 8 * fmod_int(t, 2), c + 2 * i + fmod_int(tdiv_int(t, 2), 2))
+  else if has(m, "16x128b") then tcKey(l + g + 8 * fmod_int(i, 2), c + 4 * tdiv_int(i, 2) + fmod_int(t, 4))
+  else if has(m, "16x256b") then tcKey(l + g + 8 * tdiv_int(fmod_int(i, 4), 2), c + 8 * tdiv_int(i, 4) + 2 * fmod_int(t, 4) + fmod_int(i, 2))
   else if has(m, "16x32bx2") then tcKey(l + fmod_int(t, 16), c + i + tdiv_int(t, 16) * h)
   else -1
 }
@@ -160,6 +164,16 @@ function tcDesc(d) =
   lor_int(lor_int(land_int(d, 16383), shl_int(land_int(asr_int(d, 16), 16383), 16)),
           lor_int(shl_int(land_int(asr_int(d, 32), 16383), 32),
                   lor_int(shl_int(land_int(tcSwz(land_int(asr_int(d, 61), 7)), 3), 62), shl_int(tdiv_int(tcSwz(land_int(asr_int(d, 61), 7)), 4), 56))))
+
+/* bit 52 of the shared memory descriptor (ISA 9.7.17.3.1, Table 45): 1 = the leading dimension field is an absolute
+   byte address of a second data chunk (9.7.17.3.1.2, K dimension of 48 bytes).  The ISA does not say which part of a
+   row the second chunk holds, so the model stops with an error instead of reading the field as a relative offset */
+val tcAbsBad : (bool, int, int) -> bool
+function tcAbsBad(ad, a, b) = {
+  let bad = (ad & land_int(asr_int(a, 52), 1) == 1) | land_int(asr_int(b, 52), 1) == 1;
+  if bad then fault("tcgen05: the absolute leading-dimension address mode (descriptor bit 52) is not modelled", 0);
+  bad
+}
 
 val isMxK : list(string) -> bool
 function isMxK(m) = has(m, "kind::mxf8f6f4") | has(m, "kind::mxf4") | has(m, "kind::mxf4nvf4")
@@ -274,10 +288,16 @@ function tcPutD(tm, base, mk, m, n) =
     if not_bool(bit_int(mk, r)) then
       foreach (c from 0 to (n - 1)) tcPut(tm, tcKey(r, base + c), mget(SP_MD, rc(r, c)))
 
-/* sparse A: expand the packed matrix in SP_MA with the metadata in tensor memory */
+/* sparse A: expand the packed matrix in SP_MA with the metadata in tensor memory.  Eight chunks per row
+   (.kind::f16, .kind::tf32; Figures 262-265): column mc + sel; in each block of 16 rows, lane 8 (c / 4) + r % 8
+   holds chunks 4 (c / 4) .. + 3 of rows r % 8 (nibbles 0-3) and r % 8 + 8 (nibbles 4-7).  Sixteen chunks
+   (Figures 266, 267): lane r, columns mc, mc + 1.  The 16-row blocks are at lanes 16 (r / 16) as the model's A and
+   D rows (it does not model the half-lane data-path layouts of M = 64) */
 val tcNib : (int, ty, int, int, int, int, int) -> int
 function tcNib(tm, t, r, mc, sel, c, kp) =
-  if tdiv_int(2 * kp, spCw(t)) <= 8 then land_int(asr_int(tcWord(tm, tcKey(r, mc + sel)), 4 * c), 15)
+  if tdiv_int(2 * kp, spCw(t)) <= 8 then
+    land_int(asr_int(tcWord(tm, tcKey(16 * tdiv_int(r, 16) + 8 * tdiv_int(c, 4) + fmod_int(r, 8), mc + sel)),
+                     16 * tdiv_int(fmod_int(r, 16), 8) + 4 * fmod_int(c, 4)), 15)
   else land_int(asr_int(tcWord(tm, tcKey(r, mc + tdiv_int(c, 8))), 4 * fmod_int(c, 8)), 15)
 
 let SP_MT : int = 26
@@ -416,6 +436,14 @@ function tcScaleF(st, x) = match st {
 val tcScaleTy : (list(string), int) -> int
 function tcScaleTy(m, id) = if has(m, "kind::mxf4nvf4") then land_int(asr_int(id, 23), 1) else 1
 
+/* scale factor byte b (= SF ID + j) of row / column x of an M x SF or SF x N scale matrix at column x0
+   (ISA 9.7.17.10.7, Figures 231-258): lane x % 32, column x0 + x / 32, byte b % 4; bytes 4.. of the K = 96 forms
+   (3 or 6 factors) are in the next group of columns, 4 columns on (8 when N > 128) */
+val tcSF : (int, int, int, int, int) -> int
+function tcSF(tm, x0, b, x, dim) =
+  land_int(asr_int(tcWord(tm, tcKey(fmod_int(x, 32), x0 + tdiv_int(b, 4) * (if dim > 128 then 8 else 4) + tdiv_int(x, 32))),
+                   8 * fmod_int(b, 4)), 255)
+
 val tc_mmabs : (list(string), bool, int, int, int, int, bool, int, int, int) -> unit
 function tc_mmabs(m, ad, av, bv, id, da, en, sac, sbc, meta) = {
   let c = cur_cta();
@@ -438,9 +466,9 @@ function tc_mmabs(m, ad, av, bv, id, da, en, sac, sbc, meta) = {
   let ida = land_int(asr_int(id, 29), 3);
   let idb = land_int(asr_int(id, 4), 3);
   foreach (r from 0 to (md - 1))
-    foreach (j from 0 to (nb - 1)) mset(SP_SA, rc(r, j), land_int(asr_int(tcWord(tm, tcKey(r, sac)), 8 * (ida + j)), 255));
+    foreach (j from 0 to (nb - 1)) mset(SP_SA, rc(r, j), tcSF(tm, sac, ida + j, r, md));
   foreach (nn from 0 to (n - 1))
-    foreach (j from 0 to (nb - 1)) mset(SP_SB, rc(j, nn), land_int(asr_int(tcWord(tm, tcKey(fmod_int(nn, 32), sbc + tdiv_int(nn, 32))), 8 * (idb + j)), 255));
+    foreach (j from 0 to (nb - 1)) mset(SP_SB, rc(j, nn), tcSF(tm, sbc, idb + j, nn, n));
   smap_clear(SP_MD);
   foreach (r from 0 to (md - 1))
     foreach (cc from 0 to (n - 1)) {
@@ -577,24 +605,26 @@ function exec_tc(o, ops) = {
   } else if has(m, "mma") & has(m, "block_scale") then match ops {
     [|XB([|d|], [||]), av, bd, id, XB([|sa|], [||]), XB([|sb|], [||]), en|] if not_bool(has(m, "sp")) => {
       let (ad, a) : (bool, int) = match av { XB([|x|], [||]) => (false, tcAddr(x)), _ => (true, rd(av, mkty("b", 64))) };
-      tc_mmabs(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), rdu32(en) != 0, tcCol(tcAddr(sa)), tcCol(tcAddr(sb)), -1);
+      if not_bool(tcAbsBad(ad, a, rd(bd, mkty("b", 64)))) then
+        tc_mmabs(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), rdu32(en) != 0, tcCol(tcAddr(sa)), tcCol(tcAddr(sb)), -1);
       true
     },
     [|XB([|d|], [||]), av, bd, XB([|mt|], [||]), id, XB([|sa|], [||]), XB([|sb|], [||]), en|] if has(m, "sp") => {
       let (ad, a) : (bool, int) = match av { XB([|x|], [||]) => (false, tcAddr(x)), _ => (true, rd(av, mkty("b", 64))) };
-      tc_mmabs(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), rdu32(en) != 0, tcCol(tcAddr(sa)), tcCol(tcAddr(sb)), tcCol(tcAddr(mt)));
+      if not_bool(tcAbsBad(ad, a, rd(bd, mkty("b", 64)))) then
+        tc_mmabs(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), rdu32(en) != 0, tcCol(tcAddr(sa)), tcCol(tcAddr(sb)), tcCol(tcAddr(mt)));
       true
     },
     _ => false
   } else if has(m, "mma") then match ops {
     XB([|d|], [||]) :: av :: bd :: XB([|mt|], [||]) :: id :: rest if has(m, "sp") => {
       let (ad, a) : (bool, int) = match av { XB([|x|], [||]) => (false, tcAddr(x)), _ => (true, rd(av, mkty("b", 64))) };
-      tc_mma(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), tcCol(tcAddr(mt)), rest);
+      if not_bool(tcAbsBad(ad, a, rd(bd, mkty("b", 64)))) then tc_mma(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), tcCol(tcAddr(mt)), rest);
       true
     },
     XB([|d|], [||]) :: av :: bd :: id :: rest if not_bool(has(m, "sp")) => {
       let (ad, a) : (bool, int) = match av { XB([|x|], [||]) => (false, tcAddr(x)), _ => (true, rd(av, mkty("b", 64))) };
-      tc_mma(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), -1, rest);
+      if not_bool(tcAbsBad(ad, a, rd(bd, mkty("b", 64)))) then tc_mma(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), -1, rest);
       true
     },
     _ => false
@@ -610,7 +640,8 @@ function exec_tc(o, ops) = {
     [|XB([|ta|], [||]), dd|] => {
       let a = tcAddr(ta);
       let d = tcDesc(rd(dd, mkty("b", 64)));
-      if not_bool(has(m, "cta_group::2")) then { tcCp(tcSpace(c, "tm"), c_smem[cchk(c)], m, tcLane(a), tcCol(a), d); true }
+      if tcAbsBad(false, 0, rd(dd, mkty("b", 64))) then true
+      else if not_bool(has(m, "cta_group::2")) then { tcCp(tcSpace(c, "tm"), c_smem[cchk(c)], m, tcLane(a), tcCol(a), d); true }
       else match tcPeer() {
         Some(pt) => {
           tcCp(tcSpace(c, "tm"), c_smem[cchk(c)], m, tcLane(a), tcCol(a), d);

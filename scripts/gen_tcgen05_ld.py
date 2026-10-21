@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate tests/tc-red.ptx (tcgen05.ld.red, tcgen05.ld[.red].spcompress) and tests/tc-cpd.ptx (tcgen05.cp decompression)
-and tests/spc.ptx (spcompress / spdecompress) against direct models.  usage: gen_tcgen05_ld.py"""
+and tests/spc.ptx (spcompress / spdecompress) and tests/tc-ldmap.ptx (the lane / column cells of the 16-lane
+tcgen05.ld / st shapes, ISA Figures 184-186) against direct models.  usage: gen_tcgen05_ld.py"""
 import random, sys, struct, math
 here = __file__.rsplit('/', 1)[0]
 src = open(here + '/gen_wgmma.py').read().split('# name: (N, K')[0]
@@ -219,4 +220,65 @@ L.append("    ret;\n}\n")
 assert ko == NO, (ko, NO)
 code = "\n".join(L) + "\n" + buf('DIN', 'u32', din) + f"\n.buffer O .u32 [{NO}];\n.launch k <<< 1, 1 >>> (DIN, O);\n" + expect('O', 'u32', exp_o) + "\n"
 open('tests/spc.ptx', 'w').write(code)
+# ------------------------------------------------------------------ 16xNb shapes: cells of each (thread, register)
+# Transcribed row by row from ISA Figures 184-186 (one .x1 repetition; repetition x adds x * width columns):
+#   .16x64b  (2 columns): lane L < 8: T4L r0 col 0, T4L+2 r0 col 1; lane L + 8: T4L+1 r0 col 0, T4L+3 r0 col 1
+#   .16x128b (4 columns): lane L: T4L+j r0 col j; lane L + 8: T4L+j r1 col j
+#   .16x256b (8 columns): lane L: T4L+j r0 col 2j, r1 col 2j+1; lane L + 8: T4L+j r2 col 2j, r3 col 2j+1
+def cells16(shape, num):
+    width, nreg = {'16x64b': (2, 1), '16x128b': (4, 2), '16x256b': (8, 4)}[shape]
+    rep = {}                     # (thread, register in the repetition) -> (lane, column) for one repetition
+    for L in range(8):
+        for j in range(4):
+            t = 4 * L + j
+            if shape == '16x64b':
+                rep[(4 * L, 0)], rep[(4 * L + 2, 0)], rep[(4 * L + 1, 0)], rep[(4 * L + 3, 0)] = (L, 0), (L, 1), (L + 8, 0), (L + 8, 1)
+            elif shape == '16x128b':
+                rep[(t, 0)], rep[(t, 1)] = (L, j), (L + 8, j)
+            else:
+                rep[(t, 0)], rep[(t, 1)], rep[(t, 2)], rep[(t, 3)] = (L, 2 * j), (L, 2 * j + 1), (L + 8, 2 * j), (L + 8, 2 * j + 1)
+    out = {}
+    for t in range(32):
+        for x in range(num):
+            for i in range(nreg):
+                ln, c = rep[(t, i)]
+                out[(t, x * nreg + i)] = (ln, x * width + c)
+    assert sorted(out.values()) == [(ln, c) for ln in range(16) for c in range(width * num)]
+    return out
+MAPS = [('16x64b', 4), ('16x128b', 2), ('16x256b', 1)]
+NC = 8                           # every shape above covers 8 columns of lanes 0-15
+val = lambda salt, t, c: (salt << 24) | (t << 8) | c
+L = HDR[:]
+L.append(""".visible .entry k(.param .u64 po)
+{
+    .reg .b32 %v<8>, %w<8>, %tl, %tw; .reg .b64 %rd<4>;
+    .shared .align 16 .b32 slot[1];
+    mov.u32 %tl, %tid.x;
+    mov.u64 %rd1, slot;
+    mov.u32 %tw, 0;
+    tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%rd1], 32;
+    ld.param.u64 %rd0, [po]; mul.wide.u32 %rd2, %tl, 4; add.u64 %rd0, %rd0, %rd2;""")
+exp = {t: [] for t in range(32)}
+k = 0
+def put(reg):
+    global k
+    L.append(f"    st.global.b32 [%rd0+{k * 128}], {reg};"); k += 1
+for si, (shape, num) in enumerate(MAPS):
+    cl = cells16(shape, num); n = len(cl) // 32
+    # 1. lane t, column c := val(si, t, c) by .32x32b; read with the shape: register i of thread t gets its cell
+    for c in range(NC): L.append(f"    mad.lo.u32 %v{c}, %tl, 256, {(si << 24) | c};")
+    L.append(f"    tcgen05.st.sync.aligned.32x32b.x{NC}.b32 [%tw], {vec('v', NC)};\n    tcgen05.wait::st.sync.aligned;")
+    L.append(f"    tcgen05.ld.sync.aligned.{shape}.x{num}.b32 {vec('w', n)}, [%tw];\n    tcgen05.wait::ld.sync.aligned;")
+    for i in range(n): put(f"%w{i}")
+    for t in range(32): exp[t] += [val(si, *cl[(t, i)]) for i in range(n)]
+    # 2. write register i of thread t := val(si + 8, t, i) with the shape; read every cell back by .32x32b
+    for i in range(n): L.append(f"    mad.lo.u32 %w{i}, %tl, 256, {((si + 8) << 24) | i};")
+    L.append(f"    tcgen05.st.sync.aligned.{shape}.x{num}.b32 [%tw], {vec('w', n)};\n    tcgen05.wait::st.sync.aligned;")
+    L.append(f"    tcgen05.ld.sync.aligned.32x32b.x{NC}.b32 {vec('v', NC)}, [%tw];\n    tcgen05.wait::ld.sync.aligned;")
+    for c in range(NC): put(f"%v{c}")
+    inv = {cell: ti for ti, cell in cl.items()}
+    for t in range(32): exp[t] += [val(si + 8, *inv[(t, c)]) if (t, c) in inv else val(si, t, c) for c in range(NC)]
+L.append("    tcgen05.dealloc.cta_group::1.sync.aligned.b32 %tw, 32;\n    ret;\n}\n")
+code = "\n".join(L) + f"\n.buffer O .u32 [{32 * k}];\n.launch k <<< 1, 32 >>> (O);\n" + expect('O', 'u32', [exp[t][j] for j in range(k) for t in range(32)]) + "\n"
+open('tests/tc-ldmap.ptx', 'w').write(code)
 print("ok")

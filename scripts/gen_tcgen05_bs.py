@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Generate tests/tcbs-*.ptx: tcgen05.mma.cta_group::1.kind::{mxf8f6f4,mxf4,mxf4nvf4}.block_scale against an exact model.
-Scale-factor placement in tensor memory follows the layout assumed in semantics/ptx-exec-tc.k (docs/prior-work.md).
+Scale factors are placed in tensor memory per ISA 9.7.17.10.7 (Figures 231-258): row / column x of scale_A / scale_B
+at lane x % 32, column X + x / 32, byte SF_ID + j; bytes 4.. of the K = 96 forms 4 columns on (N <= 128); duplicated to
+the four 32-lane partitions.
 usage: gen_tcgen05_bs.py"""
 import random, sys
 from fractions import Fraction
@@ -18,6 +20,7 @@ CFG = [
  ('mxf8', 'kind::mxf8f6f4', '', 'e4m3', 'e2m3', 8, 32, 32, 'ue8m0', 2, 1, 1, 1),
  ('mxf4', 'kind::mxf4', '.scale_vec::2X', 'e2m1', 'e2m1', 8, 64, 32, 'ue8m0', 0, 2, 0, 0),
  ('nvf4', 'kind::mxf4nvf4', '.scale_vec::4X', 'e2m1', 'e2m1', 8, 64, 16, 'ue4m3', 0, 0, 0, 0),
+ ('mxf4k96', 'kind::mxf4', '.block32', 'e2m1', 'e2m1', 8, 96, 32, 'ue8m0', 2, 2, 1, 0),     # Figures 236, 245
 ]
 M = 128
 for kk, (nm, kind, extra, at, bt, N, K, blk, sty, sfa, sfb, en, z) in enumerate(CFG):
@@ -42,16 +45,21 @@ for kk, (nm, kind, extra, at, bt, N, K, blk, sty, sfa, sfb, en, z) in enumerate(
     size = (max(img) + 1 + 2047) // 2048 * 2048
     data = bytes(img.get(i, 0) for i in range(size))
     TC = {'e4m3': 0, 'e5m2': 1, 'e2m3': 3, 'e3m2': 4, 'e2m1': 1 if w == 4 else 5}
-    idesc = (sfb << 4) | (TC[at] << 7) | (TC[bt] << 10) | ((N >> 3) << 17) | ((1 if sty == 'ue8m0' else 0) << 23) | ((M >> 7) << 27) | (sfa << 29)
+    idesc = (sfb << 4) | (TC[at] << 7) | (TC[bt] << 10) | ((N >> 3) << 17) | ((1 if sty == 'ue8m0' else 0) << 23) | ((M >> 7) << 27) | (sfa << 29) | ((1 if K == 96 else 0) << 31)
     if kind == 'kind::mxf4nvf4': idesc &= ~(3 << 23)
-    # scale words (little endian bytes SFA_ID + block)
-    wa = [sum(SA[r][j] << (8 * (sfa + j)) for j in range(nb)) for r in range(M)]
-    wb = [sum(SB[c][j] << (8 * (sfb + j)) for j in range(nb)) for c in range(N)] + [0] * (128 - N)
+    # scale words: per TMEM lane (all 128, the partitions duplicated) 8 columns: column g * 4 + x // 32 holds bytes
+    # 4g..4g+3 of the SF_ID + j byte sequence of row / column x = 32 * (column % 4) + lane % 32
+    def sfw(S, n, sid, l, col):
+        x = 32 * (col % 4) + l % 32
+        return sum(S[x][j] << (8 * (sid + j - 4 * (col // 4))) for j in range(nb) if x < n and (sid + j) // 4 == col // 4)
+    NSC = 8
+    wa = [sfw(SA, M, sfa, l, col) for l in range(128) for col in range(NSC)]
+    wb = [sfw(SB, N, sfb, l, col) for l in range(128) for col in range(NSC)]
     nd = N; SAC, SBC = 300, 310
     L = HDR[:]
     L.append(f""".visible .entry k{kk}(.param .u64 pimg, .param .u64 pd, .param .u64 psa, .param .u64 psb, .param .u64 po)
 {{
-    .reg .b32 %r<8>, %x<4>, %D<{nd}>, %S<2>; .reg .b64 %rd<8>; .reg .b64 %dA, %dB; .reg .b32 %idesc, %tl, %tw;
+    .reg .b32 %r<8>, %x<4>, %D<{nd}>, %S<{NSC}>; .reg .b64 %rd<8>; .reg .b64 %dA, %dB; .reg .b32 %idesc, %tl, %tw;
     .reg .pred %p, %q;
     .shared .align 1024 .b8 buf[{size}];
     .shared .align 16 .b32 slot[2];
@@ -71,10 +79,10 @@ for kk, (nm, kind, extra, at, bt, N, K, blk, sty, sfa, sfb, en, z) in enumerate(
     L.append(f"    ld.param.u64 %rd0, [pd]; mul.wide.u32 %rd1, %tl, {nd * 4}; add.u64 %rd0, %rd0, %rd1;")
     for i in range(nd): L.append(f"    ld.global.b32 %D{i}, [%rd0+{i * 4}];")
     L.append(f"    tcgen05.st.sync.aligned.32x32b.x{nd}.b32 [%tw], {vec('D', nd)};")
-    L.append(f"    ld.param.u64 %rd0, [psa]; mul.wide.u32 %rd1, %tl, 4; add.u64 %rd0, %rd0, %rd1; ld.global.b32 %S0, [%rd0];")
-    L.append(f"    add.u32 %r1, %tw, {SAC};\n    tcgen05.st.sync.aligned.32x32b.x1.b32 [%r1], {{%S0}};")
-    L.append(f"    ld.param.u64 %rd0, [psb]; add.u64 %rd0, %rd0, %rd1; ld.global.b32 %S1, [%rd0];")
-    L.append(f"    add.u32 %r1, %tw, {SBC};\n    tcgen05.st.sync.aligned.32x32b.x1.b32 [%r1], {{%S1}};")
+    for par, col in (('psa', SAC), ('psb', SBC)):
+        L.append(f"    ld.param.u64 %rd0, [{par}]; mul.wide.u32 %rd1, %tl, {4 * NSC}; add.u64 %rd0, %rd0, %rd1;")
+        for i in range(NSC): L.append(f"    ld.global.b32 %S{i}, [%rd0+{4 * i}];")
+        L.append(f"    add.u32 %r1, %tw, {col};\n    tcgen05.st.sync.aligned.32x32b.x{NSC}.b32 [%r1], {vec('S', NSC)};")
     L.append("    tcgen05.wait::st.sync.aligned;\n    tcgen05.fence::before_thread_sync;\n    bar.sync 0;")
     L.append(f"    mov.b64 %dB, {descB};\n    mov.b64 %dA, {descA};\n    mov.b32 %idesc, {idesc};\n    mov.u32 %r5, {SAC};\n    mov.u32 %r6, {SBC};")
     L.append(f"    @%q tcgen05.mma.cta_group::1.{kind}.block_scale{extra} [%r3], %dA, %dB, %idesc, [%r5], [%r6], {en};")
