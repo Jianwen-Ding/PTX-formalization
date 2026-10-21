@@ -1051,6 +1051,22 @@ SREGS = ({"%tid", "%ntid", "%laneid", "%warpid", "%nwarpid", "%ctaid", "%nctaid"
           "%dynamic_smem_size", "%current_graph_exec", "%warpsize"}
          | {"%%pm%d" % i for i in range(8)} | {"%%pm%d_64" % i for i in range(8)} | {"%%envreg%d" % i for i in range(32)})
 
+COLOUR = {"r": "x", "g": "y", "b": "z", "a": "w"}
+
+def colour_fields(ld):
+    """vector elements may be named by the colour fields .r .g .b .a as well as .x .y .z .w (ISA 6.4.2)"""
+    def fix(x):
+        if isinstance(x, tuple):
+            if len(x) == 2 and x[0] == "reg" and isinstance(x[1], str) and "." in x[1]:
+                base, c = x[1].rsplit(".", 1)
+                if c in COLOUR and "@vec:" + base in ld.rw:
+                    return ("reg", base + "." + COLOUR[c])
+            return tuple(fix(y) for y in x)
+        if isinstance(x, list):
+            return [fix(y) for y in x]
+        return x
+    ld.code = [c if c[0] == "declvar" else (c[0], c[1], c[2], fix(c[3])) for c in ld.code]
+
 def check_regs(fname, ld):
     """every %-register operand is declared in the function or is a special register (ISA 6.1, 10)"""
     def walk(x):
@@ -1099,6 +1115,7 @@ def serialize(mod):
             fname, fkind, rs, ps = func_head(kw, rets, name, params)
             ld = Loader(fmarks(rs + ps))
             ld.pp(body)
+            colour_fields(ld)
             check_regs(fname, ld)
             labels = {k2: v for k2, v in ld.L.items() if not (k2.startswith("@ren:") or k2 in ("@depth", "@renid"))}
             lab_lines = []
