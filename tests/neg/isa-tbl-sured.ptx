@@ -1,0 +1,17 @@
+// expect: sured.b.add with .s64 is not a valid operation / type combination
+// PTX ISA 9.3 9.7.12.3: "Operation add applies to .u32, .u64, and .s32 types"
+.version 8.6
+.target sm_90
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 pS)
+{
+  .reg .b64 %S, %d; .reg .s32 %i;
+  ld.param.u64 %S, [pS];
+  mov.s32 %i, 8; mov.b64 %d, 5;
+  sured.b.add.1d.s64.trap [%S, {%i}], %d;
+  ret;
+}
+.buffer SB .u32 = { 15, 0, 1, 0, 2, 0, 0, 0 };
+.surface S .u32 SB .dims { 8, 1, 1 } .attrs { 1, 9, 1, 0, 0, 1, 0 } ;
+.launch k <<< 1, 1 >>> (S);

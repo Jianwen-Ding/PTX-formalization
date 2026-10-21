@@ -329,6 +329,49 @@ function expandMask(mk, chunks) = {
 val bulkOp : (string, ty) -> string
 function bulkOp(op, t) = if op == "add" & ty_eq(t, mkty("f", 32)) then "add.ftz" else op
 
+/* the PTX name of a type (.u32, .bf16, .f16x2, .e4m3x2, ...) */
+val tnm : ty -> string
+function tnm(t) =
+  if t.k == "bf" & t.w == 16 then "bf16" else if t.k == "tf" & t.w == 32 then "tf32"
+  else if string_length(t.k) > 2 then t.k else concat_str(t.k, dec_str(t.w))
+
+/* cp.reduce.async.bulk: "the valid combinations of .redOp and element type" (PTX ISA 9.3 ~16477-16486) and the .noftz
+ * form: ".add.f16 and .add.bf16 operations require .noftz qualifier" (~16471), which is valid only for them (~16426-16437).
+ * "" when legal, else the error.  Reported by `.isacheck ;` (isaTables, ptx_mm.sail).  Without it the other combinations
+ * run with the natural meaning of the operation on the type: integer operations on .b32 / .b64 as unsigned, .and / .or /
+ * .xor on the bits of any type, .add / .min / .max on floats as in atom (.add.f16 / .bf16 without .noftz as with it, the
+ * only behaviour the ISA defines; .noftz is ignored elsewhere); .inc / .dec on a floating-point type have no meaning and
+ * stop with an error (bulkRedRun). */
+val bulkRedErr : (bool, string, ty, bool) -> string
+function bulkRedErr(glob, op, t, noftz) = {
+  let n = tnm(t);
+  let ok : bool = match op {
+    "add" => if glob then has([|"u32", "s32", "u64", "f32", "f64", "f16", "bf16"|], n) else has([|"u32", "s32", "u64"|], n),
+    "min" => if glob then has([|"u32", "s32", "u64", "s64", "f16", "bf16"|], n) else has([|"u32", "s32"|], n),
+    "max" => if glob then has([|"u32", "s32", "u64", "s64", "f16", "bf16"|], n) else has([|"u32", "s32"|], n),
+    "inc" => n == "u32",
+    "dec" => n == "u32",
+    "and" => if glob then has([|"b32", "b64"|], n) else n == "b32",
+    "or" => if glob then has([|"b32", "b64"|], n) else n == "b32",
+    "xor" => if glob then has([|"b32", "b64"|], n) else n == "b32",
+    _ => false
+  };
+  let half = op == "add" & (n == "f16" | n == "bf16");
+  if not_bool(ok) then concat_str("cp.reduce.async.bulk: .", concat_str(op, concat_str(" with .", concat_str(n,
+    if glob then " is not a valid .redOp / type combination for .global" else " is not a valid .redOp / type combination for .shared::cluster"))))
+  else if half & not_bool(noftz) then concat_str("cp.reduce.async.bulk: .add.", concat_str(n, " requires .noftz"))
+  else if noftz & not_bool(half) then "cp.reduce.async.bulk: .noftz is only valid with .add.f16 / .add.bf16"
+  else ""
+}
+
+/* the combinations that have no meaning even outside the ISA tables: .inc / .dec on floating-point elements */
+val isFloatTy : ty -> bool
+function isFloatTy(t) = t.k == "f" | t.k == "bf" | t.k == "tf" | t.k == "f16x2" | t.k == "bf16x2" | t.k == "e4m3" | t.k == "e5m2"
+val bulkRedRun : (string, ty) -> string
+function bulkRedRun(op, t) =
+  if (op == "inc" | op == "dec") & isFloatTy(t) then concat_str("cp.reduce.async.bulk: .", concat_str(op, concat_str(" on floating-point type .", tnm(t))))
+  else ""
+
 val exec_async : (opcode, list(xop)) -> bool
 function exec_async(o, ops) = {
   let m = o.mods;
@@ -357,7 +400,9 @@ function exec_async(o, ops) = {
   else match ops {
     XB([|d|], [||]) :: XB([|s|], [||]) :: sz :: rest => {
       let n = rdu32(sz);
-      if has(m, "reduce") then {
+      let rerr = if has(m, "reduce") then bulkRedRun(atomOp(m), ty1(o)) else "";
+      if rerr != "" then { fault(rerr, 0); true }
+      else if has(m, "reduce") then {
         let v = memop_do(ea(s, "shared"), RdOp(n));
         let dl = ea(d, if has(m, "global") then "generic" else "shared_cluster");
         let mb : option(loc) = match bulkMbar(rest) { Some(a) => Some(ea(a, "shared_cluster")), None() => None() };
@@ -405,26 +450,31 @@ function exec_amisc(o, ops) = {
       if has(m, "async") then {
         let t = ty1(o);
         let vs : list(int) = match v { XV(l) => rdList(l, t), _ => [|rd(v, t)|] };
-        var l = ea(a, "shared_cluster");
+        /* "If .ss is not specified, Generic Addressing is used" for a and mbar (PTX ISA 9.3 st.async ~13917) */
+        let sp = if has(m, "shared::cluster") then "shared_cluster" else "generic";
+        var l = ea(a, sp);
         var n : int = 0;
         var r = vs;
         while is_cons(r) & not_bool(stuck) do {
           match r { x :: rest => { let _ = memop_do(l, WrOp(bytes(t), x)); l = loc_add(l, bytes(t)); n = n + bytes(t); r = rest }, [||] => () }
         };
-        if not_bool(stuck) then bulkTx(ea(mb, "shared_cluster"), n);
+        if not_bool(stuck) then bulkTx(ea(mb, sp), n);
         true
       } else false
     },
     ("red", [|XB([|a|], [||]), v, XB([|mb|], [||])|]) => {
       if has(m, "async") then {
         let t = ty1(o);
-        let _ = memop_do(ea(a, "shared_cluster"), AtOp(atomOp(m), t, rd(v, t), 0));
-        if not_bool(stuck) then bulkTx(ea(mb, "shared_cluster"), bytes(t));
+        /* "If .ss is not specified, Generic Addressing is used" (PTX ISA 9.3 red.async ~21414) */
+        let sp = if has(m, "shared::cluster") then "shared_cluster" else "generic";
+        let _ = memop_do(ea(a, sp), AtOp(atomOp(m), t, rd(v, t), 0));
+        if not_bool(stuck) then bulkTx(ea(mb, sp), bytes(t));
         true
       } else false
     },
     ("st", [|XB([|a|], [||]), sz, _|]) => {
-      if has(m, "bulk") then { let _ = memop_do(ea(a, "shared"), WrOp(rdu32(sz), 0)); true } else false
+      /* "If no state space is specified then Generic Addressing is used" (PTX ISA 9.3 st.bulk ~14114) */
+      if has(m, "bulk") then { let _ = memop_do(ea(a, if has(m, "shared::cta") then "shared" else "generic"), WrOp(rdu32(sz), 0)); true } else false
     },
     ("clusterlaunchcontrol", [|XB([|a|], [||]), XB([|mb|], [||])|]) => {
       if has(m, "try_cancel") then {

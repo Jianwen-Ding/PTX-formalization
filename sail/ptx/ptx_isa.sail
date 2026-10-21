@@ -293,7 +293,8 @@ function isaIns(it) = match it {
   INS(_, o, ops) => {
     let tys = isaTyNames(o.tys);
     let names = tys_app(o.mods, tys);
-    let r = isaRemoved(o.base, o.mods, names);
+    let r0 = isaRemoved(o.base, o.mods, names);
+    let r = if r0 != "" then r0 else isaTables(o.base, o.mods, o.tys);
     if r != "" then r else isaBad(isaRows(o.base), o.mods, tys, names, ops, isaver, isasm, isaarch)
   },
   _ => ""

@@ -1,0 +1,18 @@
+// expect: cp.reduce.async.bulk: .add.f16 requires .noftz
+// PTX ISA 9.3 9.7.9.26.4.2: "The cp.reduce.async.bulk.add.f16 and cp.reduce.async.bulk.add.bf16 operations require .noftz qualifier"
+.version 8.6
+.target sm_90
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 pg)
+{
+  .reg .b64 %g; .reg .b32 %buf32;
+  .shared .align 128 .b8 buf[64];
+  ld.param.u64 %g, [pg]; mov.u32 %buf32, buf;
+  cp.reduce.async.bulk.global.shared::cta.bulk_group.add.f16 [%g], [%buf32], 16;
+  cp.async.bulk.commit_group;
+  cp.async.bulk.wait_group 0;
+  ret;
+}
+.buffer G .f32 = { 5.0, 0.5, 2.0, -1.0 };
+.launch k <<< 1, 1 >>> (G);

@@ -80,6 +80,70 @@ function mmRed(op, t, a, vs) = {
 val mmVec : list(string) -> int
 function mmVec(m) = if has(m, "v8") then 8 else if has(m, "v4") then 4 else if has(m, "v2") then 2 else 1
 
+/* multimem.ld_reduce / st / red (PTX ISA 9.3 section 9.7.9.15, ~14157-14260): the integer forms take
+ * .b32 .b64 .u32 .u64 .s32 .s64 without .vec / .acc_prec; the floating-point forms: ".vec and base floating-point type"
+ * table (~14226-14234; multimem.red: .redtype without the fp8 types, .redop = { .add }), ".op and base type" table
+ * (~14239-14247), ".acc::f32" only with .f16 .f16x2 .bf16 .bf16x2 and ".acc::f16" only with the fp8 types (~14252-14256,
+ * multimem.ld_reduce only).  The example "multimem.red.relaxed.gpu.max.f64" (~14287) contradicts both the syntax and the
+ * table, which the model follows.  "" when legal, else the error.  Reported by `.isacheck ;` (isaTables); without it every
+ * combination runs with the natural meaning: the operation on each element of the type (integers as in atom, .and / .or /
+ * .xor on the bits, floats in their format or in the .acc_prec format), .vec elements of any count. */
+val mmErr : (list(string), ty) -> string
+function mmErr(m, t) = {
+  let n = tnm(t);
+  let ld = has(m, "ld_reduce");
+  let st = has(m, "st") & not_bool(ld);
+  let red = has(m, "red") & not_bool(ld);
+  let op = mmOp(m);
+  let ints = [|"b32", "b64", "u32", "u64", "s32", "s64"|];
+  let fp8 = [|"e5m2", "e5m2x2", "e5m2x4", "e4m3", "e4m3x2", "e4m3x4"|];
+  let floats = [|"f16", "f16x2", "bf16", "bf16x2", "f32", "f64", "e5m2", "e5m2x2", "e5m2x4", "e4m3", "e4m3x2", "e4m3x4"|];
+  let v = mmVec(m);
+  let vecOk : bool = match v {
+    1 => has([|"f16x2", "bf16x2", "f32", "f64", "e5m2x4", "e4m3x4"|], n),
+    2 => has([|"f16", "f16x2", "bf16", "bf16x2", "f32", "e5m2x2", "e5m2x4", "e4m3x2", "e4m3x4"|], n),
+    4 => has([|"f16", "f16x2", "bf16", "bf16x2", "f32", "e5m2", "e5m2x2", "e5m2x4", "e4m3", "e4m3x2", "e4m3x4"|], n),
+    _ => has([|"f16", "bf16", "e5m2", "e4m3", "e5m2x2", "e4m3x2"|], n)
+  };
+  let opOk : bool = match op {
+    "add" => has([|"u32", "u64", "s32", "f16", "f16x2", "bf16", "bf16x2", "f32", "f64"|], n) | has(fp8, n),
+    "min" => has([|"u32", "s32", "u64", "s64", "f16", "f16x2", "bf16", "bf16x2"|], n) | has(fp8, n),
+    "max" => has([|"u32", "s32", "u64", "s64", "f16", "f16x2", "bf16", "bf16x2"|], n) | has(fp8, n),
+    _ => has([|"b32", "b64"|], n)
+  };
+  let acc = has(m, "acc::f32") | has(m, "acc::f16");
+  let accOk = if has(m, "acc::f32") then has([|"f16", "f16x2", "bf16", "bf16x2"|], n) else if has(m, "acc::f16") then has(fp8, n) else true;
+  let pre = concat_str("multimem.", if ld then "ld_reduce" else if st then "st" else "red");
+  if has(ints, n) then {
+    if v != 1 then concat_str(pre, ": .vec is not allowed with an integer type")
+    else if acc then concat_str(pre, ": .acc_prec is not allowed with an integer type")
+    else if not_bool(st) & not_bool(opOk) then concat_str(pre, concat_str(": .", concat_str(op, concat_str(" is not valid with .", n))))
+    else ""
+  } else if not_bool(has(floats, n)) then concat_str(pre, concat_str(": type .", concat_str(n, " is not allowed")))
+  else if red & has(fp8, n) then concat_str(pre, concat_str(": type .", concat_str(n, " is not allowed")))
+  else if not_bool(vecOk) then concat_str(pre, concat_str(": .vec and .", concat_str(n, " is not a valid combination")))
+  else if red & op != "add" then concat_str(pre, ": floating-point types only allow .add")
+  else if not_bool(st) & not_bool(opOk) then concat_str(pre, concat_str(": .", concat_str(op, concat_str(" is not valid with .", n))))
+  else if acc & not_bool(ld) then concat_str(pre, ": .acc_prec is only allowed on multimem.ld_reduce")
+  else if not_bool(accOk) then concat_str(pre, concat_str(": .acc_prec is not valid with .", n))
+  else ""
+}
+
+/* the operation / type tables of PTX ISA 9.3 that `.isacheck ;` reports (ptx_isa.sail isaIns): sured, cp.reduce.async.bulk,
+ * multimem.ld_reduce / st / red.  cp.reduce.async.bulk.tensor takes its element type from the tensor map, so its table is
+ * checked when it runs (tm_store, ptx_tma.sail). */
+val isaTables : (string, list(string), list(ty)) -> string
+function isaTables(base, m, ts) = {
+  let t = ty_nth(ts, 0);
+  let (e, sec) : (string, string) =
+    if base == "sured" then (suredErr(has(m, "p"), atomOp(m), tnm(t)), "9.7.12.3")
+    else if base == "cp" & has(m, "reduce") & has(m, "bulk") & not_bool(has(m, "tensor")) then
+      (bulkRedErr(has(m, "global"), atomOp(m), t, has(m, "noftz")), "9.7.9.26.4.2")
+    else if base == "multimem" & (has(m, "ld_reduce") | has(m, "st") | has(m, "red")) & not_bool(has(m, "cp")) then (mmErr(m, t), "9.7.9.15")
+    else ("", "");
+  if e == "" then "" else concat_str(e, concat_str(" [PTX ISA 9.3 ", concat_str(sec, "]")))
+}
+
 val exec_mm : (opcode, list(xop)) -> bool
 function exec_mm(o, ops) = {
   let m = o.mods;
