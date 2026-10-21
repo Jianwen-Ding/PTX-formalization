@@ -409,8 +409,22 @@ function exec_amisc(o, ops) = {
     },
     ("clusterlaunchcontrol", [|XB([|a|], [||]), XB([|mb|], [||])|]) => {
       if has(m, "try_cancel") then {
-        let _ = memop_do(ea(a, "shared"), WrOp(16, 0));
-        if not_bool(stuck) then bulkTx(ea(mb, "shared"), 16);
+        /* "If the .space qualifier is specified, both operands addr and mbar must be in the .shared::cta state space.
+         * Otherwise, generic addressing will be assumed for both"; with .multicast::cluster::all "the response is
+         * asynchronously written ... to the corresponding local shared memory addr of each CTA in the requesting
+         * cluster", signalled by a complete-tx on the mbarrier "on the shared memory of that CTA" (PTX ISA 9.3,
+         * clusterlaunchcontrol.try_cancel).  The response is always the failure response (0). */
+        let sp = if has(m, "shared") then "shared" else "generic";
+        let mc = has(m, "multicast::cluster::all");
+        let all = pow2(vol(clusterDim)) - 1;
+        var ds = if mc then rankLocs(land_int(locOffA(ea(a, sp)), 16777215), all) else [|ea(a, sp)|];
+        var ms = if mc then rankLocs(land_int(locOffA(ea(mb, sp)), 16777215), all) else [|ea(mb, sp)|];
+        while is_cons(ds) & is_cons(ms) & not_bool(stuck) do {
+          match (ds, ms) {
+            (dl :: dr, ml :: mr) => { let _ = memop_do(dl, WrOp(16, 0)); if not_bool(stuck) then bulkTx(ml, 16); ds = dr; ms = mr },
+            _ => ()
+          }
+        };
         true
       } else false
     },
