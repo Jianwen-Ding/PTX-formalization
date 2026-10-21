@@ -1,0 +1,106 @@
+// fma.oob on OOB-NaN operands (9.7.4.4), half set / setp examples, sink destinations of packed setp
+.version 9.0
+.target sm_100
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %wa,%wb,%wc,%wd,%rd_; .reg .f32 %fc,%fd; .reg .b16 %ha,%hb,%hc,%hd; .reg .pred %p<4>;
+    ld.param.u64 %o, [po];
+        mov.b16 %ha, 0x4000; mov.b16 %hb, 0; mov.b32 %fc, 0;
+    add.rz.f32.bf16.sat %fd, %ha, %fc;  // mx add sat after
+    mov.b32 %rd_, %fd; st.global.u32 [%o+0], %rd_;
+    mov.b16 %ha, 0x4000; mov.b16 %hb, 0x4000; mov.b32 %fc, 0;
+    fma.rz.sat.f32.f16.sat %fd, %ha, %hb, %fc;  // mx fma sat twice
+    mov.b32 %rd_, %fd; st.global.u32 [%o+4], %rd_;
+    mov.b16 %ha, 0x3C00; mov.b16 %hb, 0x3C00; mov.b16 %hc, 0x3C00;
+    fma.rn.oob.f16 %hd, %ha, %hb, %hc;  // fma oob plain
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+8], %rd_;
+    mov.b16 %ha, 0xBF80; mov.b16 %hb, 0x3F80; mov.b16 %hc, 0;
+    fma.rn.oob.relu.bf16 %hd, %ha, %hb, %hc;  // fma oob relu bf
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+12], %rd_;
+    mov.b16 %ha, 0x7E00; mov.b16 %hb, 0x3C00; mov.b16 %hc, 0x3C00;
+    fma.rn.oob.f16 %hd, %ha, %hb, %hc;  // fma oob f16 tma-nan
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+16], %rd_;
+    mov.b16 %ha, 0x7FC0; mov.b16 %hb, 0x3F80; mov.b16 %hc, 0x3F80;
+    fma.rn.oob.bf16 %hd, %ha, %hb, %hc;  // fma oob bf tma-nan
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+20], %rd_;
+    mov.b32 %wa, 0xBC003C00; mov.b32 %wb, 0x3C003C00; mov.b32 %wc, 0;
+    fma.rn.ftz.relu.f16x2 %wd, %wa, %wb, %wc;  // fma ftz relu x2
+    st.global.u32 [%o+24], %wd;
+    mov.b16 %ha, 0x3C00; mov.b16 %hb, 0x4000; mov.b16 %hc, 0;
+    setp.eq.u32 %p1, 1, 1; set.lt.and.f16.f16 %hd, %ha, %hb, %p1;  // set lt and f16.f16
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+28], %rd_;
+    mov.b16 %ha, 0x7E00; mov.b16 %hb, 0x4000; mov.b16 %hc, 0;
+    setp.eq.u32 %p1, 1, 0; set.ltu.or.bf16.f16 %hd, %ha, %hb, %p1;  // set ltu or bf16.f16 NaN
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+32], %rd_;
+    mov.b16 %ha, 0x3C00; mov.b16 %hb, 0x4000; mov.b16 %hc, 0;
+    setp.eq.u32 %p1, 1, 1; set.lt.and.u16.f16 %hd, %ha, %hb, %p1;  // set lt and u16.f16
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+36], %rd_;
+    mov.b32 %wa, 0x3F803F80; mov.b32 %wb, 0; mov.b32 %wc, 0;
+    setp.eq.u32 %p1, 1, 1; mov.b32 {%ha, %hb}, %wa; set.num.xor.s32.bf16 %wd, %ha, %hb, %p1;  // set num xor s32.bf16
+    st.global.u32 [%o+40], %wd;
+    mov.b32 %wa, 0x7FC03F80; mov.b32 %wb, 0x40003F80; mov.b32 %wc, 0;
+    set.equ.bf16x2.bf16x2 %wd, %wa, %wb;  // set equ bf16x2
+    st.global.u32 [%o+44], %wd;
+    mov.b32 %wa, 0x3F804000; mov.b32 %wb, 0x40003F80; mov.b32 %wc, 0;
+    set.geu.s32.bf16x2 %wd, %wa, %wb;  // set geu s32.bf16x2
+    st.global.u32 [%o+48], %wd;
+    mov.b16 %ha, 0x0001; mov.b16 %hb, 0x0000; mov.b16 %hc, 0;
+    set.eq.ftz.f16.f16 %hd, %ha, %hb;  // set eq ftz f16.f16
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+52], %rd_;
+    mov.b16 %ha, 0x0001; mov.b16 %hb, 0x0000; mov.b16 %hc, 0;
+    set.eq.f16.f16 %hd, %ha, %hb;  // set eq f16.f16 nofz
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+56], %rd_;
+    mov.b32 %wa, 0x00008001; mov.b32 %wb, 0; mov.b32 %wc, 0;
+    mov.b32 {%ha,%hb}, %wa; setp.eq.ftz.f16 %p0, %ha, %hb; selp.u32 %wd, 1, 0, %p0;  // setp ftz f16
+    st.global.u32 [%o+60], %wd;
+    mov.b32 %wa, 0x40003F80; mov.b32 %wb, 0; mov.b32 %wc, 0;
+    mov.b32 {%ha,%hb}, %wa; setp.eq.u32 %p1, 1, 0; setp.lt.and.bf16 %p0, %ha, %hb, !%p1; selp.u32 %wd, 1, 0, %p0;  // setp and bf16 !c
+    st.global.u32 [%o+64], %wd;
+    mov.b32 %wa, 0x3C004000; mov.b32 %wb, 0x40003C00; mov.b32 %wc, 0;
+    setp.lt.f16x2 _|%p0, %wa, %wb; selp.u32 %wd, 1, 0, %p0;  // setp f16x2 sink p
+    st.global.u32 [%o+68], %wd;
+    mov.b32 %wa, 0x3C004000; mov.b32 %wb, 0x40003C00; mov.b32 %wc, 0;
+    setp.lt.f16x2 %p0|_, %wa, %wb; selp.u32 %wd, 1, 0, %p0;  // setp f16x2 sink q
+    st.global.u32 [%o+72], %wd;
+    mov.b32 %wa, 0x3C004000; mov.b32 %wb, 0x40003C00; mov.b32 %wc, 0;
+    setp.lt.f16x2 %p0|%p1, %wa, %wb; selp.u32 %wd, 1, 0, %p1;  // setp f16x2 plain p
+    st.global.u32 [%o+76], %wd;
+    mov.b32 %wa, 0x3C007E00; mov.b32 %wb, 0x40003C00; mov.b32 %wc, 0;
+    setp.gtu.f16x2 %p0|%p1, %wa, %wb; selp.u32 %wd, 1, 0, %p0;  // setp f16x2 NaN gtu
+    st.global.u32 [%o+80], %wd;
+    mov.b32 %wa, 0x3F800000; mov.b32 %wb, 0x40000000; mov.b32 %wc, 0;
+    set.lt.f32.f32 %wd, %wa, %wb;  // set f32 dtype
+    st.global.u32 [%o+84], %wd;
+    mov.b32 %wa, 0x00000001; mov.b32 %wb, 0x80000000; mov.b32 %wc, 0;
+    set.eq.ftz.u32.f32 %wd, %wa, %wb;  // set ftz f32
+    st.global.u32 [%o+88], %wd;
+    mov.b32 %wa, 11; mov.b32 %wb, 22; mov.b32 %wc, 0x80000001;
+    slct.ftz.u32.f32 %wd, %wa, %wb, %wc;  // slct ftz -sub
+    st.global.u32 [%o+92], %wd;
+    mov.b32 %wa, 11; mov.b32 %wb, 22; mov.b32 %wc, 0x80000001;
+    slct.u32.f32 %wd, %wa, %wb, %wc;  // slct -sub
+    st.global.u32 [%o+96], %wd;
+    mov.b32 %wa, 11; mov.b32 %wb, 22; mov.b32 %wc, 0x7FC00000;
+    slct.u32.f32 %wd, %wa, %wb, %wc;  // slct NaN
+    st.global.u32 [%o+100], %wd;
+    mov.b32 %wa, 11; mov.b32 %wb, 22; mov.b32 %wc, 0x80000000;
+    slct.u32.f32 %wd, %wa, %wb, %wc;  // slct -0
+    st.global.u32 [%o+104], %wd;
+    mov.b32 %wa, 11; mov.b32 %wb, 22; mov.b32 %wc, 0xFFFFFFFF;
+    slct.u32.s32 %wd, %wa, %wb, %wc;  // slct s32
+    st.global.u32 [%o+108], %wd;
+    mov.b32 %wa, 11; mov.b32 %wb, 22; mov.b32 %wc, 0;
+    setp.eq.u32 %p1, 1, 1; selp.b32 %wd, %wa, %wb, %p1;  // selp
+    st.global.u32 [%o+112], %wd;
+    mov.b32 %wa, 0x7FC00000; mov.b32 %wb, 0; mov.b32 %wc, 0;
+    setp.nan.f32 %p0|%p1, %wa, %wb; selp.u32 %wd, 1, 0, %p1;  // setp unord nan
+    st.global.u32 [%o+116], %wd;
+    mov.b32 %wa, 5; mov.b32 %wb, 3; mov.b32 %wc, 0;
+    setp.eq.u32 %p2, 1, 1; setp.lt.and.s32 %p0|%p1, %wa, %wb, %p2; selp.u32 %wd, 1, 0, %p1;  // setp p|q bool
+    st.global.u32 [%o+120], %wd;
+    ret;
+}
+.buffer OUT .u32 [31];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 1065353216, 1065353216, 16384, 0, 0, 0, 15360, 15360, 16256, 65535, 0, 1065369472, 65535, 15360, 0, 1, 1, 1, 0, 1, 1, 1065353216, 4294967295, 11, 22, 22, 11, 22, 11, 0, 1 };

@@ -121,25 +121,40 @@ function gx_half(o, ops) = {
 val laneTrue : ty -> int
 function laneTrue(t) = match t.k { "f16x2" => 15360, "bf16x2" => 16256, _ => 65535 }
 
+/* the lane results of a packed half compare: .ftz flushes subnormal lane inputs, then BoolOp with c when present */
+val halfCmp : (list(string), ty, int, int, list(xop)) -> (int, int)
+function halfCmp(m, t, x, y, rest) = {
+  let lt = laneTyH(t);
+  let c0 = cmp(cmpOp(m), lt, ftzSrc(m, lt, lane16(x, 0)), ftzSrc(m, lt, lane16(y, 0)));
+  let c1 = cmp(cmpOp(m), lt, ftzSrc(m, lt, lane16(x, 1)), ftzSrc(m, lt, lane16(y, 1)));
+  match rest {
+    [|c|] => (bop(c0, boolOp(m), rd(c, PRED)), bop(c1, boolOp(m), rd(c, PRED))),
+    _ => (c0, c1)
+  }
+}
+
 /* opcode-specific rules of PTX-EXEC-HALF (setp / set on pairs, cvt to pairs, cvt.pack) */
 val exec_half : (opcode, list(xop)) -> bool
 function exec_half(o, ops) = {
   let m = o.mods;
   match (o.base, ops) {
-    ("setp", [|XS(SPIPE(true, p, true, q)), a, b|]) => {
+    /* setp.CmpOp{.BoolOp}{.ftz}.{f16x2,bf16x2} p|q, a, b{, {!}c}: p = BoolOp(t[0], c), q = BoolOp(t[1], c); either
+     * destination may be the sink '_' (9.7.7.2) */
+    ("setp", XS(SPIPE(k1, p, k2, q)) :: a :: b :: rest) => {
       let t = ty1(o);
-      if ntys(o) == 1 & isHalfPair(t) then {
-        let x = rd(a, t); let y = rd(b, t); let lt = laneTyH(t);
-        wreg(p, cmp(cmpOp(m), lt, lane16(x, 0), lane16(y, 0)));
-        wreg(q, cmp(cmpOp(m), lt, lane16(x, 1), lane16(y, 1)));
+      if ntys(o) == 1 & isHalfPair(t) & xop_count(rest) <= 1 then {
+        let (r0, r1) = halfCmp(m, t, rd(a, t), rd(b, t), rest);
+        wr_sop(if k1 then SR(p) else SN(p), r0);
+        wr_sop(if k2 then SR(q) else SN(q), r1);
         true
       } else false
     },
-    ("set", [|d, a, b|]) => {
-      if ntys(o) == 2 & isHalfPair(ty_nth(o.tys, 1)) then {
+    /* set.CmpOp{.BoolOp}{.ftz}.dtype.{f16x2,bf16x2} d, a, b{, {!}c}: d[i] = BoolOp(t[i], c) (9.7.7.1) */
+    ("set", d :: a :: b :: rest) => {
+      if ntys(o) == 2 & isHalfPair(ty_nth(o.tys, 1)) & xop_count(rest) <= 1 then {
         let dt = ty_nth(o.tys, 0); let st = ty_nth(o.tys, 1);
-        let x = rd(a, st); let y = rd(b, st); let lt = laneTyH(st);
-        wr(d, pack16(cmp(cmpOp(m), lt, lane16(x, 0), lane16(y, 0)) * laneTrue(dt), cmp(cmpOp(m), lt, lane16(x, 1), lane16(y, 1)) * laneTrue(dt)));
+        let (r0, r1) = halfCmp(m, st, rd(a, st), rd(b, st), rest);
+        wr(d, pack16(r0 * laneTrue(dt), r1 * laneTrue(dt)));
         true
       } else false
     },

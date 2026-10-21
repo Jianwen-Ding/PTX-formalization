@@ -1,0 +1,34 @@
+// half-precision arithmetic, min / max, sinks in packed setp destinations (9.7.4, 9.7.7.2)
+.version 9.0
+.target sm_100
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %wa,%wb,%wc,%wd,%rd_; .reg .f32 %fc,%fd; .reg .b16 %ha,%hb,%hc,%hd; .reg .pred %p<4>;
+    ld.param.u64 %o, [po];
+        mov.b32 %wa, 0x40003C00; mov.b32 %wb, 0x3C004000; mov.b32 %wc, 0;
+    setp.lt.f16x2 %p0|_, %wa, %wb; selp.u32 %wd, 1, 0, %p0;  // sink q lane0 true
+    st.global.u32 [%o+0], %wd;
+    mov.b32 %wa, 0x40003C00; mov.b32 %wb, 0x3C004000; mov.b32 %wc, 0;
+    setp.lt.f16x2 _|%p0, %wa, %wb; selp.u32 %wd, 1, 0, %p0;  // sink p lane1 false
+    st.global.u32 [%o+4], %wd;
+    mov.b32 %wa, 0x40003C00; mov.b32 %wb, 0x3C004000; mov.b32 %wc, 0;
+    setp.eq.u32 %p2, 1, 1; setp.lt.xor.f16x2 %p0|%p1, %wa, %wb, %p2; selp.u32 %wd, 1, 0, %p1;  // bool xor lane q
+    st.global.u32 [%o+8], %wd;
+    mov.b32 %wa, 0x3F804000; mov.b32 %wb, 0x40003F80; mov.b32 %wc, 0;
+    setp.eq.u32 %p2, 1, 1; setp.lt.and.bf16x2 %p0|%p1, %wa, %wb, %p2; selp.u32 %wd, 1, 0, %p0;  // bool and bf16x2 p
+    st.global.u32 [%o+12], %wd;
+    mov.b32 %wa, 0x3F804000; mov.b32 %wb, 0x40003F80; mov.b32 %wc, 0;
+    setp.eq.u32 %p2, 1, 1; set.lt.and.bf16x2.bf16x2 %wd, %wa, %wb, %p2;  // set and bf16x2
+    st.global.u32 [%o+16], %wd;
+    mov.b32 %wa, 0x3C004000; mov.b32 %wb, 0x40003C00; mov.b32 %wc, 0;
+    setp.eq.u32 %p2, 1, 1; set.lt.and.u32.f16x2 %wd, %wa, %wb, %p2;  // set and u32 f16x2
+    st.global.u32 [%o+20], %wd;
+    mov.b32 %wa, 0x00010001; mov.b32 %wb, 0x80000000; mov.b32 %wc, 0;
+    set.eq.ftz.f16x2.f16x2 %wd, %wa, %wb;  // set ftz f16x2.f16x2
+    st.global.u32 [%o+24], %wd;
+    ret;
+}
+.buffer OUT .u32 [7];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 1, 0, 1, 0, 1065353216, 4294901760, 1006648320 };

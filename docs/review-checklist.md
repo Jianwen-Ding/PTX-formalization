@@ -163,6 +163,15 @@ Open:
       the accesses at that device (§9.7.10.4); the model bumped only the first device's (tests/fabric-mm-counted.ptx)
 - [x] `fabric.try_atom` and the `.tensor` fabric forms are not in the 9.3 text: they run in the default mode, `.isacheck`
       reports them (tests/neg/isa-rule-fabric94.ptx)
+- [x] packed `.f16x2` / `.bf16x2` `setp` / `set`: `.ftz` flushes lane inputs; the `.BoolOp` form gives
+      p = BoolOp(t[0], c), q = BoolOp(t[1], c) and d[i] = BoolOp(t[i], c); a sink `_` in either destination keeps the
+      packed meaning (§9.7.7.1, §9.7.7.2). The model compared the whole word as an integer, ignored `.ftz`, and sent
+      `_|q` to the scalar path (tests/half-cmp-pk.ptx, half-cmp-pk2.ptx, half-misc.ptx)
+- [x] `fma.oob` gives +0 when an operand is the OOB-NaN (§9.7.4.4). The ISA gives no OOB-NaN bits; the model uses the
+      pattern its own tensor copies fill with (f16 0x7E00, bf16 0x7FC0) (tests/half-oob-set.ptx)
+- [ ] `.sat` of −0 returns −0 ("clamps the result to [0.0, 1.0]" holds either way); hardware is said to give +0
+- [ ] `.isacheck` does not report `add.rz.f16`, `add.ftz.bf16`, `ex2.approx.bf16` without `.ftz`: check against the
+      half-precision syntax tables
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

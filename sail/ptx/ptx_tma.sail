@@ -61,8 +61,8 @@ val tmFill : int -> int
 function tmFill(b) =
   if tmFillMode(b) == 0 then 0
   else if tmEb(b) == 4 then 2143289344
-  else if tmEtc(b) == 6 then 32256
-  else if tmEtc(b) == 10 then 32704
+  else if tmEtc(b) == 6 then oobNaN(16)
+  else if tmEtc(b) == 10 then oobNaN(116)
   else if tmEtc(b) == 9 then 9221120237041090560
   else 0
 

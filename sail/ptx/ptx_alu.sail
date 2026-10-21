@@ -144,9 +144,16 @@ function un(op, m, t, a) = {
 val src3Ty : (string, list(string), ty) -> ty
 function src3Ty(op, m, t) = if op == "selp" then mkty("p", 1) else if op == "mad" & has(m, "wide") then wide(t) else t
 
+/* the OOB-NaN a tensor copy writes in OOB-NaN fill mode (5.5; the ISA names it but gives no bits: the model's
+ * pattern is the quiet NaN with an empty payload) for f16 / bf16; no other type has one */
+val oobNaN : int -> int
+function oobNaN(w) = match w { 16 => 32256, 116 => 32704, _ => -1 }
+
 val tern : (string, list(string), ty, int, int, int) -> int
 function tern(op, m, t, a, b, c) = {
   if op == "selp" then (if c != 0 then a else b)
+  /* fma.oob: "clamps the result to 0 if either of the operands is OOB NaN" (9.7.4.4) */
+  else if has(m, "oob") & isF(t) & (a == oobNaN(fw(t)) | b == oobNaN(fw(t)) | c == oobNaN(fw(t))) then 0
   else if isF(t) & is_some(nanPay(fw(t), [|a, b, c|])) then match nanPay(fw(t), [|a, b, c|]) { Some(v) => v, None() => 0 }
   else if isF(t) then fpFma(fmods_of(m), fw(t), a, b, c)
   else if has(m, "wide") then trunc(ival(a, t) * ival(b, t) + c, 2 * wid(t))
