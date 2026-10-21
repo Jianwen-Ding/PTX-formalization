@@ -29,7 +29,9 @@ the reference for correctness.
       UE8M0 = 1; bits 24-26 reserved); the model read bits 23-24 and had a bias-15 format the ISA does not define.
       Fixed; `tests/mma-bs-nan.ptx`.
 - [ ] Implement `mma.sync.m8n8k4` with `.f16` / `.f32` accumulators from §9.7.15.5.1 (Figures 46–52).
-- [ ] Barrier ids ≥ 16 should be rejected (§9.7.14: 0..15) rather than accepted.
+- [x] Barrier ids ≥ 16 should be rejected (§9.7.14.1: 0..15) rather than accepted. Now an error ("barrier id outside
+      0..15"); a thread count that is not a multiple of 32 counts whole warps and is reported under `.ub strict`
+      (tests/neg/bar-id.ptx, tests/neg/bar-count-ub.ptx, tests/bar-count-round.ptx).
 - [ ] `clusterlaunchcontrol.try_cancel … .multicast::cluster::all` writes the response and signals the mbarrier only in
       the issuing CTA. To check against the ISA section on clusterlaunchcontrol.
 - [ ] `sail/common/io.c`: addresses wrap at 2^64 (`ad + i`), keys outside [0, 2^64) are dropped; `calloc`/`realloc`

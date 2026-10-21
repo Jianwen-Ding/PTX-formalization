@@ -649,16 +649,25 @@ function do_barred(b, x, k, v, d) = {
   yielded = true
 }
 
+/* "Each CTA instance has sixteen barriers numbered 0..15"; a thread count "must be a multiple of the warp size"
+ * (PTX ISA 9.3 9.7.14.1).  An id outside 0..15 names no barrier; a count that is not a multiple of 32 is rounded up to
+ * whole warps, and reported under .ub strict. */
+val barOk : (int, int) -> bool
+function barOk(b, x) =
+  if b < 0 | b > 15 then { fault("barrier id outside 0..15", b); false }
+  else if ub & x >= 0 & tmod_int(x, 32) != 0 then { fault("barrier thread count is not a multiple of the warp size", x); false }
+  else true
+
 val gx_sync : (opcode, list(xop)) -> bool
 function gx_sync(o, ops) = {
   let m = o.mods;
   if isBar(o.base, m) then match ops {
-    [|a|] => { do_bar(rdu32(a), -1, not_bool(has(m, "arrive"))); true },
-    [|a, nn|] => { do_bar(rdu32(a), rdu32(nn), not_bool(has(m, "arrive"))); true },
+    [|a|] => { if barOk(rdu32(a), -1) then do_bar(rdu32(a), -1, not_bool(has(m, "arrive"))); true },
+    [|a, nn|] => { if barOk(rdu32(a), rdu32(nn)) then do_bar(rdu32(a), rdu32(nn), not_bool(has(m, "arrive"))); true },
     _ => false
   } else if isBarRed(o.base, m) then match ops {
-    [|d, a, pc|] => { do_barred(rdu32(a), -1, redKind(m), b2i(rdp(pc) != 0), d); true },
-    [|d, a, nn, pc|] => { do_barred(rdu32(a), rdu32(nn), redKind(m), b2i(rdp(pc) != 0), d); true },
+    [|d, a, pc|] => { if barOk(rdu32(a), -1) then do_barred(rdu32(a), -1, redKind(m), b2i(rdp(pc) != 0), d); true },
+    [|d, a, nn, pc|] => { if barOk(rdu32(a), rdu32(nn)) then do_barred(rdu32(a), rdu32(nn), redKind(m), b2i(rdp(pc) != 0), d); true },
     _ => false
   } else false
 }
