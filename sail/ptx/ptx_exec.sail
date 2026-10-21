@@ -48,6 +48,10 @@ function clFromGeneric(a, own) = {
   else 0
 }
 
+/* type of the formal parameter N of a parameter list */
+val pdTy : (list(pdecl), string) -> option(ty)
+function pdTy(l, n) = match l { [||] => None(), p :: rest => if p.pname == n then Some(p.pty) else pdTy(rest, n) }
+
 /* size and alignment of the formal parameter N of a parameter list */
 val pdFind : (list(pdecl), string) -> option((int, int))
 function pdFind(l, n) = match l { [||] => None(), p :: rest => if p.pname == n then Some((p.psize, p.palign)) else pdFind(rest, n) }
@@ -294,6 +298,17 @@ function enter_func(f, env, outs) = {
   t_env[t] = env
 }
 
+/* the caller's .param variable named by an argument (PTX ISA 7.1: arguments and return values may be .param or
+ * .reg variables, for .reg as well as for .param formals) */
+val paramVar : sop -> option(int)
+function paramVar(a) = match a {
+  SN(nm) => {
+    let s = lookupSym(nm);
+    if not_bool(isRegName(nm)) & s >= 0 & sym_space(s) == "param" then Some(s) else None()
+  },
+  _ => None()
+}
+
 val do_call : (string, list(sop), list(sop)) -> unit
 function do_call(fname, rs, args) = match lookup_func(fname) {
   None() => fault(concat_str("call of undefined function ", fname), 0),
@@ -307,8 +322,13 @@ function do_call(fname, rs, args) = match lookup_func(fname) {
     while ok & is_cons(ps) do {
       match (ps, aa) {
         (p :: pr, a :: ar) => {
-          if p.palign < 0 then smap_set(env, concat_str("@in:", p.pname), mksym("regin", rd_sop(a, p.pty)))
-          else match a {
+          if p.palign < 0 then {
+            let v : int = match paramVar(a) {
+              Some(s) => mem_rdn(t_pmem[t], sym_addr(s), bytes(p.pty)),
+              None() => rd_sop(a, p.pty)
+            };
+            smap_set(env, concat_str("@in:", p.pname), mksym("regin", v))
+          } else match a {
             SN(nm) => { let s = lookupSym(nm); smap_set(env, p.pname, if s < 0 then mksym("nosym", 0) else s) },
             _ => {
               let addr = alignUp(t_ptop[t], p.palign);
@@ -331,8 +351,19 @@ function do_call(fname, rs, args) = match lookup_func(fname) {
     while ok & rok & is_cons(rps) do {
       match (rps, rr) {
         (p :: pr, d :: dr) => {
-          if p.palign < 0 then outs = (p.pname, sop_name(d)) :: outs
-          else match d {
+          /* a .reg return value into a .param variable: "@retp:" entry of the callee's frame, stored at ret;
+             a .param return value into a register: a fresh .param slot, read at ret (outs entry "@p:" formal) */
+          let rg = sop_name(d);
+          let isReg : bool = match d { SR(_) => true, SN(nm) => isRegName(nm), _ => false };
+          if p.palign < 0 then match paramVar(d) {
+            Some(s) => smap_set(env, concat_str("@retp:", p.pname), s),
+            None() => outs = (p.pname, rg) :: outs
+          } else if isReg then {
+            let addr = alignUp(t_ptop[t], p.palign);
+            t_ptop[t] = addr + p.psize;
+            smap_set(env, p.pname, mksym("param", addr));
+            outs = (concat_str("@p:", p.pname), rg) :: outs
+          } else match d {
             SN(nm) => { let s = lookupSym(nm); smap_set(env, p.pname, if s < 0 then mksym("nosym", 0) else s) },
             _ => { rok = false }
           };
@@ -367,9 +398,29 @@ function do_ret() = {
           mem_copy(t_pmem[t], sym_addr(s), t_lmem[t], sym_addr(smap_get(e, n)), smap_get(e, concat_str("@cpysz:", n)))
         }
       };
+      let fd = fchk(t_fn[t]);
+      foreach (i from 0 to (smap_size(e) - 1)) {
+        let k = smap_key(e, i);
+        if string_startswith(k, "@retp:") then {
+          let n = sdrop(k, 6);
+          let w : int = match pdTy(f_rets[fd], n) { Some(ty) => bytes(ty), None() => 4 };
+          mem_wrn(t_pmem[t], sym_addr(smap_get(e, k)), w, smap_get(cr, n))
+        }
+      };
       var l = outs;
       while is_cons(l) do {
-        match l { (p, d) :: lr => { smap_set(regs, d, smap_get(cr, p)); l = lr }, [||] => () }
+        match l {
+          (p, d) :: lr => {
+            if string_startswith(p, "@p:") then {
+              let n = sdrop(p, 3);
+              let s = if smap_has(e, concat_str("@cpy:", n)) then smap_get(e, concat_str("@cpy:", n)) else smap_get(e, n);
+              let w : int = match pdFind(f_rets[fd], n) { Some((sz, _)) => sz, None() => 4 };
+              smap_set(regs, d, mem_rdn(t_pmem[t], sym_addr(s), w))
+            } else smap_set(regs, d, smap_get(cr, p));
+            l = lr
+          },
+          [||] => ()
+        }
       };
       smap_clear(cr);
       smap_clear(t_env[t]);
