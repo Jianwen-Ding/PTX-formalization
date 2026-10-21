@@ -145,6 +145,11 @@ Open:
       exclusive, no cache ops with them, scope required, `.mmio` only `.relaxed.sys`; `fma` needs a rounding modifier;
       `setmaxnreg` 24 .. 256 step 8; `pmevent` 0 .. 15; `alloca` alignment a power of 2 (tests/neg/isa-rule-*.ptx)
 - [ ] the relaxed type-checking tables (6.4) under `.isacheck` (needs register kinds, not only widths)
+- [x] hard errors audited (loose syntax, solid semantics): `mma.m8n8k4` `.dtype .f16` with `.ctype .f32` now runs (f32
+      accumulation rounded to f16, checked against the exact model) and is reported under `.isacheck`; a call without a
+      return list discards the results; an undefined `wgmma` shape stops with an error instead of deadlocking.  Kept as
+      errors (no meaning to give): undeclared registers, special-register writes, `d|literal`, partial return lists,
+      tcgen05 descriptor bit 52 and `cta_group::2` disable-output-lane (layouts not specified), inc / dec on floats
 - [ ] tcgen05 allocation patterns (alloc after relinquish, growing size, exit without dealloc) under `.ub strict`
 - [ ] sm_1x single-precision defaults (ftz, mad.f32 truncation); `brkpt` suspends
 - [ ] device-function `.shared` variables with equal names in different functions still share a symbol

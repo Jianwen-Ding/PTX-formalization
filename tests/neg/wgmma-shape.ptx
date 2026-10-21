@@ -1,0 +1,17 @@
+// expect: wgmma.mma_async: invalid shape
+// m64n12k16 is not a wgmma shape (N must be a multiple of 8, PTX ISA 9.3 9.7.16.2); the model deadlocked on it
+.version 8.0
+.target sm_90a
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %D<8>; .reg .b64 %dA, %dB; .shared .align 1024 .b8 buf[4096];
+    mov.b64 %dA, 0; mov.b64 %dB, 0; mov.b32 %D0, 0; mov.b32 %D1, 0; mov.b32 %D2, 0; mov.b32 %D3, 0;mov.b32 %D4, 0;mov.b32 %D5, 0;
+    wgmma.fence.sync.aligned;
+    wgmma.mma_async.sync.aligned.m64n12k16.f32.bf16.bf16 {%D0,%D1,%D2,%D3,%D4,%D5}, %dA, %dB, 1, 1, 1, 0, 0;
+    wgmma.commit_group.sync.aligned;
+    wgmma.wait_group.sync.aligned 0;
+    ret;
+}
+.buffer O .u8 [16];
+.launch k <<< 1, 128 >>> (O);

@@ -219,6 +219,8 @@ function exec_wg(o, ops) = {
   else if has(m, "fence") | has(m, "commit_group") then true
   else if has(m, "wait_group") then xop_count(ops) == 1
   else if not_bool(has(m, "mma_async")) then false
+  /* a shape the ISA does not define (m64nNkK with N a multiple of 8 up to 256, ISA 9.7.16.2) has no meaning */
+  else if wgShape(m) == "" then { fault("wgmma.mma_async: invalid shape", 0); true }
   else match (o.tys, ops) {
     ([|dt, at_, bt|], dv :: av :: bv :: rest0) => {
       let sp = has(m, "sp");
