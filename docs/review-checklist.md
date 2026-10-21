@@ -28,7 +28,7 @@ the reference for correctness.
       limited to 0x7f", "MSB bit padded with zero". Also: the tcgen05 idesc scale type is the one bit 23 (UE4M3 = 0,
       UE8M0 = 1; bits 24-26 reserved); the model read bits 23-24 and had a bias-15 format the ISA does not define.
       Fixed; `tests/mma-bs-nan.ptx`.
-- [ ] Implement `mma.sync.m8n8k4` with `.f16` / `.f32` accumulators from §9.7.15.5.1 (Figures 46–52).
+- [x] Implement `mma.sync.m8n8k4` with `.f16` / `.f32` accumulators from §9.7.15.5.1 (Figures 46–52) (tests/mma-m8n8k4-*.ptx).
 - [x] Barrier ids ≥ 16 should be rejected (§9.7.14.1: 0..15) rather than accepted. Now an error ("barrier id outside
       0..15"); a thread count that is not a multiple of 32 counts whole warps and is reported under `.ub strict`
       (tests/neg/bar-id.ptx, tests/neg/bar-count-ub.ptx, tests/bar-count-round.ptx).
@@ -37,8 +37,8 @@ the reference for correctness.
       (tests/clc-multicast.ptx).
 - [ ] `sail/common/io.c`: addresses wrap at 2^64 (`ad + i`), keys outside [0, 2^64) are dropped; `calloc`/`realloc`
       results unchecked.
-- [ ] `docs/prior-work.md` (tcgen05.cp decompression) says 4-bit values land in the low bits; Figure 195 puts them in
-      bits 2–5, as the code does. The header of `semantics/ptx-exec-tc.k` lists implemented features as not modelled.
+- [x] `docs/prior-work.md` (tcgen05.cp decompression) said 4-bit values land in the low bits; Figure 195 puts them in
+      bits 2–5, as the code does (doc corrected; the K header is obsolete with the K semantics).
 - [ ] `.ashift` with `.sp`: decide the reading (see table) and document it.
 
 ## Integer review against the ISA (fixed)
@@ -110,8 +110,9 @@ the reference for correctness.
       (choices: bytes rounded up to the allocation unit; module-wide static `.shared`); `%is_explicit_cluster`
 - [x] `generic(v)+off` and `mask()` initializers (~2743-2760); `mov r, A[k]` (choice: k is a byte offset, constant
       only); an omitted unsized last argument (~39381)
-- [ ] register-indexed operands such as `ld [array[r1]]`; `tests/launch-ok.ptx` combines `.maxntid` with `.reqntid`,
-      which the ISA forbids (~39942)
+- [x] register-indexed operands such as `ld [array[r1]]` (tests/array-regindex.ptx); `tests/launch-ok.ptx` combined
+      `.maxntid` with `.reqntid`, which the ISA forbids (11.4.3): split into two kernels, and `.isacheck` reports the
+      combination, and `.maxclusterrank` with `.reqnctapercluster` (11.7.3) (tests/neg/isa-reqntid-maxntid.ptx)
 
 ## Second review pass (fixed, Sail only)
 
@@ -210,13 +211,18 @@ shared-memory registers (`ptx-load.k`, `ptx-configuration.k`, `ptx-exec-pred.k`,
 
 ## Next: review the Sail model against the ISA (not against K)
 
-- [ ] Integer and bit instructions (§9.7.1, §9.7.2)
-- [ ] Floating point, half precision, conversions (§9.7.3, §9.7.4, §9.7.9 cvt), including every `.approx` error bound
-- [ ] Comparison, selection, logic (§9.7.5–§9.7.8)
-- [ ] Data movement: ld / st / atom / red, state spaces, generic addressing (§9.7.9, §9.7.13)
-- [ ] Control flow and calls (§9.7.13)
-- [ ] Synchronisation and warp collectives (§9.7.14)
-- [ ] Matrix: mma / wmma / ldmatrix (§9.7.15), wgmma (§9.7.16), tcgen05 (§9.7.17)
-- [ ] Async copies, mbarrier, TMA, clusters
-- [ ] Textures and surfaces (§9.7.10, §9.7.11)
-- [ ] Version / target legality table (`ptx_isa_table.sail`) against each section's "PTX ISA Notes" / "Target ISA Notes"
+- [x] Integer and bit instructions (§9.7.1, §9.7.2)
+- [x] Floating point, half precision, conversions (§9.7.3, §9.7.4, §9.7.9 cvt), including every `.approx` error bound
+- [x] Comparison, selection, logic (§9.7.5–§9.7.8)
+- [x] Data movement: ld / st / atom / red, state spaces, generic addressing (§9.7.9, §9.7.13)
+- [x] Control flow and calls (§9.7.13)
+- [x] Synchronisation and warp collectives (§9.7.14)
+- [x] Matrix: mma / wmma / ldmatrix (§9.7.15), wgmma (§9.7.16), tcgen05 (§9.7.17)
+- [x] Async copies, mbarrier, TMA, clusters
+- [x] Textures and surfaces (§9.7.10, §9.7.11)
+- [x] Version / target legality table (`ptx_isa_table.sail`) against each section's "PTX ISA Notes" / "Target ISA Notes"
+
+Each area above has had at least one review pass against the 9.3 text (sections "… review against the ISA" and "Second
+review pass"); the third pass (half precision and compares, warp and miscellaneous, conversions, fabric / tcgen05)
+is recorded in the list under "Second review pass".  The legality table is generated from the 9.3 text by
+`sail/ptx/gen_isa_table.py`.

@@ -123,8 +123,8 @@ against an independent Python model in `scripts/gen_tcgen05_*.py`):
   its mbarrier (multicast: one arrive per CTA in the mask).  `.cta_group::2` makes both CTAs of the pair copy from their own
   shared memory (same descriptor / taddr) or shift their own tensor memory.
 * `tcgen05.cp` decompression (`.b8x16.b6x16_p32`, `.b8x16.b4x16_p64`): groups of four source words (16 elements of 6 / 4 bits
-  followed by padding) become four words of 8-bit elements; an element's value is placed in the low bits of its byte
-  (assumption: the bit mapping is in figures).
+  followed by padding) become four words of 8-bit elements; a 4-bit value lands in bits 2–5 of its byte (Figure 195)
+  and a 6-bit value in bits 0–5.
 * `tcgen05.ld.red` reduces the values a thread loaded (f32 min/max with `.abs`/`.NaN`, or u32/s32).
   `tcgen05.ld[.red].spcompress` keeps, in each group of four loaded f32 values, two (by `.min`/`.max`, optionally `.abs`),
   writes them in index order to `cdata` and their 2-bit indices (packed LSB first) to `mdata`.  Ties keep the lowest index,

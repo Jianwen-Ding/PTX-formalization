@@ -433,7 +433,15 @@ function do_launch(k, g, b, dyn, args) = {
         if hw != "" then fault(concat_str("cannot launch ", concat_str(k, concat_str(": ", hw))), 0)
         else {
           /* the harness has no launch-time cluster dimensions: only .reqnctapercluster specifies them (PTX ISA 11.7.2) */
-          let le = if hasPerf(perf_of(k), "explicitcluster") & not_bool(hasPerf(perf_of(k), "reqnctapercluster"))
+          let pf = perf_of(k);
+          /* "The .reqntid directive cannot be used in conjunction with the .maxntid directive" (11.4.3); "The
+             .maxclusterrank directive cannot be used in conjunction with the .reqnctapercluster directive" (11.7.3):
+             reported under .isacheck */
+          let le = if isachk & hasPerf(pf, "reqntid") & hasPerf(pf, "maxntid")
+                   then "kernel declares both .reqntid and .maxntid [PTX ISA 9.3 11.4.3]"
+                   else if isachk & hasPerf(pf, "maxclusterrank") & hasPerf(pf, "reqnctapercluster")
+                   then "kernel declares both .maxclusterrank and .reqnctapercluster [PTX ISA 9.3 11.7.3]"
+                   else if hasPerf(perf_of(k), "explicitcluster") & not_bool(hasPerf(perf_of(k), "reqnctapercluster"))
                    then "a kernel with .explicitcluster launched without cluster dimensions"
                    else lcErr(perf_of(k), b, cd);
           if le != "" then fault(concat_str("cannot launch: ", le), 0)
