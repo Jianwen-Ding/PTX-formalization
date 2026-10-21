@@ -625,11 +625,21 @@ function spChunk(t, u, tg) = if ew(t) >= 16 then tg + 4 * tdiv_int(u, 2) else 2 
 val spMeta : (list((int, list(int))), int) -> int
 function spMeta(arr, l) = { let c = listAt(arr, l); at(c, list_length(c) - 1) }
 
-val spNib : (list((int, list(int))), int, int, int, int, int) -> int
-function spNib(arr, g, rh, c, nc, sel) =
-  if nc == 4 then land_int(asr_int(spMeta(arr, 4 * g + sel), 16 * rh + 4 * c), 15)
-  else if nc == 8 then land_int(asr_int(spMeta(arr, 4 * g + 2 * sel + rh), 4 * c), 15)
-  else if nc == 16 then land_int(asr_int(spMeta(arr, 4 * g + 2 * tdiv_int(c, 8) + rh), 4 * fmod_int(c, 8)), 15)
+/* (lane in the group of four, bit offset) of the nibble of chunk c of row g + 8 rh, from NC chunks per row and the
+   selector: one thread (NC = 4), a thread pair (NC = 8) or all four threads (NC = 16).  With eight chunks the
+   16- and 32-bit types (Figures 122, 125; wgmma Figures 176, 178) give thread 2 sel + c / 4 chunks 4 (c / 4) .. + 3
+   of both rows (row g + 8 in the upper half), the 8-bit types (Figure 129) give thread 2 sel + rh all chunks of
+   one row */
+val spNibAt : (ty, int, int, int, int) -> (int, int)
+function spNibAt(t, rh, c, nc, sel) =
+  if nc == 4 then (sel, 16 * rh + 4 * c)
+  else if nc == 8 & ew(t) >= 16 then (2 * sel + tdiv_int(c, 4), 16 * rh + 4 * fmod_int(c, 4))
+  else if nc == 8 then (2 * sel + rh, 4 * c)
+  else (2 * tdiv_int(c, 8) + rh, 4 * fmod_int(c, 8))
+
+val spNib : (ty, list((int, list(int))), int, int, int, int, int) -> int
+function spNib(t, arr, g, rh, c, nc, sel) =
+  if nc == 4 | nc == 8 | nc == 16 then { let (ln, b) = spNibAt(t, rh, c, nc, sel); land_int(asr_int(spMeta(arr, 4 * g + ln), b), 15) }
   else 0
 
 val spPos : (ty, int, int) -> int
@@ -647,7 +657,7 @@ function spFillAll(s, t, arr, sel) = {
         let u = tdiv_int(i, spNz(t));
         let rh = spRh(t, u);
         let ch = spChunk(t, u, fmod_int(l, 4));
-        let nib = spNib(arr, tdiv_int(l, 4), rh, ch, tdiv_int(shK(s), spCw(t)), sel);
+        let nib = spNib(t, arr, tdiv_int(l, 4), rh, ch, tdiv_int(shK(s), spCw(t)), sel);
         mset(SP_MA, rc(tdiv_int(l, 4) + 8 * rh, spCw(t) * ch + spPos(t, nib, fmod_int(i, spNz(t)))), fragBits(rs, 0, t, i))
       },
       None() => ()

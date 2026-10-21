@@ -88,12 +88,10 @@ function posD(l, e) = rc(tdiv_int(l, 4) + 8 * tdiv_int(fmod_int(e, 4), 2), 8 * t
 val posDU : (int, int) -> int
 function posDU(u, e) = { let p = posD(fmod_int(u, 32), e); rc(16 * tdiv_int(u, 32) + tdiv_int(p, 1024), fmod_int(p, 1024)) }
 
-/* the metadata nibble for warp w (sparse descriptor form) */
-val wgNibW : (list((int, list(int))), int, int, int, int, int, int) -> int
-function wgNibW(arr, w, g, rh, c, nc, sel) =
-  if nc == 4 then land_int(asr_int(spMeta(arr, 32 * w + 4 * g + sel), 16 * rh + 4 * c), 15)
-  else if nc == 8 then land_int(asr_int(spMeta(arr, 32 * w + 4 * g + 2 * sel + rh), 4 * c), 15)
-  else if nc == 16 then land_int(asr_int(spMeta(arr, 32 * w + 4 * g + 2 * tdiv_int(c, 8) + rh), 4 * fmod_int(c, 8)), 15)
+/* the metadata nibble for warp w (sparse descriptor form; Figures 176, 178 per warp as for mma.sp) */
+val wgNibW : (ty, list((int, list(int))), int, int, int, int, int, int) -> int
+function wgNibW(t, arr, w, g, rh, c, nc, sel) =
+  if nc == 4 | nc == 8 | nc == 16 then { let (ln, b) = spNibAt(t, rh, c, nc, sel); land_int(asr_int(spMeta(arr, 32 * w + 4 * g + ln), b), 15) }
   else 0
 
 /* the 32 threads of warp w as lanes 0..31 */
@@ -150,7 +148,7 @@ function wg_compute(d, arr) = {
             let u = tdiv_int(i, spNz(at_));
             let rh = spRh(at_, u);
             let ch = spChunk(at_, u, fmod_int(l, 4));
-            let nib = spNib(aw, tdiv_int(l, 4), rh, ch, tdiv_int(kk, spCw(at_)), sel);
+            let nib = spNib(at_, aw, tdiv_int(l, 4), rh, ch, tdiv_int(kk, spCw(at_)), sel);
             mset(SP_MA, rc(16 * w + tdiv_int(l, 4) + 8 * rh, spCw(at_) * ch + spPos(at_, nib, fmod_int(i, spNz(at_)))),
                  wgNeg(at_, scA, fragBits(rs, 0, at_, i)))
           }
@@ -159,7 +157,7 @@ function wg_compute(d, arr) = {
     } else {
       foreach (r from 0 to 63)
         foreach (kp from 0 to (tdiv_int(kk, 2) - 1)) {
-          let nib = wgNibW(arr, tdiv_int(r, 16), fmod_int(fmod_int(r, 16), 8), tdiv_int(fmod_int(r, 16), 8), tdiv_int(kp, spNz(at_)),
+          let nib = wgNibW(at_, arr, tdiv_int(r, 16), fmod_int(fmod_int(r, 16), 8), tdiv_int(fmod_int(r, 16), 8), tdiv_int(kp, spNz(at_)),
                            tdiv_int(kk, spCw(at_)), sel);
           mset(SP_MA, rc(r, spCw(at_) * tdiv_int(kp, spNz(at_)) + spPos(at_, nib, fmod_int(kp, spNz(at_)))),
                wgNeg(at_, scA, wgElem(descA, trA == 0, ew(at_), r, kp)))
