@@ -38,6 +38,18 @@ the reference for correctness.
       bits 2–5, as the code does. The header of `semantics/ptx-exec-tc.k` lists implemented features as not modelled.
 - [ ] `.ashift` with `.sp`: decide the reading (see table) and document it.
 
+## Integer review against the ISA (fixed)
+
+- [x] `bmsk`: the Semantics pseudo-code (§9.7.1, bmsk) on the full 32-bit operands; the model and `scripts/gen_bits.py`
+      masked a and b to 8 bits first (`bmsk.clamp 256, 4` gave 0xF, the ISA gives 0).
+- [x] `vshl` / `vshr` `.clamp`: "if ( mode == .clamp && tb > 32 ) tb = 32" on the full value (was masked to 8 bits).
+- [x] `vset d.dsel, a, b, c`: "d = optMerge( dsel, tmp, c )" (the merge form wrote nothing).
+- [x] `lop3.BoolOp _|p`: "The sink symbol '_' may be used in place of the destination operand d" (was unsupported).
+- [x] `setp` / `set` / `slct`: "Modifier .ftz applies only to .f32 comparisons" (f64 subnormals were flushed).
+- [ ] **ISA vs hardware, not changed:** `sub.cc` "borrow-out written to CC.CF" and `subc` "d = a - (b + CC.CF)". The model
+      keeps CC.CF = carry of a + ~b + 1 (1 = no borrow), because ZLUDA's hardware-recorded `subc_cc_s32` reads
+      CC.CF = 0 after `sub.cc` with a < b, which the ISA text would make 1. Needs a decision.
+
 ## Next: review the Sail model against the ISA (not against K)
 
 - [ ] Integer and bit instructions (§9.7.1, §9.7.2)

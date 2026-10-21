@@ -29,7 +29,7 @@ module PTX-EXEC-ALU
   rule wrP(R, D, V, BO, X) => wr(R, D, bop(V, BO, X)) [owise]
   // .ftz: subnormal float inputs compare as sign-preserving zeros
   syntax Int ::= setpIn(Set, Ty, Int) [function, total]
-  rule setpIn(M, T, V) => ftzIn(M, fw(T), V) requires isF(T)
+  rule setpIn(M, T, V) => ftzIn(M, fw(T), V) requires isF(T) andBool fw(T) =/=Int 64   // .ftz applies only to .f32 comparisons
   rule setpIn(_, _, V) => V [owise]
   rule <tk> exec(opc("setp", M, ListItem(T)), ops(D, A, B, .Operands), C) => .K ... </tk>
        <regs> R => wrP(R, D, cmp(cmpOp(M), T, setpIn(M, T, rd(A, T, C)), setpIn(M, T, rd(B, T, C))), "none", 0) </regs>

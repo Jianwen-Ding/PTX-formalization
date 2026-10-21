@@ -107,9 +107,15 @@ function fns(m, b, o) = {
 
 val bmsk : (bool, int, int) -> int
 function bmsk(clampm, a, b) = {
-  let p = if clampm then min_int(land_int(a, 255), 32) else land_int(a, 31);
-  let l = if clampm then min_int(land_int(b, 255), 32) else land_int(b, 31);
-  land_int(shl_int(mask(l), p), 4294967295)
+  /* the Semantics pseudo-code of bmsk (PTX ISA 9.7.1) on the 32-bit operands */
+  let a = land_int(a, 4294967295);
+  let b = land_int(b, 4294967295);
+  let a1 = land_int(a, 31);
+  let b1 = land_int(b, 31);
+  let mask0 = if clampm & a >= 32 then 0 else land_int(shl_int(4294967295, a1), 4294967295);
+  let ovf = a1 + b1 >= 32 | (clampm & (a >= 32 | b >= 32));
+  let mask1 = if ovf then 0 else if b1 == 0 then 4294967295 else land_int(shl_int(4294967295, a1 + b1), 4294967295);
+  land_int(mask0, lnot_int(mask1))
 }
 
 val szext : (bool, ty, int, int) -> int
@@ -194,15 +200,16 @@ function exec_bits(o, ops) = {
       None() => { wr(d, lop3(rd(a, B32), rd(b, B32), rd(c, B32), rd(l, B32))); true },
       Some(_) => false
     },
-    ("lop3", [|dp, a, b, c, l, q|]) => match dp {
-      XS(SPIPE(true, dd, true, pp)) => {
+    /* d|p, where the ISA allows the sink _ for d when .BoolOp is given */
+    ("lop3", [|dp, a, b, c, l, q|]) => match dual_regs(dp) {
+      Some((dd, pp)) => {
         let v = lop3(rd(a, B32), rd(b, B32), rd(c, B32), rd(l, B32));
         let qv = rd(q, PRED);
-        wr_sop(SR(dd), v);
-        wr_sop(SR(pp), bopB(v != 0, m, qv));
+        wr_sop(dd, v);
+        wr_sop(pp, bopB(v != 0, m, qv));
         true
       },
-      _ => false
+      None() => false
     },
     ("shf", [|d, a, b, c|]) => { wr(d, shf(has(m, "l"), has(m, "clamp"), rd(a, B32), rd(b, B32), rd(c, U32))); true },
     _ => false
@@ -325,7 +332,7 @@ function gx_intx(o, ops) = {
 
 /* ---------------------------------------------------------------- PTX-EXEC-PRED */
 val ftzSrc : (list(string), ty, int) -> int
-function ftzSrc(m, t, v) = if has(m, "ftz") & isF(t) then flushB(v, fw(t)) else v
+function ftzSrc(m, t, v) = if has(m, "ftz") & isF(t) & fw(t) != 64 then flushB(v, fw(t)) else v   /* .ftz: not .f64 */
 
 val setRes : (bool, ty) -> int
 function setRes(b, t) = if b then (if isF(t) then encodeF(fv_one(), fw(t)) else mask(wid(t))) else 0

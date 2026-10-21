@@ -252,7 +252,8 @@ function vcore(op, a, b) = match op { "vadd" => a + b, "vsub" => a - b, "vabsdif
 
 val vshift : (bool, bool, int, int) -> int
 function vshift(left, clampm, a, b) = {
-  let s = if clampm then min_int(land_int(b, 255), 32) else land_int(b, 31);
+  /* ISA vshl/vshr: if (mode == .clamp && tb > 32) tb = 32, on the full selected value */
+  let s = if clampm then min_int(land_int(b, 4294967295), 32) else land_int(b, 31);
   if left then shl_int(a, s) else asr_int(a, s)
 }
 
@@ -372,7 +373,13 @@ function exec_video(o, ops) = {
   let m = o.mods;
   match (o.base, ops) {
     ("vset", [|d, a, b|]) => if ntys(o) == 2 then { let aty = ty_nth(o.tys, 0); let bt = ty_nth(o.tys, 1); wr(d, vsetRes(m, vrd(a, aty), vrd(b, bt), 0)); true } else false,
-    ("vset", [|d, a, b, x|]) => if ntys(o) == 2 then { let aty = ty_nth(o.tys, 0); let bt = ty_nth(o.tys, 1); wr(d, vsetRes(m, vrd(a, aty), vrd(b, bt), rd(x, U32))); true } else false,
+    ("vset", [|d, a, b, x|]) => if ntys(o) == 2 then {
+      let aty = ty_nth(o.tys, 0); let bt = ty_nth(o.tys, 1);
+      /* ISA vset: d = optMerge(dsel, tmp, c) when d carries a selector, else the secondary operation */
+      if selSfx(opName(d)) == "" then wr(d, vsetRes(m, vrd(a, aty), vrd(b, bt), rd(x, U32)))
+      else wreg(baseStr(opName(d)), vmerge(U32, false, selSfx(opName(d)), cmpV(cmpOp(m), vrd(a, aty), vrd(b, bt)), rd(x, U32)));
+      true
+    } else false,
     ("vmad", [|d, a, b, x|]) => {
       if ntys(o) == 3 then {
         let aty = ty_nth(o.tys, 1); let bt = ty_nth(o.tys, 2);

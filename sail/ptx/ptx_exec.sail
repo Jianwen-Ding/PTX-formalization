@@ -57,8 +57,8 @@ function exec_alu(o, ops) = {
       if ntys(o) != 1 then false
       else {
         let t = ty1(o);
-        /* .ftz: subnormal float inputs compare as sign-preserving zeros */
-        let fz = has(m, "ftz") & isF(t);
+        /* .ftz: subnormal float inputs compare as sign-preserving zeros (ISA: .ftz applies only to .f32 comparisons) */
+        let fz = has(m, "ftz") & isF(t) & fw(t) != 64;
         let x = if fz then flushB(rd(xop_nth(ops, 1), t), fw(t)) else rd(xop_nth(ops, 1), t);
         let y = if fz then flushB(rd(xop_nth(ops, 2), t), fw(t)) else rd(xop_nth(ops, 2), t);
         if n == 3 then { wrP(xop_nth(ops, 0), cmp(cmpOp(m), t, x, y), "none", 0); true }
