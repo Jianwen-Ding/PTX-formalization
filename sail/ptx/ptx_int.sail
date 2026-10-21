@@ -426,7 +426,27 @@ function exec_pred(o, ops) = {
 
 /* ---------------------------------------------------------------- PTX-EXEC-MISC */
 val gx_misc : (opcode, list(xop)) -> bool
-function gx_misc(o, ops) = o.base == "griddepcontrol" | o.base == "setmaxnreg"
+function gx_misc(o, ops) =
+  if o.base == "setmaxnreg" then {
+    /* a hint without a modelled effect; "When qualifier .dec is specified, the maximum number of per-thread registers
+       owned by the warp prior to the execution of setmaxnreg instruction should be greater than or equal to the
+       imm-reg-count. Otherwise, the behaviour is undefined" (and .inc: less than or equal) (9.7.20.5).  The warp's count
+       is known after its first setmaxnreg; later ones are checked under .ub strict */
+    match ops {
+      [|n|] => {
+        let v = rdu32(n);
+        let mp = c_misc[cchk(cur_cta())];
+        let key = concat_str("nreg:", dec_str(tdiv_int(t_tid[tchk(cur)], 32)));
+        if ub & smap_has(mp, key) & has(o.mods, "dec") & smap_get(mp, key) < v then
+          fault("setmaxnreg.dec above the warp's current register count", v)
+        else if ub & smap_has(mp, key) & has(o.mods, "inc") & smap_get(mp, key) > v then
+          fault("setmaxnreg.inc below the warp's current register count", v)
+        else smap_set(mp, key, v)
+      },
+      _ => ()
+    };
+    true
+  } else o.base == "griddepcontrol"
 
 val isClockReg : string -> bool
 function isClockReg(s) = has([|"%clock", "%clock64", "%globaltimer", "%globaltimer_lo", "%globaltimer_hi"|], s)

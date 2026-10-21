@@ -236,6 +236,9 @@ Open:
       mbar-ub-cpasync-limit.ptx)
 - [ ] mbarrier, not reported: reading the v1 report operands when waitComplete is False;
       whether expect_tx alone may complete a phase (22188-22192 vs 22227-22231) is left as is (it can)
+- [x] `setmaxnreg` (§9.7.20.5): `.dec` above / `.inc` below the warp's current count is reported under `.ub strict`
+      once the count is known (after the warp's first setmaxnreg) (tests/neg/setmaxnreg-ub.ptx); not checked: a
+      setmaxnreg not executed by every warp of the warpgroup, the kernel's initial count
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 
