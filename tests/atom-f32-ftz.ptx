@@ -1,0 +1,49 @@
+// PTX ISA 9.3 9.7.14.5 / 9.7.14.6: "Current implementation of atom.add.f32 [red.add.f32] on global memory flushes
+// subnormal inputs and results to sign-preserving zero; whereas atom.add.f32 on shared memory supports subnormal inputs
+// and results"; 9.7.9.26.4.2: cp.reduce.async.bulk.add.f32 flushes subnormal inputs and results.
+// The values without flushing are given in the comments.
+.version 8.6
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 pg, .param .u64 po)
+{
+    .shared .align 16 .b32 sb[4];
+    .shared .align 4 .b32 sa[1];
+    .reg .b64 %g, %o, %gg, %s; .reg .f32 %f<8>; .reg .b32 %x<4>;
+    ld.param.u64 %g, [pg]; ld.param.u64 %o, [po];
+    cvta.to.global.u64 %gg, %g;
+    mov.b32 %x0, 0x00000002;
+    atom.global.add.f32 %f0, [%gg], %x0;            // G[0] = 2^-149 + 2^-148 -> +0 (0x00000003)
+    mov.b32 %x1, 0x80C00000;
+    red.global.add.f32 [%gg+4], %x1;                // G[1] = 2^-125 - 1.5 * 2^-126 -> +0 (0x00400000)
+    mov.b32 %x2, 0x80000003;
+    atom.add.f32 %f1, [%g+8], %x2;                  // generic address of global G[2]: -0 (0x80000008)
+    mov.b32 %x3, 0x80000001;
+    atom.global.add.f32 %f2, [%gg+12], %x3;         // G[3] = 2^-126 (0x007FFFFF)
+    mov.b32 %x0, 0x00000004; mov.b32 %x1, 0x00000001;
+    red.global.add.v2.f32 [%gg+16], {%x0, %x1};     // G[4] = +0 (0x00000007), G[5] = -2^-126 (0x807FFFFF)
+    // shared memory keeps subnormals
+    mov.b32 %x0, 0x00000001; st.shared.b32 [sa], %x0;
+    mov.b32 %x0, 0x00000002;
+    atom.shared.add.f32 %f3, [sa], %x0;
+    ld.shared.f32 %f4, [sa];                        // 0x00000003
+    // cp.reduce.async.bulk.add.f32 into G[8..11]
+    mov.b32 %x0, 0x00000002; mov.b32 %x1, 0x80C00000; mov.b32 %x2, 0x00000005; mov.b32 %x3, 0x00000000;
+    st.shared.v4.b32 [sb], {%x0, %x1, %x2, %x3};
+    fence.proxy.async.shared::cta;
+    cp.reduce.async.bulk.global.shared::cta.bulk_group.add.f32 [%gg+32], [sb], 16;
+    cp.async.bulk.commit_group;
+    cp.async.bulk.wait_group 0;
+    st.global.v4.f32 [%o], {%f0, %f1, %f2, %f3};
+    st.global.f32 [%o+16], %f4;
+    ret;
+}
+.buffer G .u32 = { 0x00000001, 0x01000000, 0x80000005, 0x00800000, 0x00000003, 0x80800000, 0, 0,
+                   0x00000001, 0x01000000, 0x3F800000, 0x80000002 };
+.buffer O .u32 [5];
+.launch k <<< 1, 1 >>> (G, O);
+// G[8..11]: +0 (0x00000003), +0 (0x00400000), 1.0, -0 + +0 = +0 (0x80000002)
+.expect G .u32 = { 0x00000000, 0x00000000, 0x80000000, 0x00800000, 0x00000000, 0x80800000, 0, 0,
+                   0x00000000, 0x00000000, 0x3F800000, 0x00000000 };
+// atom returns the old memory words
+.expect O .u32 = { 0x00000001, 0x80000005, 0x00800000, 0x00000001, 0x00000003 };

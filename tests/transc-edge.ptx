@@ -27,5 +27,5 @@
 .launch k <<< 1, 6 >>> (X, Y, H, T);
 // -126, -149, 100, log2(3) = 0x3FCAE00D, -1, +0
 .expect Y .b32 = { 0xC2FC0000, 0xC3150000, 0x42C80000, 0x3FCAE00D, 0xBF800000, 0x00000000 };
-// tanh(0.5) = 0.4621: 0x3766, one ulp above the correctly rounded 0x3765 (each operation rounded at f16; within the ISA bound)
-.expect T .b16 = { 0x3C00, 0xBC00, 0x3C00, 0x3C00, 0x3766, 0x3C00 };
+// tanh(0.5) = 0.46212: 0x3765, correctly rounded (tests/tanh-half.ptx)
+.expect T .b16 = { 0x3C00, 0xBC00, 0x3C00, 0x3C00, 0x3765, 0x3C00 };
