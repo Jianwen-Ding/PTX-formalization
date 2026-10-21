@@ -160,7 +160,7 @@ Open:
 - [x] sm_1x `mad.f32` mantissa truncation of the product (§9.7.3.5): without a rounding modifier on an sm_1x target the
       exact product is truncated to 24 significant bits, then c is added with .rn; with c = ±0 it is mul then add
       (tests/sm1x-mad.ptx)
-- [ ] `brkpt` suspends
+- [x] `brkpt` "Suspends execution" (§9.7.20.1): the run stops there (it was a no-op) (tests/neg/brkpt.ptx)
 - [x] function-scope variables (`.shared`, `.global`, `.const`) are bound per function: equal names in two functions no
       longer share a symbol (tests/func-scope-vars.ptx)
 - [ ] `.ashift` with `.sp`, f64 mma "fma-equivalent precision", Figure 187 lane placement (see the matrix section)

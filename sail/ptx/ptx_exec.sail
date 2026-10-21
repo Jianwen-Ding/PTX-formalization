@@ -499,6 +499,8 @@ function exec_ctrl(o, ops) = {
     "ret" => if n == 0 then { do_ret(); true } else false,
     "exit" => if n == 0 then { do_exit(); true } else false,
     "trap" => { fault("trap", 0); true },
+    /* "Suspends execution" (9.7.20.1): with no debugger to resume it, the run stops at the breakpoint */
+    "brkpt" => { fault("brkpt: execution suspended", 0); true },
     "call" => match ops {
       [|XP(rs), XS(SN(f)), XP(xs)|] => { do_call(f, rs, xs); true },
       [|XP(rs), XS(SN(f))|] => { do_call(f, rs, [||]); true },
@@ -534,7 +536,7 @@ function icall(a, rs, xs) = {
 
 /* fences and hints: no-ops under sequential consistency */
 val gx_ctrl : (opcode, list(xop)) -> bool
-function gx_ctrl(o, ops) = has([|"membar", "fence", "nanosleep", "brkpt", "pmevent", "prefetch", "prefetchu"|], o.base)
+function gx_ctrl(o, ops) = has([|"membar", "fence", "nanosleep", "pmevent", "prefetch", "prefetchu"|], o.base)
 
 /* ---------------------------------------------------------------- barriers (PTX-EXEC-SYNC) */
 val isBar : (string, list(string)) -> bool
