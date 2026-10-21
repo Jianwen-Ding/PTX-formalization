@@ -3,9 +3,9 @@
  * mma.sync with block scaling, wmma.mma / wmma.load / wmma.store.
  *
  * The warp's fragments are gathered into matrices through the fragment layouts, the products and
- * sums are exact and rounded once into the accumulator format (K computes them in 300-bit floats,
- * which is exact for every shape and type except f64 sums whose terms span more than 300 bits),
- * and the D fragments are scattered back.  Matrices are sparse maps (C runtime string maps keyed by
+ * sums are exact and rounded once into the accumulator format (the ISA leaves accumulation order and
+ * rounding unspecified for these types), except .f64, which is a chain of f64 fused multiply-adds
+ * (9.7.15.5.14), and the D fragments are scattered back.  Matrices are sparse maps (C runtime string maps keyed by
  * the position r * 1024 + c, absent = 0, as `orDefault 0` in K).
  * ============================================================================= */
 
@@ -195,7 +195,15 @@ val resElem : (ty, ty, ty, ty, int, int, int, list(string)) -> int
 function resElem(dt, at_, bt, ct, r, c, k, m) = {
   let cv = mget(SP_MC, rc(r, c));
   let md = fmods_of(m).rm;
-  if isFloatElem(at_) then
+  /* .f64: "Precision of the element-wise multiplication and addition operation is identical to that of .f64 precision
+     fused multiply-add" (9.7.15.5.14): each product is added by an f64 fma rounded with the modifier, starting from c,
+     in k order (the order is the model's choice) */
+  if isFloatElem(at_) & fw(at_) == 64 then {
+    let fm = { noMods() with rm = md };
+    var acc : int = cv;
+    foreach (i from 0 to (k - 1)) acc = fpFma(fm, 64, mget(SP_MA, rc(r, i)), mget(SP_MB, rc(i, c)), acc);
+    acc
+  } else if isFloatElem(at_) then
     fin({ noMods() with satfinite = has(m, "satfinite"), rm = md }, fw(dt), dotF(at_, bt, r, c, k, elemF(ct, cv), md), false)
   else if ew(at_) > 1 then {
     let v = dotI(at_, bt, r, c, k, ival(cv, ct), "");

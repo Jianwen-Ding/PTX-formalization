@@ -76,8 +76,10 @@ the reference for correctness.
 - [x] tcgen05 block-scale factor placement incl. K = 96 column groups (Figures 231, 234-251)
 - [x] tcgen05.mma.sp `kind::f16` / `tf32` metadata (Figures 262-265)
 - [x] matrix descriptor bit 52 (absolute leading-dimension mode): the ISA gives no layout, so the model stops with an error
-- [ ] open: f64 `mma` "precision ... identical to that of .f64 precision fused multiply-add" (the model rounds the exact
-      sum once); Figure 187 (`.16x32bx2`) draws threads 16-31 at lanes 16-31 while the text and the model use t % 16;
+- [x] f64 `mma` "precision ... identical to that of .f64 precision fused multiply-add" (§9.7.15.5.14): each product is
+      now added by an f64 fma rounded with the modifier, starting from c, in k order (the order is the model's choice);
+      it rounded the exact sum once. tests/mma-f64-fma.ptx; scripts/gen_mma.py / gen_mma_m8n8k4.py model the chain.
+- [ ] open: Figure 187 (`.16x32bx2`) draws threads 16-31 at lanes 16-31 while the text and the model use t % 16;
       M = 64 "Layout F" lane placement is not modelled
 
 ## Floating-point review against the ISA (fixed, Sail only)
@@ -164,7 +166,7 @@ Open:
 - [x] `brkpt` "Suspends execution" (§9.7.20.1): the run stops there (it was a no-op) (tests/neg/brkpt.ptx)
 - [x] function-scope variables (`.shared`, `.global`, `.const`) are bound per function: equal names in two functions no
       longer share a symbol (tests/func-scope-vars.ptx)
-- [ ] `.ashift` with `.sp`, f64 mma "fma-equivalent precision", Figure 187 lane placement (see the matrix section)
+- [ ] `.ashift` with `.sp`, Figure 187 lane placement (see the matrix section)
 - [x] `tcgen05.alloc` without `.shared::cta` takes a generic address (§9.7.17.7.1: "If no state space is specified then
       Generic Addressing is used"); the model read it as a shared offset (tests/tc-alloc-generic.ptx)
 - [x] `.multimem` fabric operations with counted completion bump the counter on every destination device, each counting
@@ -177,7 +179,7 @@ Open:
       `_|q` to the scalar path (tests/half-cmp-pk.ptx, half-cmp-pk2.ptx, half-misc.ptx)
 - [x] `fma.oob` gives +0 when an operand is the OOB-NaN (§9.7.4.4). The ISA gives no OOB-NaN bits; the model uses the
       pattern its own tensor copies fill with (f16 0x7E00, bf16 0x7FC0) (tests/half-oob-set.ptx)
-- [ ] `.sat` of −0 returns −0 ("clamps the result to [0.0, 1.0]" holds either way); hardware is said to give +0
+- [x] `.sat` of −0 returns −0: −0.0 lies in [0.0, 1.0], and the text only forces +0 for NaN results; kept per the ISA
 - [x] `.isacheck` reports half-precision forms outside the §9.7.4 syntax: rounding other than `.rn`, `.ftz` / `.sat` on
       `.bf16`, `.relu` with `.sat`, `.oob` with `.ftz` / `.sat`, `ex2.approx` with / without `.ftz` on the wrong type
       (tests/neg/isa-half-*.ptx)

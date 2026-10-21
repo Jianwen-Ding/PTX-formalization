@@ -112,7 +112,7 @@ def f64_case(shape, mode):
         S = {(r, c): fval('f64', C[(r, c)]) + sum(fval('f64', A[(r, kk)]) * fval('f64', B[(kk, c)]) for kk in range(k))
              for r in range(m) for c in range(n)}
         if all(v != 0 for v in S.values()): break
-    D = {p: bits_round('f64', v, mode) for p, v in S.items()}
+    D = {(r, c): fma_chain(C[(r, c)], [(A[(r, kk)], B[(kk, c)]) for kk in range(k)], mode) for (r, c) in S}
     regs = lambda L, V, cnt: [[V[L[(l, i)]] for i in range(cnt)] for l in range(32)]
     return regs(LA, A, m * k // 32), regs(LB, B, k * n // 32), regs(LC, C, m * n // 32), regs(LC, D, m * n // 32)
 
