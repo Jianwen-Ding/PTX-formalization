@@ -110,6 +110,44 @@ the reference for correctness.
 - [ ] register-indexed operands such as `ld [array[r1]]`; `tests/launch-ok.ptx` combines `.maxntid` with `.reqntid`,
       which the ISA forbids (~39942)
 
+## Second review pass (fixed, Sail only)
+
+Syntax and operands:
+- [x] constant expressions (4.5.4 - 4.5.6) in operands, address offsets (`[%rd - 8]`), initializers and array sizes, with
+      the .s64 / .u64 typing rules; `& | ^` keep the converted type as the text says (Table 5 says .u64: the same bits).
+      Loose: 0f / 0d literals in an expression stand for their value
+- [x] octal literals and the U suffix (4.5.1); non-zero integer constants are True as predicates (4.5.3)
+- [x] colour fields `.r .g .b .a` of vector registers (6.4.2)
+- [x] array elements without brackets as memory operands (`ld.global.u32 s, a[0]`, 6.4.2); index = byte offset (choice)
+- [x] `.pragma` string lists and `.pragma` between a kernel header and its body; `.func .attribute(...)`
+- [x] an undeclared register is an error (it read as 0); writing a special register is an error (chapter 10)
+- [x] loose: `.pred %p;` without `.reg` declares a register (it was a .global variable named %p)
+- [x] the `%`-free test generators `gen_cvt.py` / `gen_mma.py` declared too few registers; regenerated
+
+Instructions and resources:
+- [x] `wmma.load` / `wmma.store` without stride: the leading dimension (9.7.15.3)
+- [x] tcgen05 `.pack::16b` / `.unpack::16b` cells for the 16-lane shapes (Figure 193)
+- [x] `tcgen05.alloc` blocks until the columns are free (9.7.17.5); a never-satisfiable alloc ends in deadlock
+- [x] matrix descriptor base offset (bits 49-51) for wgmma and tcgen05 (9.7.16.5.1, Table 45)
+- [x] per-kernel layout and naming of a kernel's own `.shared` variables (5.1.5): no 2^18 wrap of descriptor addresses in
+      multi-kernel modules, no clash of equal names, per-kernel `%total_smem_size`
+- [x] the reserved shared-memory region (10.29) placed after the user's shared memory (it overlapped offset 0)
+- [x] `isspacep.shared::cluster` only for ranks of the executing cluster
+- [x] textures / TMA / bulk / multimem (merged from the agent branch): 2dms / a2dms, lod type, f16 destinations,
+      force_unnormalized_coords, txq enums, TMA element strides, generic addressing of st.async / red.async / st.bulk,
+      op x type tables reported under `.isacheck`
+- [x] `.isacheck` legality data generated from the ISA 9.3 text, exact / family target rules, `compute_xx` targets
+
+Open:
+- [ ] `sub.cc` / `subc` borrow vs carry (ISA text vs ZLUDA hardware results), needs a decision
+- [ ] register-indexed array operands (`a[%r1]`, `a[%r1+4]`)
+- [ ] the relaxed type-checking tables (6.4) and qualifier combinations (ld/st `.volatile` / `.relaxed` / `.mmio` / scopes,
+      `fma.f32` without rounding, `setmaxnreg` range, ...) reported under `.isacheck` only; default mode accepts them
+- [ ] tcgen05 allocation patterns (alloc after relinquish, growing size, exit without dealloc) under `.ub strict`
+- [ ] sm_1x single-precision defaults (ftz, mad.f32 truncation); `brkpt` suspends
+- [ ] device-function `.shared` variables with equal names in different functions still share a symbol
+- [ ] `.ashift` with `.sp`, f64 mma "fma-equivalent precision", Figure 187 lane placement (see the matrix section)
+
 ## Where the Sail model now differs from the K semantics
 
 The K semantics in `semantics/` is no longer kept in step for the fixes above (it cannot be built here). Differences:
