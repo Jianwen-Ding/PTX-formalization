@@ -264,7 +264,7 @@ function bsNB(m) =
 
 val bsScale : (bool, int) -> fv
 function bsScale(e43, x) =
-  if not_bool(e43) then FV_Fin(false, 1, x - 127)
+  if not_bool(e43) then (if x == 255 then FV_NaN() else FV_Fin(false, 1, x - 127))   /* ue8m0: 0xFF is NaN */
   else if asr_int(x, 3) == 0 then FV_Fin(false, land_int(x, 7), -9)
   else FV_Fin(false, land_int(x, 7) + 8, asr_int(x, 3) - 10)
 
@@ -485,7 +485,9 @@ function exec_mma(o, ops) = {
   let full : int = 4294967295;
   match (o.base, o.tys, ops) {
     ("mma", [|dt, at_, bt, ct|], [|dv, av, bv, cv|]) => {
-      if has(m, "sync") & not_bool(has(m, "sp")) & not_bool(has(m, "sp::ordered_metadata")) then {
+      /* m8n8k4 is modelled for .f64 only (the sm_70 .f16 form has other fragments): anything else is unsupported */
+      if has(m, "sync") & not_bool(has(m, "sp")) & not_bool(has(m, "sp::ordered_metadata"))
+         & not_bool(shapeOf(m) == "m8n8k4" & wid(at_) != 64) then {
         do_coll("mma", full, [|CVS(shapeOf(m)), CVT(dt), CVT(at_), CVT(bt), CVT(ct), CVM(m)|],
                 pend_append(pend_append(vecRegs(av, at_), vecRegs(bv, bt)), vecRegs(cv, ct)), vecOps(dv));
         true

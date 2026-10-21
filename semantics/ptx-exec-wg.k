@@ -80,9 +80,12 @@ module PTX-EXEC-WG
   syntax Int ::= wgRead(Bytes, Int, Int, Int) [function, total]                    // smem, byte address, bit within byte, element bits
   rule wgRead(SM, A, BI, W) => (readBytes(SM, A, maxInt(1, W /Int 8)) >>Int BI) &Int mask(W)
 
-  // negation of float inputs (imm-scale = -1)
+  // negation of float inputs (imm-scale = -1): the sign bit, bit 5 for fp6 and for fp4 in the centre of its 8-bit container
+  syntax Int ::= negBit(Ty) [function, total]
+  rule negBit(ty(K, _)) => 5 requires K ==String "e2m3" orBool K ==String "e3m2" orBool K ==String "e2m1"
+  rule negBit(T) => ew(T) -Int 1 [owise]
   syntax Int ::= wgNeg(Ty, Int, Int) [function, total]
-  rule wgNeg(T, Sc, V) => V xorInt (1 <<Int (ew(T) -Int 1)) requires Sc <Int 0 andBool isFloatElem(T)
+  rule wgNeg(T, Sc, V) => V xorInt (1 <<Int negBit(T)) requires Sc <Int 0 andBool isFloatElem(T)
   rule wgNeg(_, _, V) => V [owise]
 
   // ---------------------------------------------------------------- assembling the operands

@@ -91,7 +91,7 @@ module PTX-ALU
   rule un("rcp",   M, T, A) => fpRcp(M, fw(T), A) requires isF(T)
   rule un("sin",   M, T, A) => post(M, fw(T), sinFloat(fv(ftzIn(M, fw(T), A), T))) requires isF(T)
   rule un("cos",   M, T, A) => post(M, fw(T), cosFloat(fv(ftzIn(M, fw(T), A), T))) requires isF(T)
-  rule un("lg2",   M, T, A) => post(M, fw(T), logFloat(fv(ftzIn(M, fw(T), A), T)) /Float logFloat(fc(2.0, fv(A, T)))) requires isF(T)
+  rule un("lg2",   M, T, A) => post(M, fw(T), logFloat(wide3(fv(ftzIn(M, fw(T), A), T))) /Float logFloat(wide3(fc(2.0, fv(A, T))))) requires isF(T)
   rule un("ex2",   M, T, A) => post(M, fw(T), fc(2.0, fv(A, T)) ^Float fv(ftzIn(M, fw(T), A), T)) requires isF(T)
   rule un("tanh",  M, T, A) => post(M, fw(T), tanhF(fv(ftzIn(M, fw(T), A), T))) requires isF(T)
   rule un("neg",  _, T, A) => trunc(0 -Int A, wid(T))            requires notBool isF(T)
@@ -107,6 +107,8 @@ module PTX-ALU
   rule tanhF(F) => F requires isNaN(F) orBool absFloat(F) <Float fc(0.000244140625, F)
   rule tanhF(F) => (expFloat(F) -Float expFloat(--Float F)) /Float (expFloat(F) +Float expFloat(--Float F))
     requires notBool isNaN(F) andBool absFloat(F) >=Float fc(0.000244140625, F) andBool absFloat(F) <Float fc(20.0, F)
+     andBool notBool isInfinite(expFloat(F)) andBool notBool isInfinite(expFloat(--Float F))
+  // f16: e^|x| overflows above ln 65520 ~ 11.09, where tanh(x) rounds to +-1
   rule tanhF(F) => #if signFloat(F) #then fc(-1.0, F) #else fc(1.0, F) #fi [owise]
 
   // ------------------------------------------------------------ ternary ops

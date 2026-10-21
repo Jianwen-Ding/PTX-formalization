@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Run tests/*.ptx on the PTX Sail model and compare with the golden tests/*.out, like
 scripts/run-tests.sh does for the K interpreter: a test passes when the model's output equals the
-.out file and it exits with 0 (every .expect held).  Without a .out file, the .expect directives are
-the reference (exit 0 and no FAIL line).
+.out file and it exits with 0 (every .expect held).  A test without a .out file fails, as in run-tests.sh;
+--update writes the model's output as the .out file of each test that exits with 0 (review it before committing).
 
-  ptxtest.py [-j N] [-v] [--report FILE] [tests...]
+  ptxtest.py [-j N] [-v] [--update] [--report FILE] [tests...]
 """
 import os, re, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
@@ -15,12 +15,19 @@ sys.path.insert(0, HERE)
 import ptxfront  # noqa: E402
 
 EXE = os.environ.get("PTX_SAIL", os.path.join(HERE, "build", "ptx"))
+UPDATE = False
 
 def run_one(path, timeout=900):
     t0 = time.time()
     try:
         toks = ptxfront.front(open(path).read())
     except Exception as e:
+        if os.sep + "neg" + os.sep in path:
+            # tests/neg: a program the front end rejects fails as expected when the error names the `// expect:` text
+            first = open(path).readline()
+            want = first[len("// expect: "):].strip() if first.startswith("// expect: ") else ""
+            ok = want in str(e)
+            return ("PASS" if ok else "FAIL", "" if ok else "front end: %s" % e, "", 0.0)
         return ("FAIL", "front end: %s" % e, "", 0.0)
     with tempfile.NamedTemporaryFile("w", suffix=".tok", delete=False) as f:
         f.write(toks)
@@ -47,16 +54,20 @@ def run_one(path, timeout=900):
         # tests/zluda (scripts/run-zluda.py): the program passes when it exits 0 and its output starts with PASS
         ok = ex == 0 and out.strip().startswith("PASS")
         return ("PASS" if ok else "FAIL", "" if ok else (note or out.strip().replace("\n", " | ")[:160]), out, time.time() - t0)
+    if UPDATE and ex == 0:
+        with open(golden, "w") as f:
+            f.write(out.rstrip("\n") + "\n")
     if os.path.exists(golden):
         g = open(golden).read()
         ok = ex == 0 and out.rstrip("\n") == g.rstrip("\n")
         if not ok and not note:
             note = "output differs" if ex == 0 else "exit %s" % ex
     else:
-        ok = ex == 0 and "FAIL" not in out
+        ok, note = False, note or "no golden %s" % os.path.basename(golden)
     return ("PASS" if ok else "FAIL", note, out, time.time() - t0)
 
 def main(argv):
+    global UPDATE
     jobs, verbose, report = 2, False, None
     args = []
     i = 0
@@ -64,6 +75,7 @@ def main(argv):
         a = argv[i]
         if a == "-j": jobs = int(argv[i + 1]); i += 2; continue
         if a == "-v": verbose = True; i += 1; continue
+        if a == "--update": UPDATE = True; i += 1; continue
         if a == "--report": report = argv[i + 1]; i += 2; continue
         args.append(a); i += 1
     tests = args or sorted(os.path.join(ROOT, "tests", f) for f in os.listdir(os.path.join(ROOT, "tests")) if f.endswith(".ptx"))

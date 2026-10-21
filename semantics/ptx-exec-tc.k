@@ -315,12 +315,14 @@ module PTX-EXEC-TC
   rule tcKS(M, ID, Meta) => tcK(M, ID) requires Meta <Int 0
   syntax Map ::= tcAMat(Set, Map, Bytes, Bool, Int, Int, Int) [function, total]
   rule tcAMat(M, TM, SM, AD, AV, ID, Meta) => tcAshift(tcAMat0(M, TM, SM, AD, AV, ID, Meta), "ashift" in M)
-  // .ashift: the rows of A move down one row (row 0 is kept, the last row is dropped)
+  // .ashift: the rows of A move down one row (row 0 is kept); every key of row r moves to row r + 1, so a sparse A whose
+  // rows have different non-zero positions shifts correctly (the extra row M is never read)
   syntax Map ::= tcAshift(Map, Bool) [function, total]
   rule tcAshift(A, false) => A
   rule tcAshift(A, true) => tcAshiftK(A, keys_list(A), .Map)
   syntax Map ::= tcAshiftK(Map, List, Map) [function, total]
-  rule tcAshiftK(A, ListItem(K:Int) Ks, Acc) => tcAshiftK(A, Ks, Acc[K <- {A[#if K >=Int 1024 #then K -Int 1024 #else K #fi] orDefault 0}:>Int])
+  rule tcAshiftK(A, ListItem(K:Int) Ks, Acc) =>
+       tcAshiftK(A, Ks, (#if K <Int 1024 #then Acc[K <- {A[K] orDefault 0}:>Int] #else Acc #fi)[K +Int 1024 <- {A[K] orDefault 0}:>Int])
   rule tcAshiftK(_, _, Acc) => Acc [owise]
   syntax Map ::= tcAMat0(Set, Map, Bytes, Bool, Int, Int, Int) [function, total]
   rule tcAMat0(M, TM, SM, AD, AV, ID, Meta) =>
@@ -407,6 +409,10 @@ module PTX-EXEC-TC
                  #else tcMmaG2(M, TM2, SM2, SM2, SM1, AD, AV, BV, ID, DA, tcEn(Rest, C), tcSc(Rest, C), Meta) #fi </tmem> ... </cta>
        <gridDim> GD </gridDim> <clusterDim> CD </clusterDim>
     requires "cta_group::2" in M andBool PT ==Int clTarget(CT, rreg("%cluster_ctarank", C) xorInt 1, GD, CD) andBool PT =/=Int CT
+     andBool tcMk(Rest, C) ==Int 0
+  // the 8-register disable-output-lane vector of a CTA pair: which lanes of which CTA it names is not modelled
+  rule <tk> #tcMma(M, _, _, _, _, _, _, Rest, C) => #fault("tcgen05.mma.cta_group::2 with disable-output-lane is not modelled", 0) ... </tk>
+    requires "cta_group::2" in M andBool tcMk(Rest, C) =/=Int 0 [priority(40)]
   // optional vector mask first, then the enable predicate, then the optional scale
   syntax List ::= tcOps(List) [function, total]
   rule tcOps(ListItem(V:Operand) Vs) => #if isVec(V) #then Vs #else ListItem(V) Vs #fi
@@ -528,7 +534,8 @@ module PTX-EXEC-TC
   rule tcBlk(M, ID, K) => K /Int 2 requires notBool "kind::mxf8f6f4" in M andBool notBool "block16" in M andBool notBool "scale_vec::4X" in M andBool "scale_vec::2X" in M
   rule tcBlk(M, ID, K) => 32 requires notBool "kind::mxf8f6f4" in M andBool notBool "block16" in M andBool notBool "scale_vec::4X" in M andBool notBool "scale_vec::2X" in M
   syntax Float ::= tcScaleF(Int, Int) [function, total]                       // scale type code, byte
-  rule tcScaleF(1, X) => scaleP2(Int2Float(1, 64, WEXP), X -Int 127)
+  rule tcScaleF(1, X) => scaleP2(Int2Float(1, 64, WEXP), X -Int 127) requires X =/=Int 255
+  rule tcScaleF(1, 255) => Int2Float(0, 64, WEXP) /Float Int2Float(0, 64, WEXP)   // ue8m0: 0xFF is NaN
   rule tcScaleF(0, X) => tcUE(X, 3, 7)
   rule tcScaleF(2, X) => tcUE(X, 3, 15)
   rule tcScaleF(_, X) => tcUE(X, 3, 7) [owise]

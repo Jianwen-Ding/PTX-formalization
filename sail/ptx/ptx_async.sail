@@ -66,9 +66,17 @@ val exec_cluster : (opcode, list(xop)) -> bool
 function exec_cluster(o, ops) = {
   let m = o.mods;
   match (o.base, ops) {
-    ("mapa", [|d, a, r|]) => { wr(d, lor_int(land_int(rd(a, ty1(o)), 16777215), shl_int(rdu32(r) + 1, 24))); true },
-    ("getctarank", [|d, a|]) => {
+    // without .shared::cluster, a and d are generic addresses (in the shared::cta or cluster window)
+    ("mapa", [|d, a, r|]) => {
+      let own = rreg("%cluster_ctarank");
+      let gen = not_bool(has(m, "shared::cluster"));
       let v = rd(a, ty1(o));
+      let x = lor_int(land_int(if gen then clFromGeneric(v, own) else v, 16777215), shl_int(rdu32(r) + 1, 24));
+      wr(d, if gen then trunc(clToGeneric(x, own), wid(ty1(o))) else x);
+      true
+    },
+    ("getctarank", [|d, a|]) => {
+      let v = if has(m, "shared::cluster") then rd(a, ty1(o)) else clFromGeneric(rd(a, ty1(o)), rreg("%cluster_ctarank"));
       wr(d, if asr_int(v, 24) == 0 then rreg("%cluster_ctarank") else asr_int(v, 24) - 1);
       true
     },

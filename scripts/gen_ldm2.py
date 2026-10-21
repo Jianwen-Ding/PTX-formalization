@@ -43,8 +43,8 @@ def ld_case(kk, shape, num, fmt, qual):
     L.append("    ret;\n}\n")
     L.append(f".buffer IN .u8 = {{ {h(img)} }};\n.buffer O .u32 [{32 * nreg}];\n.launch k{kk} <<< 1, 32 >>> (IN, O);\n.expect O .u32 = {{ {h([x for r in out for x in r])} }};")
     open(f'tests/ldm2-{kk}.ptx', 'w').write("\n".join(L) + "\n")
-cases = [('m16n16', 1, 'b8', '.trans.shared.b8'), ('m16n16', 2, 'b6', '.trans.b8x16.b6x16_p32'), ('m16n16', 1, 'b4', '.trans.b8x16.b4x16_p64'),
-         ('m8n16', 2, 'b6', '.b8x16.b6x16_p32'), ('m8n16', 1, 'b4', '.b8x16.b4x16_p64'), ('m8n16', 4, 's4', '.shared::cta.s8.s4')]
+cases = [('m16n16', 1, 'b8', '.trans.shared.b8'), ('m16n16', 2, 'b6', '.trans.shared.b8x16.b6x16_p32'), ('m16n16', 1, 'b4', '.trans.shared.b8x16.b4x16_p64'),
+         ('m8n16', 2, 'b6', '.shared.b8x16.b6x16_p32'), ('m8n16', 1, 'b4', '.shared.b8x16.b4x16_p64'), ('m8n16', 4, 's4', '.shared::cta.s8.s4')]
 for kk, c in enumerate(cases): ld_case(kk, *c)
 # stmatrix.m16n8.b8
 def st_case(kk, num):
