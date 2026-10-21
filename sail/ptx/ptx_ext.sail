@@ -16,5 +16,5 @@ function coll_post_ext(p, vs) = match p {
   P_tcdealloc(_, _) => post_tc(p, vs),
   _ => post_ldm(p, vs)
 }
-function ext_wait_ready2() = false
+function ext_wait_ready2() = match t_cont[tchk(cur)] { K_wait("tcalloc", _) => tcAllocRetry(), _ => false }
 function harness_ext(d) = harness_tma(d) | harness_tex(d) | harness_mm(d)

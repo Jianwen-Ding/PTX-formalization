@@ -323,7 +323,8 @@ function coll_take() = {
           p => { t_post[t] = P_none(); coll_post_ext(p, vs) }
         };
         if c.ctaken + 1 == list_len_pairs(c.carr) then drop_coll(key) else put_coll({ c with ctaken = c.ctaken + 1 });
-        t_cont[t] = K_none()
+        /* the post step may block the thread again (tcgen05.alloc waiting for columns) */
+        match t_cont[t] { K_collwait(_, _) => t_cont[t] = K_none(), _ => () }
       },
       None() => ()
     },

@@ -56,6 +56,35 @@ function tcInst(k) = {
     dec_str((if smap_has(t_cseq[t], seqKey(k, 4294967295)) then smap_get(t_cseq[t], seqKey(k, 4294967295)) else 1) - 1)))))
 }
 
+/* a thread whose tcgen05.alloc waits for columns: its destination and size */
+register t_tcal : vector(16384, loc) = vector_init(BadLoc(""))
+
+/* tcgen05.alloc (ISA 9.7.17.5): the warp's result is computed once per instance; when the columns are not available
+   the instruction blocks until they become available (a thread waits in K_wait("tcalloc") and retries) */
+val tcAllocTry : (loc, int) -> bool
+function tcAllocTry(l, n) = {
+  let c = cur_cta();
+  let rs = tcSpace(c, "rs");
+  let al = tcSpace(c, "al");
+  let inst = tcInst("tcgen05.alloc");
+  if smap_has(rs, inst) then { let _ = memop_do(l, WrOp(4, smap_get(rs, inst))); true }
+  else if not_bool(tcPow2(n)) then { fault("tcgen05.alloc: invalid size", n); true }
+  else if tcFind(al, n) >= 0 then {
+    let b = tcFind(al, n);
+    let _ = memop_do(l, WrOp(4, b));
+    smap_set(rs, inst, b);
+    smap_set(al, dec_str(b), n);
+    true
+  } else false
+}
+
+/* retry of a blocked tcgen05.alloc (from the scheduler's wait hook) */
+val tcAllocRetry : unit -> bool
+function tcAllocRetry() = {
+  let t = tchk(cur);
+  if tcAllocTry(t_tcal[t], at(t_wd[t], 0)) then { t_cont[t] = K_none(); true } else false
+}
+
 val post_tc : (cpost, list(int)) -> unit
 function post_tc(p, vs) = {
   let c = cur_cta();
@@ -63,14 +92,12 @@ function post_tc(p, vs) = {
   let al = tcSpace(c, "al");
   match p {
     P_tcalloc(l, n) => {
-      let inst = tcInst("tcgen05.alloc");
-      if smap_has(rs, inst) then { let _ = memop_do(l, WrOp(4, smap_get(rs, inst))); () }
-      else if tcPow2(n) & tcFind(al, n) >= 0 then {
-        let b = tcFind(al, n);
-        let _ = memop_do(l, WrOp(4, b));
-        smap_set(rs, inst, b);
-        smap_set(al, dec_str(b), n)
-      } else fault("tcgen05.alloc: invalid size or tensor memory exhausted", n)
+      if not_bool(tcAllocTry(l, n)) then {
+        let t = tchk(cur);
+        t_tcal[t] = l;
+        t_wd[t] = [|n|];
+        t_cont[t] = K_wait("tcalloc", 0)
+      }
     },
     P_tcdealloc(b, n) => {
       let inst = tcInst("tcgen05.dealloc");
