@@ -509,13 +509,20 @@ function wmLoc(mat, s, t, l, col, st, base, i) = {
   (loc_add(base, tdiv_int(x, 8)), fmod_int(x, 8))
 }
 
-val wm_load : (opcode, xop, addr, xop) -> unit
-function wm_load(o, dv, a, sto) = {
+/* the default wmma stride: the leading dimension (A: K row-major / M column-major, B: N / K, C and D: N / M) */
+val wmDefStride : (string, string, bool) -> int
+function wmDefStride(mat, s, col) = match mat {
+  "a" => if col then shM(s) else shK(s),
+  "b" => if col then shK(s) else shN(s),
+  _ => if col then shM(s) else shN(s)
+}
+
+val wm_load : (opcode, xop, addr, int) -> unit
+function wm_load(o, dv, a, st) = {
   let m = o.mods;
   let t = ty1(o);
   let mat = pick(m, [|"a", "b", "c"|], "a");
   let s = shapeOf(m);
-  let st = rdu32(sto);
   let base = ea(a, spaceOf(m));
   let l = fmod_int(t_tid[tchk(cur)], 32);
   let n = wmNel(mat, s, t);
@@ -542,12 +549,11 @@ function wm_load(o, dv, a, sto) = {
   }
 }
 
-val wm_store : (opcode, addr, xop, xop) -> unit
-function wm_store(o, a, vs, sto) = {
+val wm_store : (opcode, addr, xop, int) -> unit
+function wm_store(o, a, vs, st) = {
   let m = o.mods;
   let t = ty1(o);
   let s = shapeOf(m);
-  let st = rdu32(sto);
   let base = ea(a, spaceOf(m));
   let l = fmod_int(t_tid[tchk(cur)], 32);
   let n = wmNel("c", s, t);
@@ -600,8 +606,13 @@ function exec_mma(o, ops) = {
         true
       } else false
     },
-    ("wmma", [|_|], [|dv, XB([|a|], [||]), sto|]) => if has(m, "load") then { wm_load(o, dv, a, sto); true } else false,
-    ("wmma", [|_|], [|XB([|a|], [||]), vs, sto|]) => if has(m, "store") then { wm_store(o, a, vs, sto); true } else false,
+    ("wmma", [|_|], [|dv, XB([|a|], [||]), sto|]) => if has(m, "load") then { wm_load(o, dv, a, rdu32(sto)); true } else false,
+    ("wmma", [|_|], [|XB([|a|], [||]), vs, sto|]) => if has(m, "store") then { wm_store(o, a, vs, rdu32(sto)); true } else false,
+    /* stride is optional: the default is the leading dimension of the matrix (ISA 9.7.15.3 Matrix Storage for WMMA) */
+    ("wmma", [|_|], [|dv, XB([|a|], [||])|]) =>
+      if has(m, "load") then { wm_load(o, dv, a, wmDefStride(pick(m, [|"a", "b", "c"|], "a"), shapeOf(m), has(m, "col"))); true } else false,
+    ("wmma", [|_|], [|XB([|a|], [||]), vs|]) =>
+      if has(m, "store") then { wm_store(o, a, vs, wmDefStride("c", shapeOf(m), has(m, "col"))); true } else false,
     _ => false
   }
 }
