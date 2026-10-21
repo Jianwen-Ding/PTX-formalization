@@ -13,9 +13,11 @@ function gidx(t, n) = {
 val reg_raw : (int, int) -> int
 function reg_raw(t, n) = unsigned(gpr[gidx(t, n)])
 
-/* raw(G, U, T, R): the 32-bit container */
+/* raw(G, U, T, R): the 32-bit container.  A 32-bit uniform at an odd 16-bit index (view 4) is not measured: the
+ * model stops with an error (applegpu and agx_run read uN) */
 val raw : (int, areg) -> int
 function raw(t, r) = {
+  if r.view == 4 then fatal("a 32-bit uniform at an odd 16-bit index (uN.odd) is not measured");
   if r.file == UNI then {
     unsigned(get_upr(r.num))
   } else reg_raw(t, r.num)
@@ -25,13 +27,14 @@ val raw_n : (int, rfile, int) -> int
 function raw_n(t, f, n) = raw(t, { gpr32(n) with file = f })
 
 val view_bits : areg -> int
-function view_bits(r) = match r.view { 0 => 32, 3 => 64, _ => 16 }
+function view_bits(r) = match r.view { 0 => 32, 3 => 64, 4 => 32, _ => 16 }
 
 /* val(G, U, T, R) with the encoding's sign-extension modifier */
 val rval : (int, areg) -> int
 function rval(t, r) = {
   let v : int = match r.view {
     0 => raw(t, r),
+    4 => raw(t, r),
     1 => land_int(raw(t, r), 65535),
     2 => land_int(shr_int(raw(t, r), 16), 65535),
     _ => raw(t, r) + shl_int(raw_n(t, r.file, r.num + 1), 32)
@@ -60,13 +63,18 @@ function db(r) = view_bits(r)
 val amask : int -> int
 function amask(b) = mask_int(b)
 
+/* the abs / neg modifiers of a float immediate */
+val fimm_mods : (fv, bool, bool) -> fv
+function fimm_mods(v, ab, ng) = { let v1 = if ab then fv_abs(v) else v in if ng then fv_neg(v1) else v1 }
+
 /* opv(G, U, T, A, B): registers read their view, integer immediates are broadcast (truncated to
  * B bits), float immediates are encoded at B bits */
 val opv : (int, aop, int) -> int
 function opv(t, a, b) = match a {
   OReg(r) => rval(t, r),
   OImm(i) => land_int(i, amask(b)),
-  OFImm(f) => encodeF(f64v(f), b)
+  OFImm(f) => encodeF(f64v(f), b),
+  OFMod(f, ab, ng) => encodeF(fimm_mods(f64v(f), ab, ng), b)
 }
 
 /* float source: the operand bits at width w with the abs / neg modifiers applied to the sign bit */
@@ -130,6 +138,7 @@ function fval(t, a, daz) = match a {
     let b = rval(t, { r with sx = false });
     let v : fv = match r.view {
       0 => decodeF(if daz then flushB(b, 32) else b, 32),
+      4 => decodeF(if daz then flushB(b, 32) else b, 32),
       3 => decodeF(b, 64),
       _ => decodeF(b, 16)
     };
@@ -137,6 +146,7 @@ function fval(t, a, daz) = match a {
     if r.fneg then fv_neg(v1) else v1
   },
   OFImm(f) => { let w : int = if daz then 32 else 16 in decodeF(encodeF(f64v(f), w), w) },
+  OFMod(f, ab, ng) => { let w : int = if daz then 32 else 16 in fimm_mods(decodeF(encodeF(f64v(f), w), w), ab, ng) },
   OImm(i) => { let w : int = if daz then 32 else 16 in decodeF(land_int(i, mask_int(w)), w) }
 }
 
@@ -293,7 +303,14 @@ function clause execute(IADD(sub, sat, d, a, b, sh)) = {
   foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
 }
 
+val is_reg64 : aop -> bool
+function is_reg64(a) = match a { OReg(r) => r.view == 3, _ => false }
+
+/* a 64-bit multiplicand (A or B a register pair: an encoding Mesa's packer accepts, applegpu and agx_run read the
+ * low register, the LLVM backend rejects it) is not measured (Apple-M2-Playground 2026-10-11-int64 measured 32-bit
+ * multiplicands only): the model stops with an error */
 function clause execute(IMADD(sub, sat, d, a, b, c, sh)) = {
+  if is_reg64(a) | is_reg64(b) then fatal("imadd / imsub with a 64-bit multiplicand is not measured");
   var r : vector(32, int) = vector_init(0);
   foreach (t from 0 to 31) {
     if is_active(t) then {

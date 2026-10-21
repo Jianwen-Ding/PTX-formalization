@@ -39,6 +39,11 @@ val mem_wr = impure {c: "sail_mem_wr"} : (int, int, int) -> unit
 
 let SP_DEV : int = 0
 let SP_TG : int = 1
+/* the SIMD group's stack (scratch) allocation, byte-addressed from its start (agx_exec.sail stack_addr) */
+let SP_STACK : int = 2
+
+/* the size of the stack allocation in 32-bit words per lane, set by stack_adjust (0: none) */
+register stack_words : int = 0
 
 /* wrBytes / rdBytes: little-endian multi-byte access */
 val wrBytes : (int, int, int, int) -> unit
@@ -69,6 +74,7 @@ function init_state() = {
   exit_code = 0;
   msg = "";
   pend = [||];
+  stack_words = 0;
   ncode = 0;
   labels = [||];
   foreach (i from 0 to 4095) { code[i] = STOP(); code_addr[i] = 0 }
