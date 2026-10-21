@@ -1,0 +1,37 @@
+// PTX ISA 9.3 9.7.9.22: .relu ("clamps the result to 0 if negative. NaN results are converted to canonical NaN") and
+// .satfinite (|x| > MAX_NORM -> sign-preserved MAX_NORM, NaN -> NaN) apply to the up-conversions to .f16x2 / .bf16x2
+// from the fp8 / fp6 / fp4 / s2f6 formats; for .ue8m0x2 an |x| > MAX_NORM gives the positive MAX_NORM 0xfe, also for
+// negative x (-Inf, -MAX f32).  Values without the modifiers in the comments.
+.version 8.7
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 po, .param .u64 pu)
+{
+    .reg .b32 %r<12>; .reg .b16 %h<6>, %u<4>; .reg .f32 %f<4>; .reg .b64 %o, %p;
+    ld.param.u64 %o, [po]; ld.param.u64 %p, [pu];
+    mov.b16 %h0, 0xB840;  cvt.rn.relu.f16x2.e4m3x2 %r0, %h0;              // -1, 2: 0xBC004000
+    mov.b16 %h1, 0xFC7F;  cvt.rn.relu.f16x2.e5m2x2 %r1, %h1;              // -Inf, NaN: 0xFC007FFF
+    mov.b16 %h2, 0xFC7C;  cvt.rn.satfinite.bf16x2.e5m2x2 %r2, %h2;        // -Inf, +Inf: 0xFF807F80
+    mov.b16 %h3, 0x7E38;  mov.b16 %h4, 0xFE7F;
+    cvt.rn.satfinite.scaled::n2::ue8m0.bf16x2.e4m3x2 %r3, %h3, %h4;     // 448 * 2^127, 1: 0x7F803F80
+    mov.b16 %h5, 0x00A3;  cvt.rn.relu.bf16x2.e2m1x2 %r4, %h5;             // -1, 1.5: 0xBF803FC0
+    mov.b16 %h0, 0x2F0C;  cvt.rn.relu.f16x2.e3m2x2 %r5, %h0;              // -1.75, 1: 0xBF003C00
+    mov.b16 %h1, 0xC020;  cvt.rn.satfinite.relu.bf16x2.s2f6x2 %r6, %h1;   // -1, 0.5: 0xBF803F00
+    mov.b16 %h2, 0x7C02;  cvt.rn.relu.f16x2.e5m2x2 %r7, %h2;              // +Inf, subnormal 2^-15: 0x7C000200
+    mov.b32 %f0, 0xFF800000; mov.b32 %f1, 0xFF7FFFFF;
+    cvt.rz.satfinite.ue8m0x2.f32 %u0, %f0, %f1;                         // 0x0000
+    mov.b32 %r8, 0xFF804000;
+    cvt.rp.satfinite.ue8m0x2.bf16x2 %u1, %r8;                           // -Inf, 2.0: 0x0080
+    mov.b32 %f2, 0x7F800000; mov.b32 %f3, 0x7F000000;
+    cvt.rz.satfinite.ue8m0x2.f32 %u2, %f2, %f3;                         // +Inf, 2^127: 0xFEFE
+    st.global.v4.b32 [%o], {%r0, %r1, %r2, %r3};
+    st.global.v4.b32 [%o+16], {%r4, %r5, %r6, %r7};
+    st.global.v2.b16 [%p], {%u0, %u1};
+    st.global.b16 [%p+4], %u2;
+    ret;
+}
+.buffer O .u32 [8];
+.buffer U .u16 [3];
+.launch k <<< 1, 1 >>> (O, U);
+.expect O .u32 = { 0x00004000, 0x00007FFF, 0xFF7F7F7F, 0x7F7F3F80, 0x00003FC0, 0x00003C00, 0x00003F00, 0x7C000200 };
+.expect U .u16 = { 0xFEFE, 0xFE80, 0xFEFE };

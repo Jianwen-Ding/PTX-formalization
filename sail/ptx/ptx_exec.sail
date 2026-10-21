@@ -142,6 +142,14 @@ function gx_alu(o, ops) = {
   }
 }
 
+/* "Current implementation of atom.add.f32 [red.add.f32] on global memory flushes subnormal inputs and results to
+ * sign-preserving zero" (ISA 9.7.14.5, 9.7.14.6); shared memory keeps them */
+val atOpG : (loc, string, ty) -> string
+function atOpG(l, op, t) = match l {
+  Loc(s, _) => if s == "global" & op == "add" & ty_eq(t, mkty("f", 32)) then "add.ftz" else op,
+  _ => op
+}
+
 /* ---------------------------------------------------------------- memory (PTX-EXEC-MEM) */
 val exec_mem : (opcode, list(xop)) -> bool
 function exec_mem(o, ops) = {
@@ -184,7 +192,8 @@ function exec_mem(o, ops) = {
         else match mem_addr(xop_nth(ops, 1)) {
           Some(a) => {
             let c = if n == 4 then rd(xop_nth(ops, 3), t) else 0;
-            let v = memop_do(ea(a, spaceOf(m)), AtOp(atomOp(m), t, rd(xop_nth(ops, 2), t), c));
+            let l = ea(a, spaceOf(m));
+            let v = memop_do(l, AtOp(atOpG(l, atomOp(m), t), t, rd(xop_nth(ops, 2), t), c));
             if not_bool(stuck) then ldwb(xop_nth(ops, 0), t, v);
             true
           },
@@ -194,7 +203,13 @@ function exec_mem(o, ops) = {
       "red" => {
         if n != 2 | not_bool(is_mem1(xop_nth(ops, 0))) then false
         else match mem_addr(xop_nth(ops, 0)) {
-          Some(a) => { let _ = memop_do(ea(a, spaceOf(m)), AtOp(atomOp(m), t, rd(xop_nth(ops, 1), t), 0)) in (); true },
+          Some(a) => {
+            /* multimem.red (forwarded with its modifier "red") is not covered by the flushing note */
+            let l = ea(a, spaceOf(m));
+            let op = if has(m, "red") then atomOp(m) else atOpG(l, atomOp(m), t);
+            let _ = memop_do(l, AtOp(op, t, rd(xop_nth(ops, 1), t), 0)) in ();
+            true
+          },
           None() => false
         }
       },

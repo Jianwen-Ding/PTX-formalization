@@ -156,7 +156,16 @@ function exec_half(o, ops) = {
       } else false
     },
     ("cvt", [|d, a, b, x|]) => {
-      if ntys(o) == 3 & has(m, "pack") then {
+      if ntys(o) == 2 & has(m, "rs") & isHalfPair(ty_nth(o.tys, 0)) & ty_eq(ty_nth(o.tys, 1), F32) then {
+        /* cvt.rs{.relu}{.satfinite}.{f16x2,bf16x2}.f32 d, a, b, rbits (ISA 9.7.9.22, Figures 38 / 39): random bits
+         * rbits[28:16] / rbits[12:0] (13 bits, .f16) or rbits[31:16] / rbits[15:0] (.bf16) for a / b */
+        let lt = laneTyH(ty_nth(o.tys, 0)); let w = fw(lt); let r = rd(x, U32);
+        let k = if w == 16 then 13 else 16;
+        let fm = fmods_of(m);
+        wr(d, pack16(post(fm, w, fround_rs(fv(rd(b, F32), F32), prec(w), ebits(w), land_int(r, mask(k)), k)),
+                     post(fm, w, fround_rs(fv(rd(a, F32), F32), prec(w), ebits(w), land_int(asr_int(r, 16), mask(k)), k))));
+        true
+      } else if ntys(o) == 3 & has(m, "pack") then {
         let pt = ty_nth(o.tys, 0); let st = ty_nth(o.tys, 1);
         wr(d, trunc(lor_int(lor_int(shl_int(rd(x, U32), 2 * wid(pt)), shl_int(land_int(clamp(ival(rd(a, st), st), pt), mask(wid(pt))), wid(pt))),
                             land_int(clamp(ival(rd(b, st), st), pt), mask(wid(pt)))), 32));
@@ -181,7 +190,7 @@ function atv(ds, l, op, t, vs) = match l {
   _ => match vs {
     [||] => (),
     v :: vr => {
-      let old = memop_do(l, AtOp(op, t, v, 0));
+      let old = memop_do(l, AtOp(atOpG(l, op, t), t, v, 0));
       if not_bool(stuck) then match ds {
         d :: dr => { ldwb(XS(d), t, old); atv(dr, loc_add(l, bytes(t)), op, t, vr) },
         [||] => atv([||], loc_add(l, bytes(t)), op, t, vr)

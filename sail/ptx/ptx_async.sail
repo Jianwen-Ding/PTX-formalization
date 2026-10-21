@@ -305,6 +305,11 @@ function expandMask(mk, chunks) = {
   r
 }
 
+/* "The current implementation of cp.reduce.async.bulk.add.f32 flushes subnormal inputs and results to
+ * sign-preserving zero" (ISA 9.7.9.26.4.2) */
+val bulkOp : (string, ty) -> string
+function bulkOp(op, t) = if op == "add" & ty_eq(t, mkty("f", 32)) then "add.ftz" else op
+
 val exec_async : (opcode, list(xop)) -> bool
 function exec_async(o, ops) = {
   let m = o.mods;
@@ -337,7 +342,7 @@ function exec_async(o, ops) = {
         let v = memop_do(ea(s, "shared"), RdOp(n));
         let dl = ea(d, if has(m, "global") then "generic" else "shared_cluster");
         let mb : option(loc) = match bulkMbar(rest) { Some(a) => Some(ea(a, "shared_cluster")), None() => None() };
-        if not_bool(stuck) then { let _ = memop_do(dl, BulkRedOp(atomOp(m), ty1(o), n, v)); () };
+        if not_bool(stuck) then { let _ = memop_do(dl, BulkRedOp(bulkOp(atomOp(m), ty1(o)), ty1(o), n, v)); () };
         if not_bool(stuck) then match mb { Some(l) => bulkTx(l, n), None() => () };
         true
       } else if has(m, "mbarrier::complete_tx::bytes") & is_some(bulkMbar(rest)) then {

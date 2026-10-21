@@ -86,7 +86,7 @@ function bin(op, m, t, a, b) = {
   }
 }
 
-/* rcp / rsqrt .approx.ftz.f64 (ISA 9.7.3.13, 9.7.3.16): 1 / tmp, 1 / sqrt(tmp) of tmp = a[63:32] (1.11.20), the
+/* rcp / rsqrt .approx.ftz.f64 (ISA 9.7.3.14, 9.7.3.17): 1 / tmp, 1 / sqrt(tmp) of tmp = a[63:32] (1.11.20), the
  * result in 1.11.20 in d[63:32] and d[31:0] = 0; subnormal inputs and results flushed to sign-preserving zero, NaN ->
  * 0x7fffffff00000000.  The ISA does not name the rounding to 1.11.20: rounded once to nearest even here. */
 val apx64 : (bool, int) -> int
@@ -227,6 +227,21 @@ function cvt(m, d, s, v) = {
   else trunc(if has(m, "sat") then clamp(ival(v, s), d) else ival(v, s), wid(d))
 }
 
+/* .rs (ISA 9.7.9.22, Floating Point Notes): the result is rounded toward zero, or away from zero when adding the
+ * k random bits r to the discarded bits gives a carry out; r is aligned to the most significant discarded bits */
+val fround_rs : (fv, int, int, int, int) -> fv
+function fround_rs(v, p, eb, r, k) = match v {
+  FV_Fin(s, m, e) => match fround(s, m, e, false, p, eb, RZ) {
+    FV_Fin(_, q, lsb) => {
+      let e0 = min_int(e, lsb - k);
+      let t = shr_int(m * pow2(e - e0) - q * pow2(lsb - e0), lsb - k - e0);
+      if m != 0 & t + r >= pow2(k) then fround(s, m, e, false, p, eb, if s then RM else RP) else FV_Fin(s, q, lsb)
+    },
+    z => z
+  },
+  _ => v
+}
+
 /* ---------------------------------------------------------------- atomics */
 val atomOp : list(string) -> string
 function atomOp(m) = pick(m, [|"add", "exch", "cas", "min", "max", "and", "or", "xor", "inc", "dec"|], "add")
@@ -234,6 +249,7 @@ function atomOp(m) = pick(m, [|"add", "exch", "cas", "min", "max", "and", "or", 
 val atomNew1 : (string, ty, int, int, int) -> int
 function atomNew1(op, t, o, b, c) = match op {
   "exch" => b,
+  "add.ftz" => bin("add", [|"ftz"|], t, o, b),
   "cas" => if o == b then c else o,
   "inc" => if o >= b then 0 else trunc(o + 1, wid(t)),
   "dec" => if o == 0 | o > b then b else trunc(o - 1, wid(t)),
