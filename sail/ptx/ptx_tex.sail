@@ -364,13 +364,28 @@ function texOut(dv, t, vs) = {
   }
 }
 
-val txqVal : (list(string), int) -> int
-function txqVal(m, b) =
-  if has(m, "width") then txDim(b, 0) else if has(m, "height") then txDim(b, 1) else if has(m, "depth") then txDim(b, 2)
-  else if has(m, "array_size") then (if land_int(tdW(b, 13), 2) != 0 then tdiv_int(tdW(b, 8), 6) else tdW(b, 8))
+/* txq (PTX ISA 9.3, txq): ".array_size: For a texture array, number of textures in array, 0 otherwise", ".num_mipmap_levels:
+ * For a mipmapped texture, number of levels of details (LOD), 0 otherwise", ".num_samples" 0 (no multi-sample textures).
+ * The harness descriptor has no array or mipmap flag: a texture with more than one layer (more than six for a cubemap)
+ * is an array, one with more than one level is mipmapped.  A .samplerref operand (the sampler magic word) answers the
+ * sampler queries from the sampler's fields (1 filter, 2 address mode, 3 normalized); .force_unnormalized_coords is
+ * set when the sampler does not use normalized coordinates.  txq.level queries the size of level lod. */
+val txqVal : (list(string), int, int) -> int
+function txqVal(m, b, lv) =
+  if tdW(b, 0) == 1396920397 then {
+    if has(m, "filter_mode") then tdW(b, 1)
+    else if has(m, "addr_mode_0") | has(m, "addr_mode_1") | has(m, "addr_mode_2") then tdW(b, 2)
+    else if has(m, "force_unnormalized_coords") then b2i(tdW(b, 3) == 0)
+    else 0
+  }
+  else if has(m, "width") then lvD(b, lv, 0) else if has(m, "height") then lvD(b, lv, 1) else if has(m, "depth") then lvD(b, lv, 2)
+  else if has(m, "array_size") then {
+    let n = if land_int(tdW(b, 13), 2) != 0 then tdiv_int(tdW(b, 8), 6) else tdW(b, 8);
+    if n > 1 then n else 0
+  }
   else if has(m, "normalized_coords") then tdW(b, 6) else if has(m, "filter_mode") then tdW(b, 4)
   else if has(m, "addr_mode_0") | has(m, "addr_mode_1") | has(m, "addr_mode_2") then tdW(b, 5)
-  else if has(m, "num_mipmap_levels") then txLevels(b) else 0
+  else if has(m, "num_mipmap_levels") then (if tdW(b, 12) > 1 then tdW(b, 12) else 0) else 0
 
 /* ---------------------------------------------------------------- surfaces */
 val sfBase : int -> int
@@ -468,7 +483,8 @@ function exec_tex(o, ops) = {
     ("tex", [|dt, ct|], dv :: XB([|t, s|], [|IV(cs)|]) :: ex) => { texOut(dv, dt, tex_run(hBlob(t), hBlob(s), m, ct, cs, ex)); true },
     ("tld4", [|dt, _|], dv :: XB([|t|], [|IV(cs)|]) :: ex) => { texOut(dv, dt, gather_run(hBlob(t), -1, m, cs, ex)); true },
     ("tld4", [|dt, _|], dv :: XB([|t, s|], [|IV(cs)|]) :: ex) => { texOut(dv, dt, gather_run(hBlob(t), hBlob(s), m, cs, ex)); true },
-    ("txq", _, [|d, XB([|t|], [||])|]) => { wr(d, txqVal(m, hBlob(t))); true },
+    ("txq", _, [|d, XB([|t|], [||])|]) => { wr(d, txqVal(m, hBlob(t), 0)); true },
+    ("txq", _, [|d, XB([|t|], [||]), lod|]) => if has(m, "level") then { wr(d, txqVal(m, hBlob(t), rdu32(lod))); true } else false,
     ("suld", [|t|], [|dv, XB([|s|], [|IV(cs)|])|]) => {
       if has(m, "b") then {
         let n = sfVec(m);
