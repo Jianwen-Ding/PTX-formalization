@@ -280,6 +280,12 @@ def schemas():
         lambda c, g: _devatom(c, g))
     add("threadgroup_atomic", [("op", AOPS), ("dst", [R32, R16L, R16H, "none"]), ("base", ["zero", "r16", "u16"]), ("idx", ["imm", R16L, R16H])],
         lambda c, g: _tgatom(c, g))
+    for st in (0, 1):
+        add("stack_" + ("store" if st else "load"),
+            [("fmt", FMTS), ("mask", list(range(16))), ("r", [R32, R16L, R16H]), ("off", ["imm", "gpr"]), ("g", BOOL)],
+            lambda c, g, st=st: _stackmem(c, g, st))
+    add("stack_adjust", [("n", ["small", "big", "neg"])],
+        lambda c, g: ["STACK_ADJUST", {"small": g.R.randrange(1, 64), "big": g.R.randrange(1, 32768), "neg": -g.R.randrange(1, 32769)}[c["n"]]])
     add("wait", [("n", [0, 1])], lambda c, g: ["WAIT", c["n"]])
     add("threadgroup_barrier", [], lambda c, g: ["TG_BARRIER"])
     add("memory_barrier", [("a", [0, 1, 2, 3]), ("b", [0, 1, 2, 3]), ("c", list(range(16)))],
@@ -330,6 +336,16 @@ def _devmem(c, g, st):
     idx = ["I", g.R.choice([0, 1, -1, 32767, -32768]) if g.R.random() < 0.3 else g.R.randrange(-32768, 32768)] if c["idx"] == "imm" \
         else ["R"] + reg(0, g.rn(128), 0)
     return ["DEVMEM", st, fmt, c["mask"]] + r + _pair(g, c["base"]) + idx + [c["sg"], c["shift"], c["g"], c["u6"]]
+
+
+def _stackmem(c, g, st):
+    view = {R32: 0, R16L: 1, R16H: 2}[c["r"]]
+    n = bin(c["mask"]).count("1")
+    hi = 128 - max(n, 1) if view == 0 else 128 - (max(n, 1) + 1) // 2
+    r = reg(0, g.rn(max(hi, 1)), view)
+    off = ["I", g.R.choice([0, 4, 32767, -4]) if g.R.random() < 0.3 else g.R.randrange(-32768, 32768)] if c["off"] == "imm" \
+        else ["R"] + reg(0, g.rn(128), 0)
+    return ["STACKMEM", st, c["fmt"], c["mask"]] + r + off + [c["g"]]
 
 
 def _tgbase(g, kind):
@@ -577,6 +593,12 @@ def form_key(t):
             b, i = _okind(t, i)
             x, i = _okind(t, i)
             return "threadgroup_atomic %s %s, %s, %s" % (t[1], d, b, x)
+        if c == "STACKMEM":
+            r, i = _dkind(t, 4)
+            o, i = _okind(t, i)
+            return "stack_%s %s m%d %s, %s, g%d" % ("store" if t[1] else "load", t[2], t[3], r.split(".")[0], o, t[i])
+        if c == "STACK_ADJUST":
+            return "stack_adjust %s" % ("neg" if t[1] < 0 else "pos")
         if c == "WAIT":
             return "wait %d" % t[1]
         if c == "MEMORY_BARRIER":

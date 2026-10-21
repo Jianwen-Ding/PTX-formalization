@@ -258,6 +258,16 @@ def applegpu_text(toks):
         o = T.next(); dk = T.next(); d = reg_text(*rd_reg(T)) if dk == "S" else "None"
         b = rd_op(T); i = rd_op(T); v = rd_op(T)
         return "threadgroup_atomic", [AOP[o], d, b, i, v, "0", "2", "128", "0"]
+    if c == "STACKMEM":
+        st = T.int(); fmt = T.next(); mask = T.int(); r = rd_reg(T); o = rd_op(T); g = T.int()
+        F = {"u8": "i8", "u16": "i16", "u32": "i32"}[fmt]
+        R_ = tuple_text(r, bin(mask).count("1"))
+        if st:
+            return "stack_store", [F, "1", "0", MASKS[mask], "4", R_, o, str(g)]
+        return "stack_load", [R_, F, "1", "0", MASKS[mask], "4", o, str(g)]
+    if c == "STACK_ADJUST":
+        # applegpu decodes Mesa's stack_adjust as a stack_store of nothing
+        return "stack_store", ["i8", "1", "2", "0", str(T.int()), "0"]
     if c == "WAIT":
         return "wait", [str(T.int())]
     if c == "TG_BARRIER":
@@ -335,7 +345,7 @@ FCCS = list(FCC)
 def rinstr():
     c = R.choice(["MOVI", "MOVR", "GET_SR", "IADD", "IMADD", "BITOP", "BFI", "BFEIL", "EXTR", "INTL", "CONVERT", "ASR", "IUNOP", "FBIN", "FMADD", "RCP", "FUNOP",
                   "ICMPSEL", "FCMPSEL", "STACKOP", "POP_EXEC", "JMP", "BALLOT", "SHUFFLE", "XLANE", "QSHUFFLE", "QBALLOT", "DEVMEM", "TGMEM", "DEVATOM",
-                  "TGATOM", "WAIT", "TG_BARRIER", "STOP", "MEMORY_BARRIER", "TRAP"])
+                  "TGATOM", "STACKMEM", "STACK_ADJUST", "WAIT", "TG_BARRIER", "STOP", "MEMORY_BARRIER", "TRAP"])
     if c == "MOVI":
         d = rdst()
         return ["MOV"] + d + ["I", R.randrange(1 << (16 if d[2] in (1, 2) else 32))]
@@ -430,6 +440,13 @@ def rinstr():
         base = ["I", 0] if R.random() < 0.4 else ["R"] + [R.randrange(2), R.randrange(128), R.choice((1, 2)), 0, 0, 0, 0]
         idx = ["I", R.randrange(-32768, 32768)] if R.random() < 0.5 else ["R", 0, R.randrange(128), R.choice((1, 2)), 0, 0, 0, 0]
         return ["TGATOM", R.choice(list(AOP))] + d + base + idx + ["R", 0, R.randrange(128), 0, 0, 0, 0, 0]
+    if c == "STACKMEM":
+        r = rreg(hints=False)
+        r[1] = R.randrange(124 if r[2] == 0 else 126)
+        o = ["I", R.randrange(-32768, 32768)] if R.random() < 0.5 else ["R", 0, R.randrange(128), 0, 0, 0, 0, 0]
+        return ["STACKMEM", R.randrange(2), R.choice(["u8", "u16", "u32"]), R.randrange(16)] + r + o + [R.randrange(2)]
+    if c == "STACK_ADJUST":
+        return ["STACK_ADJUST", R.randrange(-32768, 32768)]
     if c == "WAIT":
         return ["WAIT", R.randrange(2)]
     if c == "MEMORY_BARRIER":
@@ -443,7 +460,7 @@ MODELLED = {"mov_imm", "get_sr", "iadd", "isub", "iadd.sat", "isub.sat", "imadd"
             "else_icmp", "else_fcmp", "icmpsel", "fcmpsel", "icmp_ballot", "fcmp_ballot", "simd_shuffle", "simd_shuffle_down",
             "simd_shuffle_up", "simd_shuffle_xor", "quad_shuffle", "quad_shuffle_down", "quad_shuffle_up", "quad_shuffle_xor",
             "icmp_quad_ballot", "fcmp_quad_ballot", "simd_op", "wait", "device_load", "device_store", "threadgroup_load",
-            "threadgroup_store", "threadgroup_barrier", "atomic", "threadgroup_atomic", "memory_barrier", "trap"} | set(REDUCTIONS.values())
+            "threadgroup_store", "threadgroup_barrier", "atomic", "threadgroup_atomic", "memory_barrier", "trap", "stack_load", "stack_store"} | set(REDUCTIONS.values())
 
 def desc_name(word):
     for o in applegpu.instruction_descriptors:

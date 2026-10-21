@@ -282,6 +282,15 @@ def llvm_text(toks):
         b, i, v = T.op(), T.op(), T.op()
         A = {"min": "umin", "max": "umax"}.get(o, o)
         return "threadgroup_atomic %s, %s, %s, %s, %s" % (A, d, b, i, v)
+    if c == "STACKMEM":
+        st, fmt, mask = T.int(), T.next(), T.int()
+        r = T.reg()
+        o, g = T.op(), T.int()
+        F = {"u8": "i8", "u16": "i16", "u32": "i32"}[fmt]
+        return "%s %d, %s, %s, %s, %s" % ("stack_store" if st else "stack_load", g, F, MASKS[mask] or "0",
+                                          tuple_text(r, bin(mask).count("1")), o)
+    if c == "STACK_ADJUST":
+        return "stack_adjust %d" % (T.int() & 0xffff)
     if c == "WAIT":
         return "wait %d" % T.int()
     if c == "TG_BARRIER":

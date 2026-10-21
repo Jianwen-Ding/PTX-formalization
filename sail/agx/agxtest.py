@@ -246,6 +246,15 @@ def instr(stmt):
             else:
                 raise ParseError("bad trailing operands in %r" % stmt)
         return ["TGATOM", pre[0]] + dst + base + op(ops[1]) + op(ops[2])
+    if mnem in ("stack_load", "stack_store"):
+        if len(pre) != 2 or pre[0] not in FMTS:
+            raise ParseError("bad format in %r" % stmt)
+        want(2)
+        if any(x != "g1" for x in ops[2:]):
+            raise ParseError("bad trailing operands in %r" % stmt)
+        return ["STACKMEM", int(mnem.endswith("store")), pre[0], mask_field(pre[1])] + reg(ops[0]) + op(ops[1]) + [int("g1" in ops[2:])]
+    if mnem == "stack_adjust":
+        return ["STACK_ADJUST", intv(ops[0])]
     if mnem == "wait":
         return ["WAIT", intv(ops[0])]
     if mnem == "threadgroup_barrier":

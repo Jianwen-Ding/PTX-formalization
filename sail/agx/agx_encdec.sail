@@ -164,6 +164,13 @@ let C_QSHUFDOWN = cls(223, 6, 6, 15, [|(0, 7, 111), (15, 1, 0), (47, 1, 0), (38,
 /* quad ballots: the ballot classes with bit 48 clear */
 let C_ICMPQBALLOT = cls(224, 8, 8, 15, [|(0, 7, 50), (26, 2, 0), (38, 2, 0), (48, 13, 0)|])
 let C_FCMPQBALLOT = cls(225, 8, 8, 15, [|(0, 7, 34), (48, 13, 0)|])
+/* stack_load / stack_store (Mesa's packer, the LLVM backend's G13StackMem): opcode (0, 8) 0x35 / 0xb5, always 8 bytes
+ * (bit 47 set), F (8,2)+(50,2), R (10,6)+(40,2) flag 49, byte offset as the device index (20,4)+(32,4)+(56,8) with
+ * the immediate flag 24, g (30), mask (52,4); bits 44-46 = 4 and bit 26 set, the other bits clear */
+let C_STACKLOAD = cls(230, 8, 8, 15, [|(0, 8, 53), (16, 4, 0), (25, 1, 0), (26, 1, 1), (27, 3, 0), (31, 1, 0), (36, 4, 0), (44, 3, 4), (47, 1, 1), (48, 1, 0)|])
+let C_STACKSTORE = cls(231, 8, 8, 15, [|(0, 8, 181), (16, 4, 0), (25, 1, 0), (26, 1, 1), (27, 3, 0), (31, 1, 0), (36, 4, 0), (44, 3, 4), (47, 1, 1), (48, 1, 0)|])
+/* stack_adjust: Mesa's 0x10100b5 | 1 << 26 | 2 << 36 | 1 << 47 with the 16-bit size at (20,4)+(32,4)+(56,8) */
+let C_STACKADJ = cls(232, 8, 8, 15, [|(0, 20, 65717), (24, 8, 5), (36, 20, 2050)|])
 let funops : list(funop) = [|FU_floor, FU_rsqrt_special, FU_rsqrt, FU_sin_pt_1, FU_log2, FU_exp2, FU_sin_pt_2, FU_ceil,
   FU_trunc, FU_rint|]
 
@@ -173,7 +180,7 @@ let all_classes : list(icls) = [|C_MOVI16, C_MOVI32, C_GETSR, C_IADD, C_IMADD, C
   C_RCP, C_FLOOR, C_RSQRT_SPECIAL, C_RSQRT, C_SIN_PT_1, C_LOG2, C_EXP2, C_SIN_PT_2, C_CEIL, C_TRUNC, C_RINT, C_STOP, C_JMPANY, C_JMPNONE, C_POPEXEC, C_IFICMP, C_IFFCMP, C_WHILEICMP, C_WHILEFCMP,
   C_ELSEICMP, C_ELSEFCMP, C_ICMPSEL, C_FCMPSEL, C_ICMPBALLOT, C_FCMPBALLOT, C_SHUF, C_SHUFDOWN,
   C_SHUFUP, C_SHUFXOR, C_XQUAD, C_XSIMD, C_XQUADP, C_XSIMDP, C_QSHUF, C_QSHUFXOR, C_QSHUFUP, C_QSHUFDOWN,
-  C_ICMPQBALLOT, C_FCMPQBALLOT, C_WAIT, C_DEVLOAD, C_DEVSTORE, C_TGLOAD, C_TGSTORE, C_TGBARRIER, C_ATOMIC,
+  C_ICMPQBALLOT, C_FCMPQBALLOT, C_STACKADJ, C_STACKLOAD, C_STACKSTORE, C_WAIT, C_DEVLOAD, C_DEVSTORE, C_TGLOAD, C_TGSTORE, C_TGBARRIER, C_ATOMIC,
   C_TGATOMIC, C_MEMBAR, C_TRAP|]
 /* memory_barrier (byte 0xf5) and trap (0x0008) match no earlier class: adding them changes no other decoding */
 
@@ -893,6 +900,29 @@ function d_qballot(isf, w) = match d_ballot(isf, w) {
   _ => None()
 }
 
+val e_stackmem : (bool, afmt, int, areg, aop, int) -> option(int)
+function e_stackmem(st, f, mask, r, o, g) = {
+  start_enc();
+  if not_bool(int_fmt(f)) then enc_err = true;
+  let c = fmt_code(f);
+  let w = e_memidx(e_memreg(fput(fput(fput2(0, 8, 2, 50, 2, c), 52, 4, mask), 30, 1, g), r, 10, 40, 49), o);
+  finish(if st then C_STACKSTORE else C_STACKLOAD, w)
+}
+val d_stackmem : (bool, int) -> option(ast)
+function d_stackmem(st, w) = {
+  start_dec();
+  let f = code_fmt(fget2(w, 8, 2, 50, 2));
+  dchk(int_fmt(f));
+  fin_dec(STACKMEM(st, f, fget(w, 52, 4), d_memreg(w, 10, 40, 49), d_memidx(w), fget(w, 30, 1)))
+}
+
+val e_stackadj : int -> option(int)
+function e_stackadj(n) = {
+  start_enc();
+  if n < -32768 | n > 32767 then enc_err = true;
+  finish(C_STACKADJ, fput3(0, 20, 4, 32, 4, 56, 8, trunc_int(n, 16)))
+}
+
 /* device_load / device_store: g (30), F (7,3)+(48,1), mask (52,4), R (10,6)+(40,2) flag 49, base, index,
  * Ou (25: 0 signed, 1 unsigned), shift (42,2), u6 (44,2) with bit 46 set (the LLVM backend's trailing operand; Mesa's
  * u4 = bits 44-46 is 4, or 7 for a coherent access; applegpu's plain descriptors cover u6 = 0 for loads and bit 45
@@ -1065,6 +1095,8 @@ function agx_encode(i) = match i {
   BALLOT(isf, cc, d, a, b) => e_ballot(isf, cc, d, a, b),
   SHUFFLE(k, d, a, b) => e_shuf(k, d, a, b),
   XLANE(k, o, d, a) => e_xlane(k, o, d, a),
+  STACKMEM(st, f, m, r, o, g) => e_stackmem(st, f, m, r, o, g),
+  STACK_ADJUST(n) => e_stackadj(n),
   QSHUFFLE(k, d, a, b) => e_qshuf(k, d, a, b),
   QBALLOT(isf, cc, d, a, b) => e_qballot(isf, cc, d, a, b),
   DEVMEM(st, f, m, r, p, i, sg, s, g, u6) => e_devmem(st, f, m, r, p, i, sg, s, g, u6),
@@ -1134,6 +1166,9 @@ function agx_decode(win) = {
       else if k.cid == C_SHUFDOWN.cid then d_shuf(SH_down, w)
       else if k.cid == C_SHUFUP.cid then d_shuf(SH_up, w)
       else if k.cid == C_SHUFXOR.cid then d_shuf(SH_xor, w)
+      else if k.cid == C_STACKLOAD.cid then d_stackmem(false, w)
+      else if k.cid == C_STACKSTORE.cid then d_stackmem(true, w)
+      else if k.cid == C_STACKADJ.cid then Some(STACK_ADJUST(sext_int(fget3(w, 20, 4, 32, 4, 56, 8), 16)))
       else if k.cid == C_XQUAD.cid then d_xlane(XK_quad, w)
       else if k.cid == C_XSIMD.cid then d_xlane(XK_simd, w)
       else if k.cid == C_XQUADP.cid then d_xlane(XK_quad_prefix, w)
@@ -1189,6 +1224,8 @@ mapping clause encdec = forwards (FMADD(_) as i) if is_some_int(agx_encode(i)) =
 mapping clause encdec = forwards (EXTR(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (INTL(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (CONVERT(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (STACKMEM(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (STACK_ADJUST(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (XLANE(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (QSHUFFLE(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (QBALLOT(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))

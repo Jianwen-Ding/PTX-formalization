@@ -162,6 +162,23 @@ class ProgGen:
             v = RG(R.choice(DATA[:-1]), 3) if op in agxgen.DEV_PAIR else RG(R.choice(DATA))
             out.append(["DEVATOM", op] + d + pair + idx + [R.randrange(2)] + v + [g, R.choice(agxgen.DEV_MODES[op])])
             out.append(["WAIT", g])
+        elif k < 0.75 and "stack" in self.kinds:
+            # stack accesses inside the prolog's allocation (STACK_WORDS words per lane)
+            st = R.randrange(2)
+            fmt = R.choice(agxgen.FMTS)
+            view = R.choice((0, 1, 2))
+            mask = R.randrange(1, 16)
+            n = bin(mask).count("1")
+            r = R.randrange(4, 36 - n + 1) if view == 0 else R.randrange(4, 36 - (n + 1) // 2)
+            if R.random() < 0.5:
+                off = ["I", R.randrange(0, 4 * STACK_WORDS - 16)]
+            else:
+                out.append(iand(37, R.choice(DATA), 4 * STACK_WORDS - 32 - 1))
+                off = RG(37)
+            g = R.randrange(2)
+            out.append(["STACKMEM", st, fmt, mask] + reg(0, r, view) + off + [g])
+            if not st:
+                out.append(["WAIT", g])
         elif k < 0.85:
             st = R.randrange(2)
             fmt = R.choice(agxgen.FMTS)
@@ -271,8 +288,11 @@ class ProgGen:
         return out
 
 
+STACK_WORDS = 64
+
+
 def prolog():
-    out = [["GET_SR"] + reg(0, 1) + [80]]
+    out = [["STACK_ADJUST", STACK_WORDS], ["GET_SR"] + reg(0, 1) + [80]]
     for k in range(NIN // 4):
         out.append(imadd(2, 1, NIN, 4 * k))
         out.append(dev(0, "u32", 15, 4 + 4 * k, 0, [1, 0, 1], RG(2)))
@@ -456,7 +476,7 @@ def main(argv=None):
     ap.add_argument("-n", type=int, default=100)
     ap.add_argument("-l", type=int, default=30)
     ap.add_argument("-j", type=int, default=3)
-    ap.add_argument("--kinds", default="alu,cf,mem")
+    ap.add_argument("--kinds", default="alu,cf,mem,stack")
     ap.add_argument("--only", help="comma-separated instruction schemas (ALU)")
     ap.add_argument("--keep")
     ap.add_argument("-v", action="store_true")

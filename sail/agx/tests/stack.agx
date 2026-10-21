@@ -1,0 +1,24 @@
+// Stack (scratch) memory: Mesa's prologue allocation, spills with immediate byte offsets, an indexed vector element
+.laneid r4;
+.all r5 = 305419896;             // 0x12345678
+.all r6 = 8;
+stack_adjust 16;                 // 16 words per lane: offsets 0 .. 63
+stack_store u32 1 r4, 0;
+stack_store u32 1 r5, 4;
+stack_store u16 1 r5h, 9;        // an unaligned 16-bit element: bytes 9, 10
+stack_store u32 4 r4, r6;        // r4 .. r7 at 8, 12, 16, 20
+stack_load u32 1 r7, 0;
+stack_load u8 mask=3 r8l, 4;     // bytes 4 and 5 into r8l, r8h
+stack_load u32 2 r9, 8, g1;      // r9 = lane, r10 = r5 from the vector store
+wait 0;
+wait 1;
+stack_load u16 1 r11l, 9;        // overwritten by the vector store: lane's bytes 9-10 = 0x0000
+wait 0;
+stop;
+.run;
+.expectlane 6 r7 = 6;
+.expectall r8l = 120;
+.expectall r8h = 86;
+.expectlane 3 r9 = 3;
+.expectlane 3 r10 = 305419896;
+.expectall r11l = 0

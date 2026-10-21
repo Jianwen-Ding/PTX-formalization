@@ -326,6 +326,9 @@ mapping clause assembly = forwards DEVATOM(o, d, p, i, sg, v, g, m) =>
   concat_str("device_atomic ", concat_str(aop_str(o), concat_str(" ", concat_str(asm_adst_forwards(d), concat_str(", ",
   concat_str(pair_str(p), concat_str(", ", concat_str(op_str(i), concat_str(", ", concat_str(op_str(v), asm_atomx_forwards(o, sg, g, m)))))))))))
 mapping clause assembly = TGATOM(o, d, b, i, v) <-> "threadgroup_atomic" ^ spc() ^ asm_aop(o) ^ spc() ^ asm_adst(d) ^ comma() ^ asm_op(i) ^ comma() ^ asm_op(v) ^ asm_tgbase(b)
+mapping clause assembly = STACKMEM(false, f, m, r, o, g) <-> "stack_load" ^ spc() ^ asm_fmt(f) ^ spc() ^ asm_mask(m) ^ spc() ^ asm_reg(r) ^ comma() ^ asm_op(o) ^ asm_memx(g, 0)
+mapping clause assembly = STACKMEM(true, f, m, r, o, g) <-> "stack_store" ^ spc() ^ asm_fmt(f) ^ spc() ^ asm_mask(m) ^ spc() ^ asm_reg(r) ^ comma() ^ asm_op(o) ^ asm_memx(g, 0)
+mapping clause assembly = STACK_ADJUST(n) <-> "stack_adjust" ^ spc() ^ asm_int(n)
 mapping clause assembly = WAIT(n) <-> "wait" ^ spc() ^ asm_int(n)
 mapping clause assembly = TG_BARRIER() <-> "threadgroup_barrier"
 mapping clause assembly = MEMORY_BARRIER(a, b, c) <-> "memory_barrier" ^ spc() ^ asm_int(a) ^ comma() ^ asm_int(b) ^ comma() ^ asm_int(c)

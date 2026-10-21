@@ -1125,6 +1125,49 @@ function clause execute(TGMEM(st, f, mask, d, base, i, _)) = {
   if not_bool(st) then pend = pend_append(pend, reverse_list(newp))
 }
 
+/* ---------------------------------------------------------------- stack (scratch) memory
+ * stack_adjust N (32-bit words per lane) allocates the SIMD group's stack.  Measured on the M2 Max: byte offset o of
+ * lane l is at byte (N - 1 - o / 4) * 128 + 4 * l + o % 4 of the allocation.  stack_load / stack_store access the
+ * lane's bytes at offset + size * element (the offset a 16-bit immediate or a 32-bit register; elements and register
+ * tuples as for device accesses, loads visible at the next wait), which is agx_run's per-lane stack where the
+ * allocation covers them.  Not measured, so the model stops with an error: an access without an allocation or
+ * outside it (a negative offset or one at or beyond 4 N), a second stack_adjust, and a non-positive one (Mesa's
+ * fragment-shader cleanup). */
+val stack_addr : (int, int) -> int
+function stack_addr(o, l) = (stack_words - 1 - tdiv_int(o, 4)) * 128 + 4 * l + fmod_int(o, 4)
+
+function clause execute(STACK_ADJUST(n)) =
+  if stack_words != 0 | n <= 0 then fatal("stack_adjust: only one positive adjustment (Mesa's prologue) is measured")
+  else stack_words = n
+
+function clause execute(STACKMEM(st, f, mask, d, o, _)) = {
+  if stack_words <= 0 then fatal("stack access without a stack allocation (stack_adjust)");
+  var newp : list((int, int, int)) = [||];
+  let sz = fsize(f);
+  var j : int = 0;
+  foreach (k from 0 to 3) {
+    if bit_int(mask, k) & status != ST_fault then {
+      foreach (t from 0 to 31) {
+        if is_active(t) & status != ST_fault then {
+          let off0 : int = match o { OImm(i) => i, _ => opv(t, o, 32) };
+          let off : int = off0 + k * sz;
+          if off < 0 | off + sz > 4 * stack_words then fatal("stack access outside the stack allocation")
+          else if st then {
+            var v : int = mreg_get(t, mreg_code(d, j));
+            foreach (b from 0 to (sz - 1)) { mem_wr(SP_STACK, stack_addr(off + b, t), land_int(v, 255)); v = shr_int(v, 8) }
+          } else {
+            var v : int = 0;
+            foreach (b from (sz - 1) downto 0) { v = v * 256 + mem_rd(SP_STACK, stack_addr(off + b, t)) };
+            newp = (t, mreg_code(d, j), v) :: newp
+          }
+        }
+      };
+      j = j + 1
+    }
+  };
+  if not_bool(st) & status != ST_fault then pend = pend_append(pend, reverse_list(newp))
+}
+
 /* aop(OP, O, V) */
 val aopv : (aaop, int, int) -> int
 function aopv(op, o, v) = match op {

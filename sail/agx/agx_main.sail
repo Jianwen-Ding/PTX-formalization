@@ -133,6 +133,8 @@ function rd_instr() = match tok_str() {
   "TGMEM" => { let st = rd_bool(); let f = rd_fmt(); let m = tok_int(); let r = rd_reg(); let b = rd_op(); let i = rd_op(); let s = tok_int(); TGMEM(st, f, m, r, b, i, s) },
   "DEVATOM" => { let o = rd_aop(); let d = rd_adst(); let p = rd_pair(); let i = rd_op(); let sg = rd_bool(); let v = rd_op(); let g = tok_int(); let m = tok_int(); DEVATOM(o, d, p, i, sg, v, g, m) },
   "TGATOM" => { let o = rd_aop(); let d = rd_adst(); let b = rd_op(); let i = rd_op(); let v = rd_op(); TGATOM(o, d, b, i, v) },
+  "STACKMEM" => { let st = rd_bool(); let f = rd_fmt(); let m = tok_int(); let r = rd_reg(); let o = rd_op(); let g = tok_int(); STACKMEM(st, f, m, r, o, g) },
+  "STACK_ADJUST" => STACK_ADJUST(tok_int()),
   "WAIT" => WAIT(tok_int()),
   "TG_BARRIER" => TG_BARRIER(),
   "MEMORY_BARRIER" => { let a = tok_int(); let b = tok_int(); let c = tok_int(); MEMORY_BARRIER(a, b, c) },
