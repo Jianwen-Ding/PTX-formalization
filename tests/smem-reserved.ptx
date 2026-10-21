@@ -1,0 +1,26 @@
+// the shared memory region reserved for system software (%reserved_smem_offset_begin .. _end, PTX ISA 9.3 10.29) is
+// "not available to users": it must not overlap the CTA's .shared variables or its dynamic shared memory
+.version 8.0
+.target sm_90
+.address_size 64
+.extern .shared .align 4 .b8 dyn[];
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r<8>; .reg .pred %p<4>;
+    .shared .align 4 .b32 sh[4];
+    ld.param.u64 %o, [po];
+    mov.u32 %r1, sh;
+    mov.u32 %r2, dyn;
+    add.u32 %r2, %r2, 100;                                   // end of the dynamic shared memory
+    mov.u32 %r3, %reserved_smem_offset_begin;
+    mov.u32 %r4, %reserved_smem_offset_end;
+    setp.lt.u32 %p1, %r1, %r3;                               // sh is below the reserved region
+    setp.le.u32 %p2, %r2, %r3;                               // so is the end of dyn
+    setp.lt.u32 %p3, %r3, %r4;                               // the region is not empty
+    selp.u32 %r5, 1, 0, %p1; selp.u32 %r6, 1, 0, %p2; selp.u32 %r7, 1, 0, %p3;
+    st.global.v4.u32 [%o], {%r5, %r6, %r7, %r1};
+    ret;
+}
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1, 100 >>> (OUT);
+.expect OUT .u32 = { 1, 1, 1, 0 };

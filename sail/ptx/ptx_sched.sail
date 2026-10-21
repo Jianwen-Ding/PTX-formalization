@@ -219,9 +219,12 @@ function mk_sregs(sp, c, t, g, b, cd) = {
   let unit = if isasm >= 30 & isasm < 80 then 256 else 128;
   sreg_set(sp, "%total_smem_size", alignUp(stop + dynsmem, unit)); sreg_set(sp, "%aggr_smem_size", stop + dynsmem + 1024);
   sreg_set(sp, "%dynamic_smem_size", dynsmem); sreg_set(sp, "%current_graph_exec", 0);
-  sreg_set(sp, "%reserved_smem_offset_begin", 0); sreg_set(sp, "%reserved_smem_offset_end", 1024);
-  sreg_set(sp, "%reserved_smem_offset_cap", 1024);
-  sreg_set(sp, "%reserved_smem_offset_0", 0); sreg_set(sp, "%reserved_smem_offset_1", 0);
+  /* the region reserved for system software (PTX ISA 10.29) must not overlap user shared memory: 1024 bytes placed
+     after the CTA's static and dynamic shared memory (its size and place are the implementation's choice) */
+  let rb = alignUp(stop + dynsmem, unit);
+  sreg_set(sp, "%reserved_smem_offset_begin", rb); sreg_set(sp, "%reserved_smem_offset_end", rb + 1024);
+  sreg_set(sp, "%reserved_smem_offset_cap", rb + 1024);
+  sreg_set(sp, "%reserved_smem_offset_0", rb); sreg_set(sp, "%reserved_smem_offset_1", rb + 512);
   foreach (i from 0 to 7) {
     sreg_set(sp, concat_str("%pm", dec_str(i)), 0);
     sreg_set(sp, concat_str("%pm", concat_str(dec_str(i), "_64")), 0)
