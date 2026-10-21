@@ -19,6 +19,8 @@ import random
 import struct
 
 R32, R16L, R16H, R64, U32, U16L, U16H, IMM, FIMM = "r32", "r16l", "r16h", "r64", "u32", "u16l", "u16h", "imm", "fimm"
+# a 32-bit uniform at an odd 16-bit index (view 4: Mesa's packer can produce it, its value is not measured)
+U32O = "u32o"
 
 ICCS = ["eq", "ult", "ugt", "seq", "slt", "sgt", "ne", "uge", "ule", "sne", "sge", "sle"]
 FCCS = ["feq", "flt", "fgt", "fltn", "fge", "fle", "fgtn", "fnequ", "fnlt", "fngt", "fnltn", "fnge", "fnle", "fngtn"]
@@ -32,6 +34,10 @@ DEV_PAIR = ("cmpxchg", "umin64", "umax64")
 DEV_MODES = dict({o: (0, 1, 2, 3) for o in AOPS}, sub=(0, 2), cmpxchg=(0, 2), fadd=(1, 3), umin64=(3,), umax64=(1,),
                  **{"end%d" % n: (0,) for n in range(11, 16)})
 FMTS = ["u8", "u16", "u32"]
+DEV_FMTS = FMTS + ["f16", "u8norm", "s8norm", "u16norm", "s16norm", "rgb10a2", "srgba8", "rg11b10f", "rgb9e5", "rg11b10f.rtz",
+                   "rgb9e5.rtz"]
+# formats whose device accesses the model does not define (they stop it with an error)
+PACKED_FMTS = ["rgb10a2", "srgba8", "rg11b10f", "rgb9e5", "rg11b10f.rtz", "rgb9e5.rtz"]
 FUNOPS = ["floor", "ceil", "trunc", "rint", "rsqrt", "rsqrt_special", "sin_pt_1", "sin_pt_2", "log2", "exp2"]
 
 
@@ -57,8 +63,10 @@ def reg(f, n, view, hint=0, sx=0, ab=0, ng=0):
 
 
 class Gen:
-    def __init__(self, rng, regs=None, uregs=None):
+    def __init__(self, rng, regs=None, uregs=None, odd=True):
         self.R = rng
+        # generate the unmeasured odd 32-bit uniforms (else they become u32)
+        self.odd = odd
         # register numbers to draw from (None: the whole encodable range)
         self.regs = regs
         self.uregs = uregs
@@ -89,7 +97,13 @@ class Gen:
         if kind == IMM:
             return ["I", imm if imm is not None else (R.choice(IMM_EDGE) if R.random() < 0.3 else R.randrange(256))]
         if kind == FIMM:
-            return ["F", FIMM_CODES[imm if imm is not None else R.randrange(256)]]
+            code = FIMM_CODES[imm if imm is not None else R.randrange(256)]
+            # a float immediate with modifiers (OFMod)
+            return ["M", code, ab, ng] if ab or ng else ["F", code]
+        if kind == U32O and (not self.odd or R.random() < 0.75):
+            kind = U32
+        if kind == U32O:
+            return ["R"] + reg(1, self.un(), 4, 0, sx, ab, ng)
         h = R.choice((0, 1, 2)) if hint is None else hint
         if kind == R32:
             return ["R"] + reg(0, self.rn(), 0, h, sx, ab, ng)
@@ -119,9 +133,9 @@ class Gen:
 # ---------------------------------------------------------------------------------------------
 # instruction schemas: name -> (dimensions, builder).  A dimension is (name, list of values); the
 # builder maps a dict of chosen values to the token list.
-INT_SRC = [IMM, R32, R16L, R16H, U32, U16L, U16H]
+INT_SRC = [IMM, R32, R16L, R16H, U32, U16L, U16H, U32O]
 INT_SRC64 = INT_SRC + [R64]
-FLT_SRC = [FIMM, R32, R16L, R16H, U32, U16L, U16H]
+FLT_SRC = [FIMM, R32, R16L, R16H, U32, U16L, U16H, U32O]
 FLT16_SRC = [FIMM, R16L, R16H, U16L, U16H, U32]
 DST = [R32, R16L, R16H]
 DST64 = DST + [R64]
@@ -131,8 +145,10 @@ BOOL = [0, 1]
 
 def _srcmods(c, i, g, kind, mods):
     """source operand i with its modifiers from the choice dict"""
-    if kind in (IMM, FIMM):
+    if kind == IMM:
         return g.src(kind)
+    if kind == FIMM:
+        return g.src(kind, ab=c.get("abs%d" % i, 0) if "f" in mods else 0, ng=c.get("neg%d" % i, 0) if "f" in mods else 0)
     sx = c.get("sx%d" % i, 0) if "sx" in mods else 0
     ab = c.get("abs%d" % i, 0) if "f" in mods else 0
     ng = c.get("neg%d" % i, 0) if "f" in mods else 0
@@ -171,7 +187,7 @@ def schemas():
                 lambda c, g, sub=sub, sat=sat: ["IADD", sub, sat] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "sx") +
                 _srcmods(c, 1, g, c["s1"], "sx") + [c["shift"]])
             nm = ("imsub" if sub else "imadd") + (".sat" if sat else "")
-            add(nm, [("d", DST64), ("dhint", [0, 1]), ("shift", list(range(8)))] + srcdims(0, INT_SRC, "sx") + srcdims(1, INT_SRC, "sx") +
+            add(nm, [("d", DST64), ("dhint", [0, 1]), ("shift", list(range(8)))] + srcdims(0, INT_SRC64, "sx") + srcdims(1, INT_SRC64, "sx") +
                 srcdims(2, INT_SRC64, "sx"),
                 lambda c, g, sub=sub, sat=sat: ["IMADD", sub, sat] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "sx") +
                 _srcmods(c, 1, g, c["s1"], "sx") + _srcmods(c, 2, g, c["s2"], "sx") + [c["shift"]])
@@ -229,12 +245,12 @@ def schemas():
             _srcmods(c, 1, g, c["s1"], "f" if f else ""))
     for k in ("idx", "xor", "up", "down"):
         add("simd_shuffle" + ("" if k == "idx" else "_" + k), [("d", DST), ("dhint", [0, 1])] + srcdims(0, INT_SRC) +
-            srcdims(1, [IMM, R16L, R16H, U16L, U16H]),
+            srcdims(1, [IMM, R16L, R16H, U16L, U16H, R32, U32]),
             lambda c, g, k=k: ["SHUFFLE", k] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "") + _srcmods(c, 1, g, c["s1"], ""))
     for st in (0, 1):
         add("device_" + ("store" if st else "load"),
-            [("fmt", FMTS), ("mask", list(range(16))), ("r", [R32, R16L, R16H]), ("base", ["gpr", "uni"]), ("idx", ["imm", "gpr"]),
-             ("sg", BOOL), ("shift", [0, 1, 2]), ("g", BOOL)] + ([("u6", BOOL)] if st else []),
+            [("fmt", DEV_FMTS), ("mask", list(range(16))), ("r", [R32, R16L, R16H]), ("base", ["gpr", "uni"]), ("idx", ["imm", "gpr"]),
+             ("sg", BOOL), ("shift", [0, 1, 2]), ("g", BOOL), ("u6", [0, 1, 2, 3])],
             lambda c, g, st=st: _devmem(c, g, st))
         add("threadgroup_" + ("store" if st else "load"),
             [("fmt", FMTS), ("mask", list(range(16))), ("r", [R32, R16L, R16H]), ("base", ["zero", "r16", "u16"]), ("idx", ["imm", R16L, R16H])],
@@ -266,7 +282,7 @@ def _csel(g, kind, is32):
         return ["I", g.R.randrange(256)]
     if kind == "gpr":
         return g.src(R32 if is32 else g.pick([R16L, R16H]))
-    return g.src(U32 if is32 else g.pick([U16L, U16H]))
+    return g.src(g.pick([U32, U32, U32O]) if is32 else g.pick([U16L, U16H]))
 
 
 def _cmpsel(c, g, f):
@@ -293,7 +309,7 @@ def _devmem(c, g, st):
     r = reg(0, g.rn(max(hi, 1)), view)
     idx = ["I", g.R.choice([0, 1, -1, 32767, -32768]) if g.R.random() < 0.3 else g.R.randrange(-32768, 32768)] if c["idx"] == "imm" \
         else ["R"] + reg(0, g.rn(128), 0)
-    return ["DEVMEM", st, fmt, c["mask"]] + r + _pair(g, c["base"]) + idx + [c["sg"], c["shift"], c["g"], c.get("u6", 0) if st else 0]
+    return ["DEVMEM", st, fmt, c["mask"]] + r + _pair(g, c["base"]) + idx + [c["sg"], c["shift"], c["g"], c["u6"]]
 
 
 def _tgbase(g, kind):
@@ -381,8 +397,10 @@ def _okind(t, i):
         return "imm", i + 2
     if k == "F":
         return "fimm", i + 2
+    if k == "M":
+        return "fimm" + (".abs" if t[i + 2] else "") + (".neg" if t[i + 3] else ""), i + 4
     f, n, v, h, sx, ab, ng = t[i + 1:i + 8]
-    s = ("u" if f else "r") + {0: "32", 1: "16l", 2: "16h", 3: "64"}[v]
+    s = ("u" if f else "r") + {0: "32", 1: "16l", 2: "16h", 3: "64", 4: "32.odd"}[v]
     s += {0: "", 1: ".cache", 2: ".discard"}[h] + (".sx" if sx else "") + (".abs" if ab else "") + (".neg" if ng else "")
     return s, i + 8
 
@@ -484,9 +502,8 @@ def form_key(t):
             ik = "imm" if t[i] == "I" else "r32"
             i += 2 if t[i] == "I" else 8
             sg, s, gg, u6 = t[i:i + 4]
-            return "device_%s %s m%d %s, %s, %s, %s, lsl %d, g%d%s" % ("store" if t[1] else "load", t[2], t[3], r.split(".")[0],
-                                                                     "u" if pf else "r", ik, "signed" if sg else "unsigned", s, gg,
-                                                                     ", u6=%d" % u6 if t[1] else "")
+            return "device_%s %s m%d %s, %s, %s, %s, lsl %d, g%d, u6=%d" % ("store" if t[1] else "load", t[2], t[3], r.split(".")[0],
+                                                                          "u" if pf else "r", ik, "signed" if sg else "unsigned", s, gg, u6)
         if c == "TGMEM":
             r, i = _dkind(t, 4)
             b, i = _okind(t, i)
@@ -524,6 +541,39 @@ def form_key(t):
         return c.lower()
     except (IndexError, KeyError):
         return c.lower() + " ?"
+
+
+def _regs(t):
+    """the serialized registers (file, number, view, ...) in a token list"""
+    out, i = [], 0
+    while i < len(t):
+        if t[i] in ("R", "S") and i + 7 < len(t) + 1 and all(isinstance(x, int) for x in t[i + 1:i + 8]):
+            out.append(t[i + 1:i + 8])
+            i += 8
+        else:
+            i += 1
+    return out
+
+
+def unmeasured(t):
+    """the instruction has a form whose execution the model leaves undefined (it stops with an error)"""
+    if any(r[2] == 4 for r in _regs(t)):
+        return "odd 32-bit uniform"
+    if t[0] == "IMADD":
+        # the sources A, B, C after the destination: A or B a register pair
+        ops, i = [], 10
+        for _ in range(3):
+            if t[i] == "R":
+                ops.append(t[i + 3]); i += 8
+            else:
+                ops.append(None); i += 2
+        if 3 in ops[:2]:
+            return "imadd 64-bit multiplicand"
+    if t[0] == "SHUFFLE" and _regs(t[1:])[-1:] and _regs(t)[-1][2] in (0, 4) and t[-8] == "R":
+        return "32-bit lane index"
+    if t[0] == "DEVMEM" and t[2] in PACKED_FMTS:
+        return "packed format"
+    return None
 
 
 def class_of(t):

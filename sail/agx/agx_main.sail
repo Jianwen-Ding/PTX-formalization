@@ -28,6 +28,7 @@ val rd_op : unit -> aop
 function rd_op() = match tok_str() {
   "R" => OReg(rd_reg()),
   "I" => OImm(tok_int()),
+  "M" => { let b = tok_int(); let ab = rd_bool(); let ng = rd_bool(); OFMod(b, ab, ng) },
   _ => OFImm(tok_int())
 }
 
@@ -49,7 +50,11 @@ function rd_cc() = match tok_str() {
 }
 
 val rd_fmt : unit -> afmt
-function rd_fmt() = match tok_str() { "u8" => F_U8, "u16" => F_U16, _ => F_U32 }
+function rd_fmt() = match tok_str() {
+  "u8" => F_U8, "u16" => F_U16, "f16" => F_F16, "u8norm" => F_U8NORM, "s8norm" => F_S8NORM, "u16norm" => F_U16NORM,
+  "s16norm" => F_S16NORM, "rgb10a2" => F_RGB10A2, "srgba8" => F_SRGBA8, "rg11b10f" => F_RG11B10F, "rgb9e5" => F_RGB9E5,
+  "rg11b10f.rtz" => F_RG11B10F_RTZ, "rgb9e5.rtz" => F_RGB9E5_RTZ, _ => F_U32
+}
 
 val rd_aop : unit -> aaop
 function rd_aop() = match tok_str() {

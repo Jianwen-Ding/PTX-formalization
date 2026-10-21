@@ -26,6 +26,9 @@ AOPS = ["add", "sub", "xchg", "min", "imin", "max", "imax", "and", "or", "xor"]
 DEV_AOPS = AOPS + ["cmpxchg", "fadd", "umin64", "umax64", "end11", "end12", "end13", "end14", "end15"]
 ATOM_MODE_DEFAULT = {"fadd": 1, "umax64": 1, "umin64": 3}
 FMTS = ["u8", "u16", "u32"]
+# device accesses: every format
+DEV_FMTS = FMTS + ["f16", "u8norm", "s8norm", "u16norm", "s16norm", "rgb10a2", "srgba8", "rg11b10f", "rgb9e5", "rg11b10f.rtz",
+                   "rgb9e5.rtz"]
 FUNOPS = ["floor", "ceil", "trunc", "rint", "rsqrt", "rsqrt_special", "sin_pt_1", "sin_pt_2", "log2", "exp2"]
 
 class ParseError(Exception):
@@ -35,7 +38,7 @@ def strip_comments(text):
     text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
     return re.sub(r"//[^\n\r]*", " ", text)
 
-REG_RE = re.compile(r"^([ru])(\d+)([lh])?(?:_([ru])(\d+))?((?:\.(?:discard|cache|sx|abs|neg))*)$")
+REG_RE = re.compile(r"^([ru])(\d+)([lh])?(?:_([ru])(\d+))?((?:\.(?:odd|discard|cache|sx|abs|neg))*)$")
 
 def reg(s):
     """register -> the 7 integers of the serialized areg"""
@@ -50,6 +53,11 @@ def reg(s):
             raise ParseError("bad register pair %r" % s)
         view = 3
     flags = m.group(6).split(".")[1:]
+    if "odd" in flags:
+        # a 32-bit uniform at an odd 16-bit index (view 4)
+        if f != 1 or view != 0:
+            raise ParseError("bad register %r" % s)
+        view = 4
     hint = 1 if "cache" in flags else 2 if "discard" in flags else 0
     return [f, n, view, hint, int("sx" in flags), int("abs" in flags), int("neg" in flags)]
 
@@ -71,6 +79,10 @@ def op(s):
         return ["I", int(s)]
     if FLOAT_RE.match(s):
         return ["F", f64bits(s)]
+    m = re.match(r"^(.*?)((?:\.(?:abs|neg))+)$", s)
+    if m and FLOAT_RE.match(m.group(1)):
+        fl = m.group(2).split(".")[1:]
+        return ["M", f64bits(m.group(1)), int("abs" in fl), int("neg" in fl)]
     raise ParseError("bad operand %r" % s)
 
 def pair(s):
@@ -167,13 +179,18 @@ def instr(stmt):
     if m:
         want(3); return ["SHUFFLE", (m.group(1) or "_idx")[1:]] + reg(ops[0]) + op(ops[1]) + op(ops[2])
     if mnem in ("device_load", "device_store"):
-        if len(pre) != 2 or pre[0] not in FMTS:
+        if len(pre) != 2 or pre[0] not in DEV_FMTS:
             raise ParseError("bad format in %r" % stmt)
         want(5)
         extra = ops[5:]
-        g = int("g1" in extra); u6 = int("u6" in extra)
-        if any(x not in ("g1", "u6") for x in extra):
-            raise ParseError("bad trailing operands in %r" % stmt)
+        g = int("g1" in extra); u6 = 0
+        for x in extra:
+            if x == "u6":
+                u6 = 1
+            elif x.startswith("u6="):
+                u6 = intv(x[3:])
+            elif x != "g1":
+                raise ParseError("bad trailing operands in %r" % stmt)
         if ops[3] not in ("signed", "unsigned"):
             raise ParseError("bad signedness in %r" % stmt)
         return ["DEVMEM", int(mnem.endswith("store")), pre[0], mask_field(pre[1])] + reg(ops[0]) + pair(ops[1]) + op(ops[2]) + \

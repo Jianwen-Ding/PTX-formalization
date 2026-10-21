@@ -14,7 +14,7 @@ LOG=$(mktemp)
 status=0
 run() { echo "== $*"; "$@" 2>&1 | tee -a "$LOG" | tail -n 25; [ "${PIPESTATUS[0]}" -eq 0 ] || status=1; }
 run python3 agx/gen/mccheck.py -s "$SEED" -n 3000 -w 3000 --reps 2 -j "$JOBS"
-run python3 agx/gen/simcheck.py -s "$SEED" -n 400 -l 40 -j "$JOBS" --tests agx/tests/hw-semantics.agx agx/tests/binary-alu.agx agx/tests/atomic-variants.agx agx/tests/funop.agx
+run python3 agx/gen/simcheck.py -s "$SEED" -n 400 -l 40 -j "$JOBS" --tests agx/tests/hw-semantics.agx agx/tests/binary-alu.agx agx/tests/atomic-variants.agx agx/tests/funop.agx agx/tests/formats.agx
 rm -rf "$OUT"
 run python3 ptx/gen/ptxgen.py "$OUT" -s "$SEED"
 run python3 ptx/gen/ptxdiff.py "$OUT" --mode both -j "$JOBS" --json "$OUT/ptxdiff.json"

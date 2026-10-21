@@ -60,7 +60,8 @@ class Toks:
 
 def reg_text(f, n, view, hint, sx, ab, ng):
     p = "u" if f else "r"
-    base = {0: "%s%d" % (p, n), 1: "%s%dl" % (p, n), 2: "%s%dh" % (p, n), 3: "%s%d_%s%d" % (p, n, p, n + 1)}[view]
+    # view 4 (uN.odd): applegpu reads uN
+    base = {0: "%s%d" % (p, n), 1: "%s%dl" % (p, n), 2: "%s%dh" % (p, n), 3: "%s%d_%s%d" % (p, n, p, n + 1), 4: "%s%d" % (p, n)}[view]
     flags = []
     if hint == 1: flags.append("cache")
     if hint == 2: flags.append("discard")
@@ -79,7 +80,11 @@ def rd_op(T, fimm=False):
     v = T.int()
     if k == "I":
         return str(v)
-    return str(struct.unpack("<d", struct.pack("<Q", v))[0])
+    x = str(struct.unpack("<d", struct.pack("<Q", v))[0])
+    if k == "M":
+        ab, ng = T.int(), T.int()
+        x += (".abs" if ab else "") + (".neg" if ng else "")
+    return x
 
 def tuple_text(r, count):
     f, n, view = r[0], r[1], r[2]
@@ -110,7 +115,13 @@ def applegpu_text(toks):
         sub, sat = T.int(), T.int(); d = rd_reg(T); a = rd_op(T); b = rd_op(T); s = T.int()
         return ("isub" if sub else "iadd") + (".sat" if sat else ""), [reg_text(*d), a, b] + (["lsl %d" % s] if s else [])
     if c == "IMADD":
-        sub, sat = T.int(), T.int(); d = rd_reg(T); a = rd_op(T); b = rd_op(T); cc = rd_op(T); s = T.int()
+        def mulsrc():
+            # applegpu's MulSrcDesc has no 64-bit form: it reads a register pair as its low register
+            if T.t[T.i] == "R" and int(T.t[T.i + 3]) == 3:
+                T.next(); r = rd_reg(T); r[2] = 0
+                return reg_text(*r)
+            return rd_op(T)
+        sub, sat = T.int(), T.int(); d = rd_reg(T); a = mulsrc(); b = mulsrc(); cc = rd_op(T); s = T.int()
         return ("imsub" if sub else "imadd") + (".sat" if sat else ""), [reg_text(*d), a, b, cc] + (["lsl %d" % s] if s else [])
     if c == "BITOP":
         tt = T.int(); d = rd_reg(T); a = rd_op(T); b = rd_op(T)
@@ -178,18 +189,29 @@ def applegpu_text(toks):
         f = T.int(); cc = T.next(); d = rd_reg(T); a = rd_op(T); b = rd_op(T)
         return ("fcmp_ballot" if f else "icmp_ballot"), [reg_text(*d), (FCC if f else ICC)[cc], a, b]
     if c == "SHUFFLE":
-        k = T.next(); d = rd_reg(T); a = rd_op(T); b = rd_op(T)
+        k = T.next(); d = rd_reg(T); a = rd_op(T)
+        if T.t[T.i] == "R" and int(T.t[T.i + 1]) == 0 and int(T.t[T.i + 3]) == 0:
+            # a 32-bit register index: applegpu's 16-bit source reads the 16-bit register of the same index
+            T.next(); r = rd_reg(T); r[2] = 1
+            b = reg_text(*r)
+        else:
+            b = rd_op(T)
         return "simd_shuffle" + ("" if k == "idx" else "_" + k), [reg_text(*d), a, b]
     if c == "DEVMEM":
         st = T.int(); fmt = T.next(); mask = T.int(); r = rd_reg(T)
         pf, lo, hi = T.int(), T.int(), T.int()
         i = rd_op(T); sg = T.int(); s = T.int(); g = T.int(); u6 = T.int()
         base = "%s%d_%s%d" % ("u" if pf else "r", lo, "u" if pf else "r", hi)
-        F = {"u8": "i8", "u16": "i16", "u32": "i32"}[fmt]
+        F = {"u8": "i8", "u16": "i16", "u32": "i32"}.get(fmt, fmt)
         ops = [str(g), F, MASKS[mask], tuple_text(r, bin(mask).count("1")), base, i, "signed" if sg else "unsigned"] + (["lsl %d" % s] if s else [])
-        if st:
-            ops.append(str(u6))
-        return ("device_store" if st else "device_load"), ops
+        # applegpu's plain descriptors: loads with u6 = 0, stores with bit 45 clear; else its .TODO descriptors
+        if not st:
+            if u6 == 0:
+                return "device_load", ops
+            return "device_load.TODO", ops + ["1", "0", str(4 + u6), "0"]
+        if u6 < 2:
+            return "device_store", ops + [str(u6)]
+        return "device_store.TODO", ops + [str(u6 & 1), "1", "0", str(2 | (u6 >> 1)), "0"]
     if c == "TGMEM":
         st = T.int(); fmt = T.next(); mask = T.int(); r = rd_reg(T); b = rd_op(T); i = rd_op(T); s = T.int()
         F = {"u8": "i8", "u16": "i16", "u32": "i32"}[fmt]
@@ -252,12 +274,17 @@ def rsrc(views=(0, 1, 2), uni=True, sx=False, fmods=False, imm=True, fimm=False)
     k = R.random()
     if imm and k < 0.25:
         if fimm:
-            return ["F", R.choice(list(FIMM_BITS))]
+            b = R.choice(list(FIMM_BITS))
+            if fmods and R.random() < 0.3:
+                return ["M", b, R.randrange(2), 1] if R.random() < 0.5 else ["M", b, 1, R.randrange(2)]
+            return ["F", b]
         return ["I", R.randrange(256)]
     files = (0, 1) if uni else (0,)
     r = rreg(views=views, files=files, sx=sx, fmods=fmods)
     if r[0] == 1:
         r[2] = R.choice([v for v in views if v != 3] or [1])
+        if r[2] == 0 and R.random() < 0.2:
+            r[2] = 4
     return ["R"] + r
 
 def rcsel(is32):
@@ -286,7 +313,7 @@ def rinstr():
     if c == "IADD":
         return ["IADD", R.randrange(2), R.randrange(2)] + rdst((0, 1, 2, 3)) + rsrc((0, 1, 2, 3), sx=True) + rsrc((0, 1, 2, 3), sx=True) + [R.randrange(8)]
     if c == "IMADD":
-        return ["IMADD", R.randrange(2), R.randrange(2)] + rdst((0, 1, 2, 3)) + rsrc(sx=True) + rsrc(sx=True) + rsrc((0, 1, 2, 3), sx=True) + [R.randrange(8)]
+        return ["IMADD", R.randrange(2), R.randrange(2)] + rdst((0, 1, 2, 3)) + rsrc((0, 1, 2, 3), sx=True) + rsrc((0, 1, 2, 3), sx=True) + rsrc((0, 1, 2, 3), sx=True) + [R.randrange(8)]
     if c == "BITOP":
         while True:
             t = ["BITOP", R.randrange(16)] + rdst() + rsrc() + rsrc()
@@ -330,17 +357,17 @@ def rinstr():
         f = R.randrange(2)
         return ["BALLOT", f, R.choice(FCCS if f else ICCS)] + rdst() + rsrc(fmods=bool(f), fimm=bool(f)) + rsrc(fmods=bool(f), fimm=bool(f))
     if c == "SHUFFLE":
-        return ["SHUFFLE", R.choice(["idx", "xor", "up", "down"])] + rdst() + rsrc() + rsrc((1, 2))
+        return ["SHUFFLE", R.choice(["idx", "xor", "up", "down"])] + rdst() + rsrc() + rsrc((1, 2) if R.random() < 0.8 else (0,))
     if c == "DEVMEM":
         st = R.randrange(2)
         r = rreg(hints=False)
         r[2] = R.choice((0, 1, 2))
         if r[2] == 0:
             r[1] = R.randrange(124)
-        fmt = R.choice(["u8", "u16", "u32"]) if r[2] == 0 else R.choice(["u8", "u16"])
+        fmt = R.choice(agxtest.DEV_FMTS)
         lo = R.randrange(127)
         idx = ["I", R.randrange(-32768, 32768)] if R.random() < 0.5 else ["R", 0, R.randrange(128), 0, 0, 0, 0, 0]
-        return ["DEVMEM", st, fmt, R.randrange(16)] + r + [R.randrange(2), lo, lo + 1] + idx + [R.randrange(2), R.randrange(3), R.randrange(2), R.randrange(2) if st else 0]
+        return ["DEVMEM", st, fmt, R.randrange(16)] + r + [R.randrange(2), lo, lo + 1] + idx + [R.randrange(2), R.randrange(3), R.randrange(2), R.randrange(4)]
     if c == "TGMEM":
         st = R.randrange(2)
         r = rreg(hints=False)
@@ -444,6 +471,10 @@ def check_decode(n, verbose):
                 print("REJECTED %020x applegpu: %s" % (w, got))
             continue
         asm = parts[2]
+        if got is None and ".odd" in asm and name in ("icmpsel", "fcmpsel"):
+            # applegpu's CmpselSrcDesc asserts on an odd 32-bit uniform (the Sail model decodes it as uN.odd)
+            agree += 1
+            continue
         exp = applegpu_text(agxtest.instr(asm))
         if same(got, exp):
             agree += 1

@@ -621,7 +621,11 @@ function clause execute(CMPSEL(isf, cc, d, a, b, x, y)) = {
 val lidx : int -> range(0, 31)
 function lidx(i) = { assert(0 <= i & i < 32, "lane out of range"); i }
 
+val is_reg32 : aop -> bool
+function is_reg32(a) = match a { OReg(r) => view_bits(r) == 32, _ => false }
+
 function clause execute(SHUFFLE(k, d, a, b)) = {
+  if is_reg32(b) then fatal("simd_shuffle with a 32-bit lane index register is not measured");
   var av : vector(32, int) = vector_init(0);
   var bv : vector(32, int) = vector_init(0);
   foreach (t from 0 to 31) { av[t] = opv(t, a, 32); bv[t] = opv(t, b, 32) };
@@ -746,10 +750,58 @@ function clause execute(BALLOT(isf, cc, d, a, b)) = {
 }
 
 /* ---------------------------------------------------------------- memory */
+/* element sizes: the packed formats are not modelled (DEVMEM stops before using their size) */
 val fsize : afmt -> int
-function fsize(f) = match f { F_U8 => 1, F_U16 => 2, F_U32 => 4 }
+function fsize(f) = match f {
+  F_U8 => 1, F_U16 => 2, F_U32 => 4, F_F16 => 2, F_U8NORM => 1, F_S8NORM => 1, F_U16NORM => 2, F_S16NORM => 2, _ => 4
+}
 val flog : afmt -> int
-function flog(f) = match f { F_U8 => 0, F_U16 => 1, F_U32 => 2 }
+function flog(f) = match fsize(f) { 1 => 0, 2 => 1, _ => 2 }
+
+val norm_fmt : afmt -> bool
+function norm_fmt(f) = f == F_U8NORM | f == F_S8NORM | f == F_U16NORM | f == F_S16NORM
+val packed_fmt : afmt -> bool
+function packed_fmt(f) = not_bool(norm_fmt(f) | f == F_U8 | f == F_U16 | f == F_U32 | f == F_F16)
+
+/* normalised formats (agx_run norm_load / norm_store, fitted on the M2 suite's mem_load / mem_store cases).
+ * Load: v / 255, max(v, -127) / 127, v / 65535 or max(v, -32767) / 32767 (signed v for the s formats), rounded once
+ * to binary32 for a 32-bit register or binary16 for a 16-bit one (subnormals kept).  Store: the register as binary32
+ * or binary16 (binary16 subnormals read as zero), NaN -> 0, clamped to [0, 1] or [-1, 1], scaled by the
+ * denominator and rounded to the nearest integer, halves away from zero. */
+val norm_scale : afmt -> int
+function norm_scale(f) = match f { F_U8NORM => 255, F_S8NORM => 127, F_U16NORM => 65535, _ => 32767 }
+val norm_signed : afmt -> bool
+function norm_signed(f) = f == F_S8NORM | f == F_S16NORM
+
+val norm_load : (afmt, int, bool) -> int
+function norm_load(f, v, r32) = {
+  let sc = norm_scale(f);
+  let x0 = if norm_signed(f) then sext_int(v, 8 * fsize(f)) else v;
+  let x = if x0 < negate(sc) then negate(sc) else x0;
+  fv_div(fm_rn, if r32 then 32 else 16, FV_Fin(x < 0, abs_int(x), 0), FV_Fin(false, sc, 0))
+}
+
+val norm_store : (afmt, int, bool) -> int
+function norm_store(f, v, r32) = {
+  let x = if r32 then decodeF(trunc_int(v, 32), 32) else decodeF(flushB(trunc_int(v, 16), 16), 16);
+  let lo : fv = if norm_signed(f) then FV_Fin(true, 1, 0) else FV_Fin(false, 0, 0);
+  let n : int = if fv_is_nan(x) then 0 else {
+    let c = if fv_lt(x, lo) then lo else if fv_lt(fv_one(), x) then fv_one() else x;
+    match c {
+      FV_Fin(sg, m, e) => {
+        let p = m * norm_scale(f);
+        let mag = if e >= 0 then p * pow2(e) else {
+          let q = negate(e);
+          let t = shr_int(p, q);
+          if 2 * (p - t * pow2(q)) >= pow2(q) then t + 1 else t
+        };
+        if sg then negate(mag) else mag
+      },
+      _ => 0
+    }
+  };
+  trunc_int(n, 8 * fsize(f))
+}
 
 /* ubase(U, P): the 64-bit base of lane t */
 val ubase : (int, apair) -> int
@@ -789,18 +841,28 @@ function mreg_put(t, c, v) =
     else gpr[i] = get_slice_int(16, v, 0) @ gpr[i][15 .. 0]
   }
 
+/* formats f16 (16 bits, unconverted, like u16) and the normalised formats as above; the packed formats (rgb10a2,
+ * srgba8, rg11b10f, rgb9e5) are not measured and stop the model with an error.  u6 (Mesa's coherent access when 3)
+ * changes nothing in this model's one sequential memory. */
 function clause execute(DEVMEM(st, f, mask, d, p, i, sgn, s, _, _)) = {
+  if packed_fmt(f) then fatal("device_load / device_store with a packed format (rgb10a2, srgba8, rg11b10f, rgb9e5) is not modelled");
+  let r32 = d.view == 0;
   var newp : list((int, int, int)) = [||];
   var addrs : vector(32, int) = vector_init(0);
-  foreach (t from 0 to 31) { if is_active(t) then addrs[t] = ea(t, f, i, sgn, s, ubase(t, p)) };
+  foreach (t from 0 to 31) { if is_active(t) & status != ST_fault then addrs[t] = ea(t, f, i, sgn, s, ubase(t, p)) };
   var j : int = 0;
   foreach (k from 0 to 3) {
     if bit_int(mask, k) then {
       foreach (t from 31 downto 0) {
         if is_active(t) then {
           let a = addrs[t] + k * fsize(f);
-          if st then wrBytes(SP_DEV, a, mreg_get(t, mreg_code(d, j)), fsize(f))
-          else newp = (t, mreg_code(d, j), rdBytes(SP_DEV, a, fsize(f))) :: newp
+          if st then {
+            let v = mreg_get(t, mreg_code(d, j));
+            wrBytes(SP_DEV, a, if norm_fmt(f) then norm_store(f, v, r32) else v, fsize(f))
+          } else {
+            let v = rdBytes(SP_DEV, a, fsize(f));
+            newp = (t, mreg_code(d, j), if norm_fmt(f) then norm_load(f, v, r32) else v) :: newp
+          }
         }
       };
       j = j + 1

@@ -53,6 +53,7 @@ function reg_str(r) = {
     0 => concat_str(p, dec_str(r.num)),
     1 => concat_str(p, concat_str(dec_str(r.num), "l")),
     2 => concat_str(p, concat_str(dec_str(r.num), "h")),
+    4 => concat_str(p, concat_str(dec_str(r.num), ".odd")),
     _ => concat_str(concat_str(p, dec_str(r.num)), concat_str(concat_str("_", p), dec_str(r.num + 1)))
   };
   let h : string = match r.hint { HNone => "", HCache => ".cache", HDiscard => ".discard" };
@@ -60,7 +61,10 @@ function reg_str(r) = {
 }
 
 val op_str : aop -> string
-function op_str(a) = match a { OReg(r) => reg_str(r), OImm(i) => dec_str(i), OFImm(b) => f64_str(b) }
+function op_str(a) = match a {
+  OReg(r) => reg_str(r), OImm(i) => dec_str(i), OFImm(b) => f64_str(b),
+  OFMod(b, ab, ng) => concat_str(f64_str(b), concat_str(if ab then ".abs" else "", if ng then ".neg" else ""))
+}
 
 val pair_str : apair -> string
 function pair_str(p) = {
@@ -78,7 +82,11 @@ function cc_str(c) = match c {
 }
 
 val fmt_str : afmt -> string
-function fmt_str(f) = match f { F_U8 => "u8", F_U16 => "u16", F_U32 => "u32" }
+function fmt_str(f) = match f {
+  F_U8 => "u8", F_U16 => "u16", F_U32 => "u32", F_F16 => "f16", F_U8NORM => "u8norm", F_S8NORM => "s8norm",
+  F_U16NORM => "u16norm", F_S16NORM => "s16norm", F_RGB10A2 => "rgb10a2", F_SRGBA8 => "srgba8", F_RG11B10F => "rg11b10f",
+  F_RGB9E5 => "rgb9e5", F_RG11B10F_RTZ => "rg11b10f.rtz", F_RGB9E5_RTZ => "rgb9e5.rtz"
+}
 
 val aop_str : aaop -> string
 function aop_str(o) = match o {
@@ -180,7 +188,7 @@ function asm_target_matches_prefix(_) = None()
 
 /* extra fields of memory instructions: wait group, store-order bit */
 val asm_memx : (int, int) <-> string
-function asm_memx_forwards(g, u6) = concat_str(if g != 0 then ", g1" else "", if u6 != 0 then ", u6" else "")
+function asm_memx_forwards(g, u6) = concat_str(if g != 0 then ", g1" else "", if u6 == 1 then ", u6" else if u6 > 1 then concat_str(", u6=", dec_str(u6)) else "")
 function asm_memx_forwards_matches(_) = true
 function asm_memx_backwards(_) = (0, 0)
 function asm_memx_backwards_matches(_) = false
@@ -252,7 +260,9 @@ val fbin_mnem : fbinop <-> string
 mapping fbin_mnem = { FB_add <-> "fadd", FB_mul <-> "fmul" }
 
 val asm_fmt : afmt <-> string
-mapping asm_fmt = { F_U8 <-> "u8", F_U16 <-> "u16", F_U32 <-> "u32" }
+mapping asm_fmt = { F_U8 <-> "u8", F_U16 <-> "u16", F_U32 <-> "u32", F_F16 <-> "f16", F_U8NORM <-> "u8norm",
+  F_S8NORM <-> "s8norm", F_U16NORM <-> "u16norm", F_S16NORM <-> "s16norm", F_RGB10A2 <-> "rgb10a2", F_SRGBA8 <-> "srgba8",
+  F_RG11B10F <-> "rg11b10f", F_RGB9E5 <-> "rgb9e5", F_RG11B10F_RTZ <-> "rg11b10f.rtz", F_RGB9E5_RTZ <-> "rgb9e5.rtz" }
 
 val asm_aop : aaop <-> string
 mapping asm_aop = { A_add <-> "add", A_sub <-> "sub", A_xchg <-> "xchg", A_umin <-> "min", A_imin <-> "imin",

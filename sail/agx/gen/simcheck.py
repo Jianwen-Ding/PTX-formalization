@@ -79,7 +79,7 @@ class ProgGen:
     def __init__(self, rng, kinds, only=None):
         self.R = rng
         self.kinds = kinds
-        self.g = agxgen.Gen(rng, regs=DATA, uregs=UNI)
+        self.g = agxgen.Gen(rng, regs=DATA, uregs=UNI, odd=False)
         self.only = only
         self.depth = 0
         self.loops = 0
@@ -91,6 +91,13 @@ class ProgGen:
 
     # one data instruction, operands restricted to the data registers
     def alu_instr(self):
+        while True:
+            t = self.alu_instr1()
+            # forms the model leaves undefined (64-bit imadd multiplicands) are not run
+            if agxgen.unmeasured(t) is None:
+                return t
+
+    def alu_instr1(self):
         name = self.R.choice(self.alu)
         dims, build = agxgen.SCHEMAS[name]
         c = agxgen._choose(dims, self.R)
@@ -111,7 +118,7 @@ class ProgGen:
         k = R.random()
         if k < 0.45:
             st = R.randrange(2)
-            fmt = R.choice(agxgen.FMTS)
+            fmt = R.choice(agxgen.FMTS * 2 + [f for f in agxgen.DEV_FMTS if f not in agxgen.PACKED_FMTS and f not in agxgen.FMTS])
             view = R.choice((0, 1, 2)) if fmt != "u32" else R.choice((0, 0, 1, 2))
             mask = R.randrange(1, 16)
             n = bin(mask).count("1")
@@ -126,7 +133,7 @@ class ProgGen:
                 out.append(iand(37, R.choice(DATA), 63))
                 idx = RG(37)
             g = R.randrange(2)
-            out.append(dev(st, fmt, mask, r, view, pair, idx, sg=R.randrange(2), s=R.randrange(3), g=g, u6=R.randrange(2) if st else 0))
+            out.append(dev(st, fmt, mask, r, view, pair, idx, sg=R.randrange(2), s=R.randrange(3), g=g, u6=R.randrange(4)))
             if not st:
                 out.append(["WAIT", g])
         elif k < 0.65:
