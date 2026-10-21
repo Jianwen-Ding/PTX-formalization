@@ -381,6 +381,24 @@ function bulkTx(mb, n) = {
 }
 
 /* ---------------------------------------------------------------- bulk copies */
+/* cp.async.bulk / cp.reduce.async.bulk (9.7.9.26.4.1, 9.7.9.26.4.2): "size must be a multiple of 16. If the value is not
+ * a multiple of 16, then the behavior is undefined", "The addresses dstMem and srcMem must be aligned to 16 bytes";
+ * from .shared::cta to .shared::cluster "the destination has to be in the shared memory of a different CTA".  Under
+ * .ub strict. */
+val bulkUb : (string, int, loc, loc, bool) -> bool
+function bulkUb(op, n, sl, dl, remote) =
+  if not_bool(ub) then true
+  else if tmod_int(n, 16) != 0 then { fault(concat_str(op, ": size is not a multiple of 16"), n); false }
+  else match (sl, dl) {
+    (Loc(_, sa), Loc(ds, da)) =>
+      if tmod_int(sa, 16) != 0 | tmod_int(da, 16) != 0 then { fault(concat_str(op, ": addresses not aligned to 16 bytes"), 0); false }
+      else if remote & (ds == "shared" | (ds == "cluster" & tdiv_int(mbKey(dl), 4294967296) == cur_cta())) then {
+        fault(concat_str(op, ": the .shared::cluster destination is in the executing CTA"), 0); false
+      } else true,
+    _ => true
+  }
+
+
 val bulkMbar : list(xop) -> option(addr)
 function bulkMbar(l) = match l { [||] => None(), XB(a :: _, _) :: _ => Some(a), _ :: rest => bulkMbar(rest) }
 val bulkMask : list(xop) -> int
@@ -492,6 +510,7 @@ function exec_async(o, ops) = {
       let n = rdu32(sz);
       let rerr = if has(m, "reduce") then bulkRedRun(atomOp(m), ty1(o)) else "";
       if rerr != "" then { fault(rerr, 0); true }
+      else if has(m, "reduce") & not_bool(bulkUb("cp.reduce.async.bulk", n, ea(s, "shared"), ea(d, if has(m, "global") then "generic" else "shared_cluster"), false)) then true
       else if has(m, "reduce") then {
         let v = memop_do(ea(s, "shared"), RdOp(n));
         let dl = ea(d, if has(m, "global") then "generic" else "shared_cluster");
@@ -501,6 +520,8 @@ function exec_async(o, ops) = {
         true
       } else if has(m, "mbarrier::complete_tx::bytes") & is_some(bulkMbar(rest)) then {
         let cl = if has(m, "shared::cluster") then "shared_cluster" else "shared";
+        if not_bool(bulkUb("cp.async.bulk", n, ea(s, if has(m, "global") then "generic" else "shared"), ea(d, cl),
+                           not_bool(has(m, "global")) & has(m, "shared::cluster"))) then return true;
         let v = memop_do(ea(s, if has(m, "global") then "generic" else "shared"), RdOp(n));
         let mk = bulkMask(rest);
         var ds = bulkLocs(ea(d, cl), mk, isMc(m));
@@ -513,6 +534,7 @@ function exec_async(o, ops) = {
         };
         true
       } else if has(m, "bulk_group") then {
+        if not_bool(bulkUb("cp.async.bulk", n, ea(s, "shared"), ea(d, "generic"), false)) then return true;
         let v = memop_do(ea(s, "shared"), RdOp(n));
         let dl = ea(d, "generic");
         if not_bool(stuck) then {

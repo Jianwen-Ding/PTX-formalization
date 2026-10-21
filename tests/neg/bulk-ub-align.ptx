@@ -1,0 +1,19 @@
+// expect: cp.async.bulk: addresses not aligned to 16 bytes
+// cp.async.bulk (9.7.9.26.4.1): "The addresses dstMem and srcMem must be aligned to 16 bytes", reported under .ub strict
+.version 8.0
+.target sm_90
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 pi)
+{
+    .reg .b64 %i, %st;
+    .shared .align 16 .b8 buf[64];
+    .shared .align 8 .b64 bar;
+    ld.param.u64 %i, [pi];
+    mbarrier.init.shared.b64 [bar], 1;
+    mbarrier.arrive.expect_tx.shared.b64 %st, [bar], 64;
+    cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [buf+8], [%i], 32, [bar];
+    ret;
+}
+.buffer I .u32 [32];
+.launch k <<< 1, 1 >>> (I);
