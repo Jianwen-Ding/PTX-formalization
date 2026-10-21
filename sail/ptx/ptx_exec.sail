@@ -288,19 +288,22 @@ function do_call(fname, rs, args) = match lookup_func(fname) {
     var outs : list((string, string)) = [||];
     var rps = f_rets[fchk(f)];
     var rr = rs;
-    while ok & is_cons(rps) do {
+    var rok : bool = true;
+    while ok & rok & is_cons(rps) do {
       match (rps, rr) {
         (p :: pr, d :: dr) => {
           if p.palign < 0 then outs = (p.pname, sop_name(d)) :: outs
           else match d {
             SN(nm) => { let s = lookupSym(nm); smap_set(env, p.pname, if s < 0 then mksym("nosym", 0) else s) },
-            _ => ()
+            _ => { rok = false }
           };
           rps = pr; rr = dr
         },
-        _ => { rps = [||] }
+        _ => { rok = false }
       }
     };
+    /* K has no #bindRets rule for a count mismatch or a .param return that is not a name: the call is stuck there */
+    if ok & (not_bool(rok) | is_cons(rr)) then { ok = false; fault(concat_str("call to ", concat_str(fname, ": return values do not match the declaration")), 0) };
     if ok then enter_func(f, env, outs)
   }
 }

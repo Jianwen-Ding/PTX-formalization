@@ -1,0 +1,21 @@
+// expect: return values do not match
+// a call that leaves out the declared return value
+.version 8.0
+.target sm_80
+.address_size 64
+.func (.param .b32 r) f(.param .b32 a)
+{
+    .reg .b32 %x;
+    ld.param.b32 %x, [a];
+    st.param.b32 [r], %x;
+    ret;
+}
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %v;
+    mov.u32 %v, 1;
+    { .param .b32 pa; st.param.b32 [pa], %v; call f, (pa); }
+    ret;
+}
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1 >>> (OUT);

@@ -50,7 +50,14 @@ function do_exit() = {
   let wl = c_wlive[c];
   smap_set(wl, w, land_int(smap_get(wl, w), lnot_int(pow2(fmod_int(t_tid[t], 32)))));
   c_live[c] = c_live[c] - 1;
-  foreach (b from 0 to 15) barCheck(t_cta[t], b);
+  /* #barCheckAll(keys_list(BC)): every barrier with arrivals (ids beyond 15 included), collected before checking */
+  let bs = c_bars[cchk(t_cta[t])];
+  var ids : list(int) = [||];
+  foreach (i from 0 to (smap_size(bs) - 1)) {
+    let k = smap_key(bs, i);
+    if string_startswith(k, "cnt:") then ids = str2base(sdrop(k, 4), 10) :: ids
+  };
+  while is_cons(ids) do match ids { b :: rest => { barCheck(t_cta[t], b); ids = rest }, [||] => () };
   cluster_exit();
   t_alive[t] = false;
   t_status[t] = 2;

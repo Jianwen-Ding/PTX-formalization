@@ -73,9 +73,11 @@ function wgElem(d, km, w, mn, k) = {
   land_int(asr_int(mem_rdn(cta_smem(), a, max_int(1, tdiv_int(w, 8))), fmod_int(bo, 8)), mask(w))
 }
 
-/* negation of float inputs (imm-scale = -1) */
+/* negation of float inputs (imm-scale = -1): the sign bit, bit 5 for fp6 and for fp4 in the centre of its 8-bit container */
+val negBit : ty -> int
+function negBit(t) = if t.k == "e2m3" | t.k == "e3m2" | t.k == "e2m1" then 5 else ew(t) - 1
 val wgNeg : (ty, int, int) -> int
-function wgNeg(t, sc, v) = if sc < 0 & isFloatElem(t) then lxor_int(v, pow2(ew(t) - 1)) else v
+function wgNeg(t, sc, v) = if sc < 0 & isFloatElem(t) then lxor_int(v, pow2(negBit(t))) else v
 
 /* ---------------------------------------------------------------- the accumulator layout */
 val wgND : (string, ty) -> int

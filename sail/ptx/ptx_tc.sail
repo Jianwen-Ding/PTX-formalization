@@ -293,7 +293,8 @@ function tcSpExp(tm, t, m, kp, mc, sel) = {
            mget(SP_MT, rc(r, k)))
 }
 
-/* .ashift: the rows of A move down one row (keys of A only) */
+/* .ashift: the rows of A move down one row (row 0 is kept); every key of row r moves to row r + 1, so a sparse A whose
+   rows have different non-zero positions shifts correctly (the extra row M is never read) */
 val tcAshift : unit -> unit
 function tcAshift() = {
   smap_clear(SP_MT);
@@ -302,7 +303,8 @@ function tcAshift() = {
   foreach (i from 0 to (smap_size(SP_MT) - 1)) {
     let ks = smap_key(SP_MT, i);
     let k = str_int(ks);
-    mset(SP_MA, k, mget(SP_MT, if k >= 1024 then k - 1024 else k))
+    if k < 1024 then mset(SP_MA, k, mget(SP_MT, k));
+    mset(SP_MA, k + 1024, mget(SP_MT, k))
   }
 }
 
@@ -381,6 +383,8 @@ function tc_mma(m, ad, av, bv, id, da, meta, rest) = {
       let n2 = land_int(asr_int(id, 17), 63) * 4;
       let en = tcEn(rest);
       let s = tcSc(rest);
+      /* the 8-register disable-output-lane vector of a CTA pair: which lanes of which CTA it names is not modelled */
+      if tcMk(rest) != 0 then fault("tcgen05.mma.cta_group::2 with disable-output-lane is not modelled", 0) else
       foreach (j from 0 to 1) {
         let cc = if j == 0 then c else pt;
         smap_clear(SP_MB);
@@ -404,7 +408,7 @@ function tcUE(x, mn, bi) =
   if asr_int(x, mn) == 0 then FV_Fin(false, land_int(x, mask(mn)), 1 - bi - mn)
   else FV_Fin(false, land_int(x, mask(mn)) + pow2(mn), asr_int(x, mn) - bi - mn)
 val tcScaleF : (int, int) -> fv
-function tcScaleF(st, x) = match st { 1 => FV_Fin(false, 1, x - 127), 2 => tcUE(x, 3, 15), _ => tcUE(x, 3, 7) }
+function tcScaleF(st, x) = match st { 1 => if x == 255 then FV_NaN() else FV_Fin(false, 1, x - 127), 2 => tcUE(x, 3, 15), _ => tcUE(x, 3, 7) }
 val tcScaleTy : (list(string), int) -> int
 function tcScaleTy(m, id) = if has(m, "kind::mxf4nvf4") then land_int(asr_int(id, 23), 3) else 1
 

@@ -1,0 +1,17 @@
+// expect: unsupported
+// mma.sync.m8n8k4 with .f16 inputs (the sm_70 quad-pair form) is not modelled: it must not run with the f64 fragments
+.version 8.0
+.target sm_80
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %a<2>, %b<2>; .reg .f32 %c<8>, %d<8>;
+    mov.b32 %a0, 0x3C003C00; mov.b32 %a1, 0x3C003C00; mov.b32 %b0, 0x3C003C00; mov.b32 %b1, 0x3C003C00;
+    mov.f32 %c0, 0f00000000; mov.f32 %c1, 0f00000000; mov.f32 %c2, 0f00000000; mov.f32 %c3, 0f00000000;
+    mov.f32 %c4, 0f00000000; mov.f32 %c5, 0f00000000; mov.f32 %c6, 0f00000000; mov.f32 %c7, 0f00000000;
+    mma.sync.aligned.m8n8k4.row.col.f32.f16.f16.f32 {%d0, %d1, %d2, %d3, %d4, %d5, %d6, %d7}, {%a0, %a1}, {%b0, %b1},
+        {%c0, %c1, %c2, %c3, %c4, %c5, %c6, %c7};
+    ret;
+}
+.buffer OUT .u32 [4];
+.launch k <<< 1, 32 >>> (OUT);

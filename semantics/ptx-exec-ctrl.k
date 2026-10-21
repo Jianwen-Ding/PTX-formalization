@@ -83,6 +83,7 @@ module PTX-EXEC-CTRL
             #bindRets(RPS, RS, C, E[P <- lookupSym(Name2String(N), C)], F) ... </tk>
     requires AL >=Int 0
   rule <tk> #bindRets(.List, .List, _, E, F) => #enter(F, E) ... </tk>
+  rule <tk> #bindRets(_, _, _, _, F) => #fault("call to " +String F +String ": return values do not match the declaration", 0) ... </tk> [owise]
   rule <tk> #enter(F, E) => .K ... </tk>
        <fn> CF => F </fn> <pc> PC => 0 </pc>
        <regs> R => regIns(SR, keys_list(E), E) </regs> <rw> RW => FRW </rw> <env> CE => E </env>

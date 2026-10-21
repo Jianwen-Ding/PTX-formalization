@@ -3,8 +3,8 @@
  * them with K's builtin FLOAT (MPFR, correctly rounded to nearest at the operand's precision):
  *   rsqrt(x) = 1.0 / sqrt(x)                 two roundings
  *   sin(x), cos(x), 2.0 ^ x                  one rounding
- *   lg2(x) = log(x) / log(2.0)               three roundings
- *   tanh(x) = (e^x - e^-x) / (e^x + e^-x)    for |x| < 20 (each operation rounded), else +-1
+ *   lg2(x) = log2(x)                         one rounding (log computed at 300 bits, then rounded)
+ *   tanh(x) = (e^x - e^-x) / (e^x + e^-x)    for |x| < 20 (each operation rounded) unless e^x overflows, else +-1
  * Here each correctly rounded elementary function is computed with integer arithmetic: an
  * approximation with an error bound, refined until both ends of the error interval round to the
  * same value (Ziv's strategy).
@@ -161,6 +161,42 @@ function log_r(x, w) = match x {
   }
 }
 
+/* correctly rounded log2(x) at format w: the exponent k exactly plus ln(m) / ln 2 for the mantissa m in [1, 2) */
+val log2_r : (fv, int) -> fv
+function log2_r(x, w) = match x {
+  FV_NaN() => FV_NaN(),
+  FV_Inf(s) => if s then FV_NaN() else FV_Inf(false),
+  FV_Fin(s, m, e) => {
+    if m == 0 then FV_Inf(true)
+    else if s then FV_NaN()
+    else if fv_cmp(x, fv_one()) == 0 then FV_Fin(false, 0, 0)
+    else if land_int(m, m - 1) == 0 then rnd_ie(bitlen(m) - 1 + e, 0, w)
+    else {
+      var p : int = fmt_p(w) + 64;
+      var r : option(fv) = None();
+      while is_none(r) do {
+        let g = p + 16;
+        let nb = bitlen(m);
+        let k = nb - 1 + e;
+        let one = pow2(g);
+        let y = if g >= nb - 1 then m * pow2(g - (nb - 1)) else shr_int(m, (nb - 1) - g);
+        let z = tdiv_int((y - one) * one, y + one);
+        let z2 = tdiv_int(z * z, one);
+        var sum : int = 0;
+        var term : int = z;
+        var j : int = 0;
+        while term != 0 do { sum = sum + tdiv_int(term, 2 * j + 1); term = tdiv_int(term * z2, one); j = j + 1 };
+        /* 2 sum = ln(m) * 2^g within 2 (j + 4), below 2^g; dividing by ln 2 (error < 2) adds < 3 * (that + 2) + 1 */
+        let v = k * one + tdiv_int(2 * sum * one, ln2_fixed(g));
+        let err = 3 * (2 * (j + 4) + 2) + 2;
+        r = round_iv(v, err, negate(g), w);
+        p = p + 64
+      };
+      match r { Some(v) => v, None() => FV_NaN() }
+    }
+  }
+}
+
 /* correctly rounded 2^x at format w (MPFR pow(2, x)) */
 val exp2_r : (fv, int) -> fv
 function exp2_r(x, w) = match x {
@@ -275,7 +311,7 @@ function transcendental(op, w, a, raw) = {
     "rsqrt" => div_r(fv_one(), sqrt_r(x, w), w),
     "sin" => sincos_r(x, w, true),
     "cos" => sincos_r(x, w, false),
-    "lg2" => div_r(log_r(x, w), log_r(FV_Fin(false, 2, 0), w), w),
+    "lg2" => log2_r(x, w),
     "ex2" => exp2_r(x, w),
     "tanh" => {
       /* tanh(NaN) = NaN; below 2^-12 tanh(x) = x within 2^-24 (the difference of exponentials cancels) */
@@ -284,7 +320,9 @@ function transcendental(op, w, a, raw) = {
       else if fv_cmp(fv_abs(x), FV_Fin(false, 20, 0)) < 0 then {
         let e1 = exp_r(x, w);
         let e2 = exp_r(fv_neg(x), w);
-        div_r(addsub_r(e1, fv_neg(e2), w), addsub_r(e1, e2, w), w)
+        /* f16: e^|x| overflows above ln 65520 ~ 11.09, where tanh(x) rounds to +-1 */
+        if fv_is_inf(e1) | fv_is_inf(e2) then (if fv_sign(x) then FV_Fin(true, 1, 0) else fv_one())
+        else div_r(addsub_r(e1, fv_neg(e2), w), addsub_r(e1, e2, w), w)
       } else if fv_sign(x) then FV_Fin(true, 1, 0) else fv_one()
     },
     _ => { fault(concat_str("no semantics for ", op), 0); FV_NaN() }

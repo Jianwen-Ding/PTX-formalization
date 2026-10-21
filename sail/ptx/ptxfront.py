@@ -466,14 +466,19 @@ class Parser:
                 raise PtxError("bad operand after %s: %r" % (s, ps))
             return ("neg" if s == "-" else "not", ("reg" if pk == "reg" else "name", ps))
         self.next()
+        # d|p: a register or name (the sink _ included) after the bar, never a literal
         if k == "reg":
             if self.at("|"):
                 self.next(); b = self.next()
+                if b[0] not in ("reg", "name"):
+                    raise PtxError("bad operand after %s|: %r" % (s, b[1]))
                 return ("pipe", ("reg", s), ("reg", b[1]))
             return ("reg", s)
         if k == "name":
             if self.at("|"):
                 self.next(); b = self.next()
+                if b[0] not in ("reg", "name"):
+                    raise PtxError("bad operand after %s|: %r" % (s, b[1]))
                 return ("pipe", ("name", s), ("name", b[1]))
             if self.at("+") and self.kind(1) == "int":
                 self.next(); return ("nameplus", s, int(self.next()[1]))

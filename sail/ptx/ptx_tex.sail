@@ -129,6 +129,10 @@ function adIdx(md, i, n) = match md {
   _ => min_int(max_int(i, 0), n - 1)
 }
 
+/* wrap and mirror need normalized coordinates: unnormalized coordinates clamp */
+val amEff : (int, int) -> int
+function amEff(am, nm) = if nm != 1 & (am == 0 | am == 3) then 1 else am
+
 val codeBits : int -> int
 function codeBits(c) = if c == 0 | c == 20 then 8 else if c == 1 | c == 21 then 16 else 32
 val codeVal : (int, int) -> int
@@ -173,7 +177,7 @@ function posF(x, n, nm) = if nm == 1 then wmul(x, intF(n)) else x
 val tIdx : (int, list(int), int, int, fv, int, int, int) -> int
 function tIdx(b, q, am, nm, x, d, dim, lin) = {
   let p = posF(x, lvD(b, at(q, 0), dim), nm);
-  adIdx(am, flo(if lin == 1 then wsub(p, halfF()) else p) + d + at(q, 1 + dim), lvD(b, at(q, 0), dim))
+  adIdx(amEff(am, nm), flo(if lin == 1 then wsub(p, halfF()) else p) + d + at(q, 1 + dim), lvD(b, at(q, 0), dim))
 }
 val tW : (int, list(int), int, fv, int) -> fv
 function tW(b, q, nm, x, dim) = qw(wsub(posF(x, lvD(b, at(q, 0), dim), nm), halfF()))
