@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate tests/tcsp-*.ptx: tcgen05.mma.sp against a dense model.  The packed A matrix and the metadata words
-(row r in TMEM lane r, 4 bits per chunk; one word selected by the sparsity selector for 16-bit/tf32 kinds, two words
-for 8-bit kinds -- the layout assumption of semantics/ptx-exec-tc.k) are built from a randomly pruned dense A.
+(4 bits per chunk; ISA Figures 262-265 for the 16-bit / tf32 kinds, one column selected by the sparsity selector,
+Figures 266, 267 for the 8-bit kinds, row r in lane r, two columns) are built from a randomly pruned dense A.
 usage: gen_tcgen05_sp.py [SEED]"""
 import random, sys, struct
 from fractions import Fraction
@@ -60,11 +60,18 @@ for kk, (N, K, kind, dt, at, bt, aform, akm, az, bkm, bz, en, sc, na, nb, M, sel
                 s = (sx(Din[(r, c)], 32) if en else 0) + sum(va(A[(r, k)]) * vb(B[c][k]) for k in range(K))
                 if sat: s = max(-(1 << 31), min((1 << 31) - 1, s))
                 Dout[(r, c)] = s & 0xFFFFFFFF
-    # metadata words per row
+    # metadata words per TMEM lane
     nw = 1 if nch <= 8 else 2
     meta = []
     for r in range(M):
-        words = [sum(nibble(at, choice[(r, c)]) << (4 * (c - 8 * w)) for c in range(8 * w, min(nch, 8 * w + 8))) for w in range(nw)]
+        if nw == 1:
+            # 8 chunks per row (.kind::f16 / .kind::tf32, ISA Figures 262-265): in each block of 16 lanes, lane
+            # 8*hf + i holds chunks 4hf..4hf+3 of rows i (bits 0-15) and i + 8 (bits 16-31) of the block
+            b, hf, i = r // 16, (r % 16) // 8, r % 8
+            words = [sum(nibble(at, choice[(16 * b + i + 8 * hh, 4 * hf + cc)]) << (16 * hh + 4 * cc) for hh in range(2) for cc in range(4))]
+        else:
+            # 16 chunks per row (Figures 266, 267): lane r, two columns of 8 chunks
+            words = [sum(nibble(at, choice[(r, c)]) << (4 * (c - 8 * w)) for c in range(8 * w, min(nch, 8 * w + 8))) for w in range(nw)]
         meta.append(words)
     MC = 384
     img = {}; off = 0; descA = 0
