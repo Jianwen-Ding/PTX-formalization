@@ -416,22 +416,65 @@ function bar_get(k, b, d) = { let sp = c_bars[cchk(cur_cta())]; if smap_has(sp, 
 val bar_set : (string, int, int) -> unit
 function bar_set(k, b, v) = smap_set(c_bars[cchk(cur_cta())], bkey(k, b), v)
 
-/* #barCheck(B): complete the barrier when the expected number of threads have arrived */
+/* #barCheck(B).  "barrier{.cta} instruction causes executing thread to wait for all non-exited threads from its warp
+ * and marks warps' arrival at barrier" and the thread count "must be a multiple of the warp size" (PTX ISA 9.3,
+ * bar / barrier): the arrivals are counted per warp.  "am<W>:B" holds the lanes of warp W that have arrived; a warp
+ * has arrived once every non-exited lane has.  The barrier completes when count / 32 warps (rounded up), or without a
+ * count every warp with a non-exited thread, have arrived.  Lanes of a warp that has not arrived when the barrier
+ * completes belong to the next generation. */
+val amKey : int -> string
+function amKey(w) = concat_str("am", concat_str(dec_str(w), ":"))
+
 val barCheck : (int, int) -> unit
 function barCheck(c, b) = {
   let sp = c_bars[cchk(c)];
   if smap_has(sp, bkey("cnt:", b)) then {
-    let cnt = smap_get(sp, bkey("cnt:", b));
     let x = if smap_has(sp, bkey("exp:", b)) then smap_get(sp, bkey("exp:", b)) else -1;
-    let need = if x < 0 then c_live[cchk(c)] else x;
-    if cnt >= need then {
-      smap_del(sp, bkey("cnt:", b));
+    let nw = tdiv_int(vol(blockDim) + 31, 32);
+    var arrived : int = 0;
+    var livew : int = 0;
+    foreach (w from 0 to (nw - 1)) {
+      let am = smap_get(sp, bkey(amKey(w), b));
+      let lv = smap_get(c_wlive[cchk(c)], dec_str(w));
+      if lv != 0 then livew = livew + 1;
+      if am != 0 & land_int(lv, lnot_int(am)) == 0 then arrived = arrived + 1
+    };
+    let need = if x < 0 then livew else tdiv_int(x + 31, 32);
+    if arrived >= need then {
+      let g = if smap_has(sp, bkey("gen:", b)) then smap_get(sp, bkey("gen:", b)) else 0;
+      /* lanes of warps that have not arrived carry over to the next generation */
+      var carry : int = 0;
+      foreach (w from 0 to (nw - 1)) {
+        let am = smap_get(sp, bkey(amKey(w), b));
+        let lv = smap_get(c_wlive[cchk(c)], dec_str(w));
+        if am != 0 & land_int(lv, lnot_int(am)) == 0 then smap_del(sp, bkey(amKey(w), b))
+        else if am != 0 then {
+          carry = carry + popc_int(am);
+          foreach (t from 0 to (nthreads - 1)) {
+            let s = tchk(t);
+            if t_alive[s] & t_cta[s] == c & tdiv_int(t_tid[s], 32) == w & bit_int(am, fmod_int(t_tid[s], 32)) & t_status[s] == 1
+               & t_wbar[s] == b & t_wgen[s] == g then {
+              t_wgen[s] = g + 1;
+              match t_cont[s] { K_barwaitred(bb, _, d) => t_cont[s] = K_barwaitred(bb, g + 1, d), _ => () }
+            }
+          }
+        }
+      };
+      if carry > 0 then smap_set(sp, bkey("cnt:", b), carry) else smap_del(sp, bkey("cnt:", b));
       let v = if smap_has(sp, bkey("val:", b)) then smap_get(sp, bkey("val:", b)) else 0;
       smap_del(sp, bkey("val:", b));
       smap_set(sp, bkey("res:", b), v);
-      smap_set(sp, bkey("gen:", b), (if smap_has(sp, bkey("gen:", b)) then smap_get(sp, bkey("gen:", b)) else 0) + 1)
+      smap_set(sp, bkey("gen:", b), g + 1)
     }
   }
+}
+
+/* the executing lane's arrival at barrier B */
+val barArrive : int -> unit
+function barArrive(b) = {
+  let w = tdiv_int(cur_tid(), 32);
+  bar_set("cnt:", b, bar_get("cnt:", b, 0) + 1);
+  bar_set(amKey(w), b, lor_int(bar_get(amKey(w), b, 0), pow2(fmod_int(cur_tid(), 32))))
 }
 
 register yielded : bool = false
@@ -442,7 +485,7 @@ function do_bar(b, x, w) = {
   let t = tchk(cur);
   let g = bar_get("gen:", b, 0);
   if w then { t_status[t] = 1; t_wbar[t] = b; t_wgen[t] = g };
-  bar_set("cnt:", b, bar_get("cnt:", b, 0) + 1);
+  barArrive(b);
   bar_set("exp:", b, x);
   barCheck(cur_cta(), b);
   if w then yielded = true
@@ -461,7 +504,7 @@ function do_barred(b, x, k, v, d) = {
   let t = tchk(cur);
   let g = bar_get("gen:", b, 0);
   t_status[t] = 1; t_wbar[t] = b; t_wgen[t] = g;
-  bar_set("cnt:", b, bar_get("cnt:", b, 0) + 1);
+  barArrive(b);
   bar_set("exp:", b, x);
   bar_set("val:", b, redStep(k, bar_get("val:", b, -1), v));
   t_cont[t] = K_barwaitred(b, g, d);
