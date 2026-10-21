@@ -1,0 +1,29 @@
+// Quad / SIMD-group reductions, exclusive prefixes, quad shuffles and quad ballots (agx_run cross_lane semantics)
+.laneid r4;
+.all r5 = 1065353216;            // 1.0
+.all r15 = 4294967295;
+simd_iadd r6, r4;                // 0 + 1 + ... + 31 = 496
+quad_max.u r7, r4;               // 4q + 3
+simd_prefix_iadd r8, r4;         // exclusive: lane l gets l (l - 1) / 2
+quad_prefix_fadd r9, r5;         // 0, 1, 2, 3 per quad (lane 0 of a quad: the identity -0.0)
+quad_shuffle_xor r10, r4, 1;     // lane ^ 1 within the quad
+quad_shuffle_down r11, r4, 2;    // lane + 2 if in the quad, else its own
+icmp_quad_ballot ult r12, r4, 6; // quad 0: 0xf, quad 1: lanes 4, 5: 0x3, others 0
+simd_and r13, r15;
+quad_prefix_min.s r14, r4;       // not run against agx_run (it has no quad_prefix_min); the chained minimum
+stop;
+.run;
+.expectall r6 = 496;
+.expectlane 5 r7 = 7;
+.expectlane 6 r8 = 15;
+.expectlane 0 r9 = 2147483648;
+.expectlane 3 r9 = 1077936128;
+.expectlane 6 r10 = 7;
+.expectlane 5 r11 = 7;
+.expectlane 6 r11 = 6;
+.expectlane 1 r12 = 15;
+.expectlane 6 r12 = 3;
+.expectlane 9 r12 = 0;
+.expectall r13 = 4294967295;
+.expectlane 0 r14 = 2147483647;
+.expectlane 7 r14 = 4

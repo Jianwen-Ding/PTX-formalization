@@ -135,6 +135,35 @@ let C_RINT = funop_cls(FU_rint)
 let C_EXTR = cls(200, 8, 8, 15, [|(0, 7, 46), (15, 1, 0), (26, 2, 1)|])
 let C_INTL = cls(201, 6, 6, 15, [|(0, 7, 62), (15, 1, 0), (38, 2, 0), (26, 2, 0)|])
 let C_CONVERT = cls(202, 6, 6, 15, [|(0, 7, 62), (15, 1, 1), (22, 4, 0), (38, 2, 0), (42, 2, 0)|])
+/* quad / SIMD reductions and prefixes (G13Reduce of the LLVM backend, Mesa's quad_reduce .. simd_prefix): opc
+ * (29, 2), op = bit 28 | (38, 3) << 1 | bit 47 << 4, A (16, 42) up to 64 bits, D (44) */
+val xkind_code : xkind -> int
+function xkind_code(k) = match k { XK_quad => 0, XK_simd => 1, XK_quad_prefix => 2, XK_simd_prefix => 3 }
+val xop_code : xop -> int
+function xop_code(o) = match o {
+  XO_and => 0, XO_fadd => 1, XO_or => 2, XO_fmul => 3, XO_xor => 4, XO_fmin => 5, XO_fmax => 7, XO_iadd => 16,
+  XO_smin => 20, XO_smax => 22, XO_umin => 28, XO_umax => 30
+}
+val code_xop : int -> option(xop)
+function code_xop(n) = match n {
+  0 => Some(XO_and), 1 => Some(XO_fadd), 2 => Some(XO_or), 3 => Some(XO_fmul), 4 => Some(XO_xor), 5 => Some(XO_fmin),
+  7 => Some(XO_fmax), 16 => Some(XO_iadd), 20 => Some(XO_smin), 22 => Some(XO_smax), 28 => Some(XO_umin),
+  30 => Some(XO_umax), _ => None()
+}
+val xlane_cls : xkind -> icls
+function xlane_cls(k) = cls(210 + xkind_code(k), 6, 6, 15, [|(0, 7, 111), (15, 1, 1), (26, 2, 0), (29, 2, xkind_code(k)), (31, 7, 0), (41, 1, 0)|])
+let C_XQUAD = xlane_cls(XK_quad)
+let C_XSIMD = xlane_cls(XK_simd)
+let C_XQUADP = xlane_cls(XK_quad_prefix)
+let C_XSIMDP = xlane_cls(XK_simd_prefix)
+/* quad shuffles: the simd shuffle classes with bit 26 clear */
+let C_QSHUF = cls(220, 6, 6, 15, [|(0, 7, 111), (15, 1, 0), (47, 1, 0), (38, 2, 0), (26, 2, 0)|])
+let C_QSHUFXOR = cls(221, 6, 6, 15, [|(0, 7, 111), (15, 1, 0), (47, 1, 0), (38, 2, 1), (26, 2, 0)|])
+let C_QSHUFUP = cls(222, 6, 6, 15, [|(0, 7, 111), (15, 1, 0), (47, 1, 0), (38, 2, 2), (26, 2, 0)|])
+let C_QSHUFDOWN = cls(223, 6, 6, 15, [|(0, 7, 111), (15, 1, 0), (47, 1, 0), (38, 2, 3), (26, 2, 0)|])
+/* quad ballots: the ballot classes with bit 48 clear */
+let C_ICMPQBALLOT = cls(224, 8, 8, 15, [|(0, 7, 50), (26, 2, 0), (38, 2, 0), (48, 13, 0)|])
+let C_FCMPQBALLOT = cls(225, 8, 8, 15, [|(0, 7, 34), (48, 13, 0)|])
 let funops : list(funop) = [|FU_floor, FU_rsqrt_special, FU_rsqrt, FU_sin_pt_1, FU_log2, FU_exp2, FU_sin_pt_2, FU_ceil,
   FU_trunc, FU_rint|]
 
@@ -143,7 +172,8 @@ let all_classes : list(icls) = [|C_MOVI16, C_MOVI32, C_GETSR, C_IADD, C_IMADD, C
   C_BITOP, C_BITREV, C_POPCOUNT, C_FFS, C_EXTR, C_INTL, C_CONVERT, C_FMADD32, C_FMADD16, C_FADD32, C_FADD16, C_FMUL32, C_FMUL16,
   C_RCP, C_FLOOR, C_RSQRT_SPECIAL, C_RSQRT, C_SIN_PT_1, C_LOG2, C_EXP2, C_SIN_PT_2, C_CEIL, C_TRUNC, C_RINT, C_STOP, C_JMPANY, C_JMPNONE, C_POPEXEC, C_IFICMP, C_IFFCMP, C_WHILEICMP, C_WHILEFCMP,
   C_ELSEICMP, C_ELSEFCMP, C_ICMPSEL, C_FCMPSEL, C_ICMPBALLOT, C_FCMPBALLOT, C_SHUF, C_SHUFDOWN,
-  C_SHUFUP, C_SHUFXOR, C_WAIT, C_DEVLOAD, C_DEVSTORE, C_TGLOAD, C_TGSTORE, C_TGBARRIER, C_ATOMIC,
+  C_SHUFUP, C_SHUFXOR, C_XQUAD, C_XSIMD, C_XQUADP, C_XSIMDP, C_QSHUF, C_QSHUFXOR, C_QSHUFUP, C_QSHUFDOWN,
+  C_ICMPQBALLOT, C_FCMPQBALLOT, C_WAIT, C_DEVLOAD, C_DEVSTORE, C_TGLOAD, C_TGSTORE, C_TGBARRIER, C_ATOMIC,
   C_TGATOMIC, C_MEMBAR, C_TRAP|]
 /* memory_barrier (byte 0xf5) and trap (0x0008) match no earlier class: adding them changes no other decoding */
 
@@ -827,6 +857,42 @@ function e_shuf(k, d, a, b) = {
 val d_shuf : (shufkind, int) -> option(ast)
 function d_shuf(k, w) = { start_dec(); fin_dec(SHUFFLE(k, d_dst(w, 44, true, false), d_alu(w, 16, 42), d_alu(w, 28, 40))) }
 
+val e_xlane : (xkind, xop, areg, aop) -> option(int)
+function e_xlane(k, o, d, a) = {
+  start_enc();
+  let c = xop_code(o);
+  let w = e_src(e_dst(0, d, 44, true, false), a, 16, 42, 4, true, true, false, -1, -1);
+  finish(xlane_cls(k), fput(fput(fput(w, 28, 1, fget(c, 0, 1)), 38, 3, fget(c, 1, 3)), 47, 1, fget(c, 4, 1)))
+}
+val d_xlane : (xkind, int) -> option(ast)
+function d_xlane(k, w) = {
+  start_dec();
+  let c = fget(w, 28, 1) + 2 * fget(w, 38, 3) + 16 * fget(w, 47, 1);
+  match code_xop(c) {
+    Some(o) => fin_dec(XLANE(k, o, d_dst(w, 44, true, false), d_src(w, 16, 42, 4, true, true, false, -1, -1))),
+    None() => None()
+  }
+}
+
+val qshuf_cls : shufkind -> icls
+function qshuf_cls(k) = match k { SH_idx => C_QSHUF, SH_xor => C_QSHUFXOR, SH_up => C_QSHUFUP, SH_down => C_QSHUFDOWN }
+val e_qshuf : (shufkind, areg, aop, aop) -> option(int)
+function e_qshuf(k, d, a, b) = { start_enc(); finish(qshuf_cls(k), e_alu(e_alu(e_dst(0, d, 44, true, false), a, 16, 42), b, 28, 40)) }
+val d_qshuf : (shufkind, int) -> option(ast)
+function d_qshuf(k, w) = { start_dec(); fin_dec(QSHUFFLE(k, d_dst(w, 44, true, false), d_alu(w, 16, 42), d_alu(w, 28, 40))) }
+
+val e_qballot : (bool, acc, areg, aop, aop) -> option(int)
+function e_qballot(isf, cc, d, a, b) = {
+  start_enc();
+  let w0 = e_cc(e_dst(0, d, 44, true, false), isf, cc, 61, 47);
+  finish(if isf then C_FCMPQBALLOT else C_ICMPQBALLOT, if isf then e_flt(e_flt(w0, a, 16, 42), b, 28, 40) else e_alu(e_alu(w0, a, 16, 42), b, 28, 40))
+}
+val d_qballot : (bool, int) -> option(ast)
+function d_qballot(isf, w) = match d_ballot(isf, w) {
+  Some(BALLOT(f, cc, d, a, b)) => Some(QBALLOT(f, cc, d, a, b)),
+  _ => None()
+}
+
 /* device_load / device_store: g (30), F (7,3)+(48,1), mask (52,4), R (10,6)+(40,2) flag 49, base, index,
  * Ou (25: 0 signed, 1 unsigned), shift (42,2), u6 (44,2) with bit 46 set (the LLVM backend's trailing operand; Mesa's
  * u4 = bits 44-46 is 4, or 7 for a coherent access; applegpu's plain descriptors cover u6 = 0 for loads and bit 45
@@ -998,6 +1064,9 @@ function agx_encode(i) = match i {
   JMP_EXEC(any, t) => e_jmp(any, t),
   BALLOT(isf, cc, d, a, b) => e_ballot(isf, cc, d, a, b),
   SHUFFLE(k, d, a, b) => e_shuf(k, d, a, b),
+  XLANE(k, o, d, a) => e_xlane(k, o, d, a),
+  QSHUFFLE(k, d, a, b) => e_qshuf(k, d, a, b),
+  QBALLOT(isf, cc, d, a, b) => e_qballot(isf, cc, d, a, b),
   DEVMEM(st, f, m, r, p, i, sg, s, g, u6) => e_devmem(st, f, m, r, p, i, sg, s, g, u6),
   TGMEM(st, f, m, r, b, i, s) => e_tgmem(st, f, m, r, b, i, s),
   DEVATOM(op, d, p, i, sg, v, g, m) => e_devatom(op, d, p, i, sg, v, g, m),
@@ -1065,6 +1134,16 @@ function agx_decode(win) = {
       else if k.cid == C_SHUFDOWN.cid then d_shuf(SH_down, w)
       else if k.cid == C_SHUFUP.cid then d_shuf(SH_up, w)
       else if k.cid == C_SHUFXOR.cid then d_shuf(SH_xor, w)
+      else if k.cid == C_XQUAD.cid then d_xlane(XK_quad, w)
+      else if k.cid == C_XSIMD.cid then d_xlane(XK_simd, w)
+      else if k.cid == C_XQUADP.cid then d_xlane(XK_quad_prefix, w)
+      else if k.cid == C_XSIMDP.cid then d_xlane(XK_simd_prefix, w)
+      else if k.cid == C_QSHUF.cid then d_qshuf(SH_idx, w)
+      else if k.cid == C_QSHUFXOR.cid then d_qshuf(SH_xor, w)
+      else if k.cid == C_QSHUFUP.cid then d_qshuf(SH_up, w)
+      else if k.cid == C_QSHUFDOWN.cid then d_qshuf(SH_down, w)
+      else if k.cid == C_ICMPQBALLOT.cid then d_qballot(false, w)
+      else if k.cid == C_FCMPQBALLOT.cid then d_qballot(true, w)
       else if k.cid == C_WAIT.cid then Some(WAIT(fget(w, 8, 1)))
       else if k.cid == C_DEVLOAD.cid then d_devmem(false, w)
       else if k.cid == C_DEVSTORE.cid then d_devmem(true, w)
@@ -1110,6 +1189,9 @@ mapping clause encdec = forwards (FMADD(_) as i) if is_some_int(agx_encode(i)) =
 mapping clause encdec = forwards (EXTR(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (INTL(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (CONVERT(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (XLANE(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (QSHUFFLE(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (QBALLOT(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (FUNOP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (RCP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (CMPSEL(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))

@@ -731,6 +731,160 @@ function clause execute(SHUFFLE(k, d, a, b)) = {
   foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
 }
 
+/* quad shuffles (agx_run quad_shuffle): lane t of quad q = t & ~3 with index i = t & 3 and B = the low 16 bits of
+ * its B reads A of lane q + j, j = B (idx), i + B (down), i - B (up), i ^ B (xor); A of every lane of the quad
+ * (active or not); an index j outside 0..3 keeps the lane's own A */
+function clause execute(QSHUFFLE(k, d, a, b)) = {
+  var av : vector(32, int) = vector_init(0);
+  var bv : vector(32, int) = vector_init(0);
+  foreach (t from 0 to 31) { av[t] = opv(t, a, 32); bv[t] = land_int(opv(t, b, 32), 65535) };
+  var r : vector(32, int) = vector_init(0);
+  foreach (t from 0 to 31) {
+    if is_active(t) then {
+      let i = land_int(t, 3);
+      let j : int = match k { SH_idx => bv[t], SH_down => i + bv[t], SH_up => i - bv[t], SH_xor => lxor_int(i, bv[t]) };
+      r[t] = if 0 <= j & j < 4 then av[lidx(t - i + j)] else av[t]
+    }
+  };
+  foreach (t from 0 to 31) { if is_active(t) then put(t, d, r[t]) }
+}
+
+/* quad ballots: each active lane receives the 4-bit ballot of its quad (agx_run ballot) */
+function clause execute(QBALLOT(isf, cc, d, a, b)) = {
+  var r : int = 0;
+  foreach (t from 0 to 31) { if is_active(t) & cmp_lane(t, isf, cc, a, b) then r = r + pow2(t) };
+  foreach (t from 0 to 31) { if is_active(t) then put(t, d, land_int(shr_int(r, t - land_int(t, 3)), 15)) }
+}
+
+/* ---------------------------------------------------------------- quad / SIMD reductions and prefixes
+ * (agx_run cross_lane, fitted on the hardware suite: coverage alu / alu_masked, random programs, the fp16 SIMD prefix
+ * recordings).  The source A of each active lane is combined at 16 bits (a 16-bit register or uniform: integers wrap
+ * at 16 bits, floats are binary16 with denormals kept) or at 32 bits (otherwise; a 64-bit source is read as its low
+ * 32 bits; fp32 fadd / fmul read denormal values, also of a lone lane passing through, as zeros of their sign).
+ * Inactive lanes take no part, except that min.f / max.f count them as the canonical NaN.  One combination
+ * comb(x, y) of a left (lower lane) x and a right y: integer ops on the raw values (min / max signed or unsigned,
+ * the left one on ties); fadd / fmul exact, rounded once (fp32: flushed, canonical NaN); min.f / max.f select the
+ * raw operand: a NaN loses (of two NaNs the left one), the left on equal values.
+ *   reductions: a pairwise tree over the quad / SIMD group (lanes 2k and 2k + 1, then pairs of those, ...)
+ *   prefixes (exclusive): the quad prefix chains the inclusive values in lane order; the SIMD prefix is a Sklansky
+ *   network (at block size b = 1, 2, 4, ... every lane in the upper half of a 2b block combines the last inclusive
+ *   value of the lower half with its own); lane i receives the inclusive value of lane i - 1, the first lane of the
+ *   quad / group (and a lane with no active lane before it) the identity of the op.
+ * fadd / fmul results that are NaN are written canonical. */
+val xfloat : xop -> bool
+function xfloat(o) = o == XO_fadd | o == XO_fmul
+val xminmax_f : xop -> bool
+function xminmax_f(o) = o == XO_fmin | o == XO_fmax
+
+val xdec : (bool, int) -> fv
+function xdec(w16, x) = if w16 then decodeF(x, 16) else decodeF(flushB(x, 32), 32)
+
+val xapply : (xop, bool, int, int) -> int
+function xapply(o, w16, x, y) = {
+  let w = if w16 then 16 else 32;
+  let rd : areg = if w16 then { gpr32(0) with view = 1 } else gpr32(0);
+  match o {
+    XO_iadd => trunc_int(x + y, w),
+    XO_and => land_int(x, y),
+    XO_or => lor_int(x, y),
+    XO_xor => lxor_int(x, y),
+    XO_umin => if y < x then y else x,
+    XO_umax => if y > x then y else x,
+    XO_smin => if sext_int(y, w) < sext_int(x, w) then y else x,
+    XO_smax => if sext_int(y, w) > sext_int(x, w) then y else x,
+    XO_fadd => fres(fv_add_exact(xdec(w16, x), xdec(w16, y), RN), false, rd),
+    XO_fmul => fres(fv_mul_exact(xdec(w16, x), xdec(w16, y)), false, rd),
+    _ => {
+      let fx = xdec(w16, x);
+      let fy = xdec(w16, y);
+      if fv_is_nan(fx) then (if fv_is_nan(fy) then x else y)
+      else if fv_is_nan(fy) | fv_cmp(fx, fy) == 0 then x
+      else if (fv_cmp(fx, fy) < 0) == (o == XO_fmin) then x else y
+    }
+  }
+}
+
+val xident : (xop, bool) -> int
+function xident(o, w16) = match o {
+  XO_iadd => 0, XO_or => 0, XO_xor => 0, XO_umax => 0,
+  XO_and => if w16 then 65535 else 4294967295, XO_umin => if w16 then 65535 else 4294967295,
+  XO_smin => if w16 then 32767 else 2147483647, XO_smax => if w16 then 32768 else 2147483648,
+  XO_fadd => if w16 then 32768 else 2147483648, XO_fmul => if w16 then 15360 else 1065353216,
+  _ => if w16 then 32256 else 2143289344
+}
+
+function clause execute(XLANE(k, o, d, a)) = {
+  let w16 = op_size(a) == 16;
+  let nan = if w16 then 32256 else 2143289344;
+  var x : vector(32, int) = vector_init(0);
+  var xv : vector(32, bool) = vector_init(false);
+  foreach (t from 0 to 31) {
+    if is_active(t) then {
+      let b = trunc_int(opv(t, a, 32), 32);
+      x[t] = if not_bool(w16) & xfloat(o) & trunc_int(shr_int(b, 23), 8) == 0 then land_int(b, 2147483648) else b;
+      xv[t] = true
+    } else if xminmax_f(o) then { x[t] = nan; xv[t] = true }
+  };
+  let grp = if k == XK_quad | k == XK_quad_prefix then 4 else 32;
+  var out : vector(32, int) = vector_init(0);
+  var outv : vector(32, bool) = vector_init(false);
+  if k == XK_quad | k == XK_simd then {
+    foreach (lo from 0 to 31 by grp) {
+      var v : vector(32, int) = x;
+      var vv : vector(32, bool) = xv;
+      var n : int = grp;
+      while n > 1 do {
+        foreach (j from 0 to (tdiv_int(n, 2) - 1)) {
+          let p = lidx(lo + 2 * j);
+          let q = lidx(lo + 2 * j + 1);
+          let (c, cv) : (int, bool) = if vv[p] & vv[q] then (xapply(o, w16, v[p], v[q]), true) else if vv[p] then (v[p], true) else (v[q], vv[q]);
+          v[lidx(lo + j)] = c;
+          vv[lidx(lo + j)] = cv
+        };
+        n = tdiv_int(n, 2)
+      };
+      foreach (t from lo to (lo + grp - 1)) { out[lidx(t)] = v[lidx(lo)]; outv[lidx(t)] = vv[lidx(lo)] }
+    }
+  } else {
+    var acc_v : vector(32, int) = x;
+    var acc_ok : vector(32, bool) = xv;
+    if grp == 4 then {
+      foreach (t from 0 to 31) {
+        if land_int(t, 3) != 0 then {
+          let p = lidx(t - 1);
+          if acc_ok[p] & acc_ok[t] then acc_v[t] = xapply(o, w16, acc_v[p], acc_v[t])
+          else if acc_ok[p] then { acc_v[t] = acc_v[p]; acc_ok[t] = true }
+        }
+      }
+    } else {
+      var b : int = 1;
+      while b < 32 do {
+        let prev = acc_v;
+        let prevv = acc_ok;
+        foreach (t from 0 to 31) {
+          if fmod_int(tdiv_int(t, b), 2) == 1 then {
+            let p = lidx(tdiv_int(t, b) * b - 1);
+            if prevv[p] & prevv[t] then acc_v[t] = xapply(o, w16, prev[p], prev[t])
+            else if prevv[p] then { acc_v[t] = prev[p]; acc_ok[t] = true }
+          }
+        };
+        b = 2 * b
+      }
+    };
+    foreach (t from 0 to 31) {
+      outv[t] = true;
+      out[t] = if fmod_int(t, grp) == 0 then xident(o, w16) else if acc_ok[lidx(t - 1)] then acc_v[lidx(t - 1)] else xident(o, w16)
+    }
+  };
+  foreach (t from 0 to 31) {
+    if is_active(t) & outv[t] then {
+      let v = out[t];
+      let c = if xfloat(o) & fv_is_nan(xdec(w16, v)) then nan else v;
+      put(t, d, c)
+    }
+  }
+}
+
 /* ---------------------------------------------------------------- execution mask stack (r0l) */
 val r0l : int -> int
 function r0l(t) = land_int(reg_raw(t, 0), 65535)

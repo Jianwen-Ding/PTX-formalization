@@ -47,6 +47,16 @@ def fimm_value(n):
 
 FIMM_BITS = {struct.unpack("<Q", struct.pack("<d", fimm_value(n)))[0]: n for n in range(256)}
 
+# quad / SIMD reductions: the Sail op's code (bit 28 | bits 38-40 << 1 | bit 47 << 4) and applegpu's names by its
+# (op1 = bit 47, op2 = bits 26-41) fields; the forms it does not name print as simd_op
+XOP_CODES = {"and": 0, "fadd": 1, "or": 2, "fmul": 3, "xor": 4, "min.f": 5, "max.f": 7, "iadd": 16, "min.s": 20, "max.s": 22,
+             "min.u": 28, "max.u": 30}
+REDUCTIONS = {}
+for _d in applegpu.instruction_descriptors:
+    if _d.name.startswith(("quad_", "simd_")) and _d.name != "simd_op" and not _d.name.startswith(("quad_shuffle", "simd_shuffle", "simd_matrix")):
+        if (_d.mask >> 15) & 1 and (_d.bits >> 15) & 1:
+            REDUCTIONS[((_d.bits >> 47) & 1, (_d.bits >> 26) & 0xffff)] = _d.name
+
 # ------------------------------------------------------------------ rendering in applegpu syntax
 KNOWN = [0]   # operands affected by the applegpu decoder issue noted in applegpu_text
 class Toks:
@@ -135,6 +145,21 @@ def applegpu_text(toks):
         if tts in ('0011', '1100'):
             return "bitop_mov_a", [tts, reg_text(*d), a, b]
         return "bitop", [tts, reg_text(*d), a, b]
+    if c == "XLANE":
+        k = T.next(); o = T.next(); d = rd_reg(T); a = rd_op(T)
+        opc = ["quad", "simd", "quad_prefix", "simd_prefix"].index(k)
+        code = XOP_CODES[o]
+        op1, op2 = code >> 4, (code & 1) << 2 | opc << 3 | ((code >> 1) & 7) << 12
+        name = REDUCTIONS.get((op1, op2))
+        if name is None:
+            return "simd_op", ["0b%d" % op1, "0b" + format(op2, "016b"), reg_text(*d), a]
+        return name, [reg_text(*d), a]
+    if c == "QSHUFFLE":
+        k = T.next(); d = rd_reg(T); a = rd_op(T); b = rd_op(T)
+        return "quad_shuffle" + ("" if k == "idx" else "_" + k), [reg_text(*d), a, b]
+    if c == "QBALLOT":
+        f = T.int(); cc = T.next(); d = rd_reg(T); a = rd_op(T); b = rd_op(T)
+        return ("fcmp_quad_ballot" if f else "icmp_quad_ballot"), [reg_text(*d), (FCC if f else ICC)[cc], a, b]
     if c == "INTL":
         d = rd_reg(T); a = rd_op(T); b = rd_op(T)
         return "intl", [reg_text(*d), a, b]
@@ -309,7 +334,7 @@ FCCS = list(FCC)
 
 def rinstr():
     c = R.choice(["MOVI", "MOVR", "GET_SR", "IADD", "IMADD", "BITOP", "BFI", "BFEIL", "EXTR", "INTL", "CONVERT", "ASR", "IUNOP", "FBIN", "FMADD", "RCP", "FUNOP",
-                  "ICMPSEL", "FCMPSEL", "STACKOP", "POP_EXEC", "JMP", "BALLOT", "SHUFFLE", "DEVMEM", "TGMEM", "DEVATOM",
+                  "ICMPSEL", "FCMPSEL", "STACKOP", "POP_EXEC", "JMP", "BALLOT", "SHUFFLE", "XLANE", "QSHUFFLE", "QBALLOT", "DEVMEM", "TGMEM", "DEVATOM",
                   "TGATOM", "WAIT", "TG_BARRIER", "STOP", "MEMORY_BARRIER", "TRAP"])
     if c == "MOVI":
         d = rdst()
@@ -368,6 +393,13 @@ def rinstr():
     if c == "BALLOT":
         f = R.randrange(2)
         return ["BALLOT", f, R.choice(FCCS if f else ICCS)] + rdst() + rsrc(fmods=bool(f), fimm=bool(f)) + rsrc(fmods=bool(f), fimm=bool(f))
+    if c == "XLANE":
+        return ["XLANE", R.choice(["quad", "simd", "quad_prefix", "simd_prefix"]), R.choice(list(XOP_CODES))] + rdst() + rsrc((0, 1, 2, 3))
+    if c == "QSHUFFLE":
+        return ["QSHUFFLE", R.choice(["idx", "xor", "up", "down"])] + rdst() + rsrc() + rsrc()
+    if c == "QBALLOT":
+        f = R.randrange(2)
+        return ["QBALLOT", f, R.choice(FCCS if f else ICCS)] + rdst() + rsrc(fmods=bool(f), fimm=bool(f)) + rsrc(fmods=bool(f), fimm=bool(f))
     if c == "SHUFFLE":
         return ["SHUFFLE", R.choice(["idx", "xor", "up", "down"])] + rdst() + rsrc() + rsrc((1, 2) if R.random() < 0.8 else (0,))
     if c == "DEVMEM":
@@ -409,8 +441,9 @@ MODELLED = {"mov_imm", "get_sr", "iadd", "isub", "iadd.sat", "isub.sat", "imadd"
             "bfeil", "extr", "intl", "convert", "asr", "bitop", "popcount", "bitrev", "ffs", "fmadd32", "fmadd16", "fadd32", "fadd16", "fmul32", "fmul16",
             "rcp", "floor", "ceil", "trunc", "rint", "rsqrt", "rsqrt_special", "sin_pt_1", "sin_pt_2", "log2", "exp2", "stop", "jmp_exec_any", "jmp_exec_none", "pop_exec", "if_icmp", "if_fcmp", "while_icmp", "while_fcmp",
             "else_icmp", "else_fcmp", "icmpsel", "fcmpsel", "icmp_ballot", "fcmp_ballot", "simd_shuffle", "simd_shuffle_down",
-            "simd_shuffle_up", "simd_shuffle_xor", "wait", "device_load", "device_store", "threadgroup_load",
-            "threadgroup_store", "threadgroup_barrier", "atomic", "threadgroup_atomic", "memory_barrier", "trap"}
+            "simd_shuffle_up", "simd_shuffle_xor", "quad_shuffle", "quad_shuffle_down", "quad_shuffle_up", "quad_shuffle_xor",
+            "icmp_quad_ballot", "fcmp_quad_ballot", "simd_op", "wait", "device_load", "device_store", "threadgroup_load",
+            "threadgroup_store", "threadgroup_barrier", "atomic", "threadgroup_atomic", "memory_barrier", "trap"} | set(REDUCTIONS.values())
 
 def desc_name(word):
     for o in applegpu.instruction_descriptors:

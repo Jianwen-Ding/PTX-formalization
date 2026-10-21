@@ -243,6 +243,17 @@ mapping iunop_mnem = { U_popcount <-> "popcount", U_bitrev <-> "bitrev", U_ffs <
 val shuf_mnem : shufkind <-> string
 mapping shuf_mnem = { SH_idx <-> "simd_shuffle", SH_xor <-> "simd_shuffle_xor", SH_up <-> "simd_shuffle_up", SH_down <-> "simd_shuffle_down" }
 
+val qshuf_mnem : shufkind <-> string
+mapping qshuf_mnem = { SH_idx <-> "quad_shuffle", SH_xor <-> "quad_shuffle_xor", SH_up <-> "quad_shuffle_up", SH_down <-> "quad_shuffle_down" }
+
+val xkind_mnem : xkind <-> string
+mapping xkind_mnem = { XK_quad <-> "quad_", XK_simd <-> "simd_", XK_quad_prefix <-> "quad_prefix_", XK_simd_prefix <-> "simd_prefix_" }
+
+val xop_mnem : xop <-> string
+mapping xop_mnem = { XO_and <-> "and", XO_fadd <-> "fadd", XO_or <-> "or", XO_fmul <-> "fmul", XO_xor <-> "xor",
+  XO_fmin <-> "min.f", XO_fmax <-> "max.f", XO_iadd <-> "iadd", XO_smin <-> "min.s", XO_smax <-> "max.s",
+  XO_umin <-> "min.u", XO_umax <-> "max.u" }
+
 val stk_mnem : stkkind <-> string
 mapping stk_mnem = { SK_if <-> "if", SK_else <-> "else", SK_while <-> "while" }
 
@@ -303,6 +314,9 @@ mapping clause assembly = POP_EXEC(n) <-> "pop_exec" ^ spc() ^ asm_int(n)
 mapping clause assembly = JMP_EXEC(true, t) <-> "jmp_exec_any" ^ spc() ^ asm_target(t)
 mapping clause assembly = JMP_EXEC(false, t) <-> "jmp_exec_none" ^ spc() ^ asm_target(t)
 mapping clause assembly = BALLOT(f, cc, d, a, b) <-> ftype(f) ^ "cmp_ballot" ^ spc() ^ asm_cc(cc) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b)
+mapping clause assembly = XLANE(k, o, d, a) <-> xkind_mnem(k) ^ xop_mnem(o) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a)
+mapping clause assembly = QSHUFFLE(k, d, a, b) <-> qshuf_mnem(k) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b)
+mapping clause assembly = QBALLOT(f, cc, d, a, b) <-> ftype(f) ^ "cmp_quad_ballot" ^ spc() ^ asm_cc(cc) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b)
 mapping clause assembly = SHUFFLE(k, d, a, b) <-> shuf_mnem(k) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b)
 mapping clause assembly = DEVMEM(false, f, m, r, p, i, sg, s, g, u6) <-> "device_load" ^ spc() ^ asm_fmt(f) ^ spc() ^ asm_mask(m) ^ spc() ^ asm_reg(r) ^ comma() ^ asm_pair(p) ^ comma() ^ asm_op(i) ^ comma() ^ asm_sign(sg) ^ comma() ^ asm_int(s) ^ asm_memx(g, u6)
 mapping clause assembly = DEVMEM(true, f, m, r, p, i, sg, s, g, u6) <-> "device_store" ^ spc() ^ asm_fmt(f) ^ spc() ^ asm_mask(m) ^ spc() ^ asm_reg(r) ^ comma() ^ asm_pair(p) ^ comma() ^ asm_op(i) ^ comma() ^ asm_sign(sg) ^ comma() ^ asm_int(s) ^ asm_memx(g, u6)

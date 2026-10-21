@@ -182,6 +182,16 @@ def instr(stmt):
         if len(pre) != 1 or pre[0] not in CCS:
             raise ParseError("bad condition in %r" % stmt)
         want(3); return ["BALLOT", int(mnem[0] == "f"), pre[0]] + reg(ops[0]) + op(ops[1]) + op(ops[2])
+    if mnem in ("icmp_quad_ballot", "fcmp_quad_ballot"):
+        if len(pre) != 1 or pre[0] not in CCS:
+            raise ParseError("bad condition in %r" % stmt)
+        want(3); return ["QBALLOT", int(mnem[0] == "f"), pre[0]] + reg(ops[0]) + op(ops[1]) + op(ops[2])
+    m = re.match(r"^quad_shuffle(_xor|_up|_down)?$", mnem)
+    if m:
+        want(3); return ["QSHUFFLE", (m.group(1) or "_idx")[1:]] + reg(ops[0]) + op(ops[1]) + op(ops[2])
+    m = re.match(r"^(quad_prefix|simd_prefix|quad|simd)_(and|fadd|or|fmul|xor|min\.f|max\.f|iadd|min\.s|max\.s|min\.u|max\.u)$", mnem)
+    if m:
+        want(2); return ["XLANE", m.group(1), m.group(2)] + reg(ops[0]) + op(ops[1])
     m = re.match(r"^simd_shuffle(_xor|_up|_down)?$", mnem)
     if m:
         want(3); return ["SHUFFLE", (m.group(1) or "_idx")[1:]] + reg(ops[0]) + op(ops[1]) + op(ops[2])

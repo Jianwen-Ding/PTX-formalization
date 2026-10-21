@@ -38,6 +38,8 @@ DEV_FMTS = FMTS + ["f16", "u8norm", "s8norm", "u16norm", "s16norm", "rgb10a2", "
                    "rgb9e5.rtz"]
 # formats whose device accesses the model does not define (they stop it with an error)
 PACKED_FMTS = ["rgb10a2", "srgba8", "rg11b10f", "rgb9e5", "rg11b10f.rtz", "rgb9e5.rtz"]
+XKINDS = ["quad", "simd", "quad_prefix", "simd_prefix"]
+XOPS = ["and", "fadd", "or", "fmul", "xor", "min.f", "max.f", "iadd", "min.s", "max.s", "min.u", "max.u"]
 CONVERT_MODES = [0, 1, 4, 5, 6, 7, 8, 9, 10, 11]
 FUNOPS = ["floor", "ceil", "trunc", "rint", "rsqrt", "rsqrt_special", "sin_pt_1", "sin_pt_2", "log2", "exp2"]
 
@@ -252,6 +254,19 @@ def schemas():
         add("simd_shuffle" + ("" if k == "idx" else "_" + k), [("d", DST), ("dhint", [0, 1])] + srcdims(0, INT_SRC) +
             srcdims(1, [IMM, R16L, R16H, U16L, U16H, R32, U32]),
             lambda c, g, k=k: ["SHUFFLE", k] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "") + _srcmods(c, 1, g, c["s1"], ""))
+    for k in XKINDS:
+        for o in XOPS:
+            add(k + "_" + o, [("d", DST), ("dhint", [0, 1])] + srcdims(0, INT_SRC64),
+                lambda c, g, k=k, o=o: ["XLANE", k, o] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], ""))
+    for k in ("idx", "xor", "up", "down"):
+        add("quad_shuffle" + ("" if k == "idx" else "_" + k), [("d", DST), ("dhint", [0, 1])] + srcdims(0, INT_SRC) + srcdims(1, INT_SRC),
+            lambda c, g, k=k: ["QSHUFFLE", k] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "") + _srcmods(c, 1, g, c["s1"], ""))
+    for f in (0, 1):
+        nm = "fcmp_quad_ballot" if f else "icmp_quad_ballot"
+        add(nm, [("cc", FCCS if f else ICCS), ("d", DST), ("dhint", [0, 1])] + srcdims(0, FLT_SRC if f else INT_SRC, "f" if f else "") +
+            srcdims(1, FLT_SRC if f else INT_SRC, "f" if f else ""),
+            lambda c, g, f=f: ["QBALLOT", f, c["cc"]] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "f" if f else "") +
+            _srcmods(c, 1, g, c["s1"], "f" if f else ""))
     for st in (0, 1):
         add("device_" + ("store" if st else "load"),
             [("fmt", DEV_FMTS), ("mask", list(range(16))), ("r", [R32, R16L, R16H]), ("base", ["gpr", "uni"]), ("idx", ["imm", "gpr"]),
@@ -438,6 +453,20 @@ def form_key(t):
             a, i = _okind(t, i)
             b, i = _okind(t, i)
             return "bitop %d %s, %s, %s" % (t[1], d, a, b)
+        if c == "XLANE":
+            d, i = _dkind(t, 3)
+            a, i = _okind(t, i)
+            return "%s_%s %s, %s" % (t[1], t[2], d, a)
+        if c == "QSHUFFLE":
+            d, i = _dkind(t, 2)
+            a, i = _okind(t, i)
+            b, i = _okind(t, i)
+            return "quad_shuffle_%s %s, %s, %s" % (t[1], d, a, b)
+        if c == "QBALLOT":
+            d, i = _dkind(t, 3)
+            a, i = _okind(t, i)
+            b, i = _okind(t, i)
+            return "%scmp_quad_ballot %s %s, %s, %s" % ("f" if t[1] else "i", t[2], d, a, b)
         if c == "INTL":
             d, i = _dkind(t, 1)
             a, i = _okind(t, i)

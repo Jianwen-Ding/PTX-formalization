@@ -75,6 +75,13 @@ def dev(st, fmt, mask, r, view, pair, idx, sg=0, s=0, g=0, u6=0):
     return ["DEVMEM", st, fmt, mask] + reg(0, r, view) + pair + idx + [sg, s, g, u6]
 
 
+# the reductions and prefixes agx_run models (applegpu's names; not quad_prefix and / or / xor / min / max and
+# simd_prefix min.f / max.f)
+SIM_XLANE = ["quad_" + o for o in agxgen.XOPS] + ["simd_" + o for o in agxgen.XOPS] + \
+    ["quad_prefix_" + o for o in ("iadd", "fadd", "fmul")] + \
+    ["simd_prefix_" + o for o in agxgen.XOPS if o not in ("min.f", "max.f")]
+
+
 class ProgGen:
     def __init__(self, rng, kinds, only=None):
         self.R = rng
@@ -86,7 +93,8 @@ class ProgGen:
         alu = ["mov_imm", "mov", "get_sr", "iadd", "isub", "iadd.sat", "isub.sat", "imadd", "imsub", "imadd.sat", "imsub.sat", "bitop",
                "bfi", "bfeil", "extr", "intl", "convert", "asr", "popcount", "bitrev", "ffs", "fadd32", "fadd16", "fmul32", "fmul16", "fmadd32", "fmadd16", "rcp"] + agxgen.FUNOPS + [
                "icmpsel", "fcmpsel", "icmp_ballot", "fcmp_ballot", "simd_shuffle", "simd_shuffle_xor", "simd_shuffle_up",
-               "simd_shuffle_down"]
+               "simd_shuffle_down", "quad_shuffle", "quad_shuffle_xor", "quad_shuffle_up", "quad_shuffle_down", "icmp_quad_ballot",
+               "fcmp_quad_ballot"] + SIM_XLANE
         self.alu = [a for a in alu if only is None or a in only]
 
     # one data instruction, operands restricted to the data registers

@@ -177,6 +177,18 @@ def llvm_text(toks):
         if tt in alias:
             return "%s %s, %s, %s" % (alias[tt], reg_text(*d), a, b)
         return "bitop %s, %s, %s, %s" % ("".join(str((tt >> i) & 1) for i in range(4)), reg_text(*d), a, b)
+    if c == "XLANE":
+        k, o = T.next(), T.next()
+        d = T.reg()
+        return "%s_%s %s, %s" % (k, o, reg_text(*d), T.op())
+    if c == "QSHUFFLE":
+        k = T.next()
+        d = T.reg()
+        return "quad_shuffle%s %s, %s, %s" % ("" if k == "idx" else "_" + k, reg_text(*d), T.op(), T.op())
+    if c == "QBALLOT":
+        f, cc = T.int(), T.next()
+        d = T.reg()
+        return "%s %s, %s, %s, %s" % ("fcmp_quad_ballot" if f else "icmp_quad_ballot", reg_text(*d), (FCC if f else ICC)[cc], T.op(), T.op())
     if c == "INTL":
         d = T.reg()
         return "intl %s, %s, %s" % (reg_text(*d), T.op(), T.op())

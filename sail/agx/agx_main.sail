@@ -112,6 +112,19 @@ function rd_instr() = match tok_str() {
     let k : shufkind = match tok_str() { "idx" => SH_idx, "xor" => SH_xor, "up" => SH_up, _ => SH_down };
     let d = rd_reg(); let a = rd_op(); let b = rd_op(); SHUFFLE(k, d, a, b)
   },
+  "XLANE" => {
+    let k : xkind = match tok_str() { "quad" => XK_quad, "simd" => XK_simd, "quad_prefix" => XK_quad_prefix, _ => XK_simd_prefix };
+    let o : xop = match tok_str() {
+      "and" => XO_and, "fadd" => XO_fadd, "or" => XO_or, "fmul" => XO_fmul, "xor" => XO_xor, "min.f" => XO_fmin,
+      "max.f" => XO_fmax, "iadd" => XO_iadd, "min.s" => XO_smin, "max.s" => XO_smax, "min.u" => XO_umin, _ => XO_umax
+    };
+    let d = rd_reg(); let a = rd_op(); XLANE(k, o, d, a)
+  },
+  "QSHUFFLE" => {
+    let k : shufkind = match tok_str() { "idx" => SH_idx, "xor" => SH_xor, "up" => SH_up, _ => SH_down };
+    let d = rd_reg(); let a = rd_op(); let b = rd_op(); QSHUFFLE(k, d, a, b)
+  },
+  "QBALLOT" => { let f = rd_bool(); let cc = rd_cc(); let d = rd_reg(); let a = rd_op(); let b = rd_op(); QBALLOT(f, cc, d, a, b) },
   "DEVMEM" => {
     let st = rd_bool(); let f = rd_fmt(); let m = tok_int(); let r = rd_reg(); let p = rd_pair(); let i = rd_op();
     let sg = rd_bool(); let s = tok_int(); let g = tok_int(); let u6 = tok_int();
