@@ -141,7 +141,7 @@ for k, (text, st, sw, dw, rows) in enumerate(cases):
     isfloatdst = dstty in ('f16', 'bf16', 'f32', 'f64', 'tf32')
     if isfloatdst: dreg = {16: '%h', 32: '%r', 64: '%rd'}[dw]
     elif dw < 32: dreg = '%r'
-    print(f".visible .entry k{k}(.param .u64 pi, .param .u64 po)\n{{\n    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;\n    mov.u32 %r0, %tid.x;")
+    print(f".visible .entry k{k}(.param .u64 pi, .param .u64 po)\n{{\n    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;\n    mov.u32 %r0, %tid.x;")
     print(f"    mul.wide.u32 %rd1, %r0, {max(sw // 8, 1)}; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.{ldty} {sreg}4, [%rd2];")
     print(f"    {text} {dreg}5, {sreg}4;")
     stty = {8: 'b8', 16: 'b16', 32: 'b32', 64: 'b64'}[dw]

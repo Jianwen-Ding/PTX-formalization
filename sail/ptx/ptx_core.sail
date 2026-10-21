@@ -70,7 +70,8 @@ function rdu64(o) = rd(o, mkty("u", 64))
 /* wr(R, D, V): registers, names (`_` is a sink) */
 val wr_sop : (sop, int) -> unit
 function wr_sop(d, v) = match d {
-  SR(r) => wreg(r, v),
+  /* special registers are predefined, read-only variables (ISA 10) */
+  SR(r) => if smap_has(t_sregs[tchk(cur)], r) then fault(concat_str("write to the read-only special register ", r), 0) else wreg(r, v),
   SN(n) => if n != "_" then wreg(n, v),
   _ => ()
 }

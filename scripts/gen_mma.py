@@ -190,6 +190,7 @@ for kk, (shape, dt, at, bt, ct, mods, m, n, k, ewa, LA, LB, LC, A, B, C, D) in e
     cb = 'b64' if ct == 'f64' else 'b32'; db = 'b64' if dt == 'f64' else 'b32'; ab = 'b64' if at == 'f64' else 'b32'
     rg = lambda pre, wide, i: f"%{pre.upper()}{i}"
     print(f".visible .entry k{kk}(.param .u64 pa, .param .u64 pb, .param .u64 pc, .param .u64 po)\n{{\n    .reg .b32 %r<130>; .reg .b64 %rd<130>;")
+    print(f"    .reg .{ab} %A<{na}>, %B<{nb}>; .reg .{cb} %C<{nc}>; .reg .{db} %D<{nd}>;")
     print(f"    mov.u32 %r0, %tid.x;")
     for nm, nreg, bt_, wide, par in (('a', na, ab, at == 'f64', 'pa'), ('b', nb, ab, at == 'f64', 'pb'), ('c', nc, cb, ct == 'f64', 'pc')):
         sz = 8 if wide else 4

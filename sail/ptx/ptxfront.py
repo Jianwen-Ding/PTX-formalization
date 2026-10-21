@@ -842,6 +842,10 @@ class Loader:
             ty = type_of(t)
             al = align_or(a1, a2, ty, st)
             sp = dspace(st)
+            # loose: a declaration of %-registers without a state space (`.pred %p;`) declares registers
+            if not (st & {"reg", "shared", "local", "param", "global", "const"}) and items and \
+                    all(it[0] in ("plain", "range") and it[1] == "reg" for it in items):
+                sp = "reg"
             if init is not None and sp in ("shared", "global", "const"):
                 self.sh.extend(sdecls(st, al, ty, items, init))
             else:
@@ -1037,6 +1041,38 @@ def ser_pdecl(p):
 def ser_perf(pd):
     return " ".join("%s %d %s" % (d[0][1:], len(xs), " ".join(map(str, xs))) for d, xs in [((d,), xs) for d, xs in pd])
 
+# the predefined, read-only special registers of PTX ISA 9.3 chapter 10 (%warpsize: older code, value 32)
+SREGS = ({"%tid", "%ntid", "%laneid", "%warpid", "%nwarpid", "%ctaid", "%nctaid", "%smid", "%nsmid", "%gridid",
+          "%is_explicit_cluster", "%clusterid", "%nclusterid", "%cluster_ctaid", "%cluster_nctaid", "%cluster_ctarank",
+          "%cluster_nctarank", "%lanemask_eq", "%lanemask_le", "%lanemask_lt", "%lanemask_ge", "%lanemask_gt",
+          "%clock", "%clock_hi", "%clock64", "%globaltimer", "%globaltimer_lo", "%globaltimer_hi",
+          "%reserved_smem_offset_begin", "%reserved_smem_offset_end", "%reserved_smem_offset_cap",
+          "%reserved_smem_offset_0", "%reserved_smem_offset_1", "%total_smem_size", "%aggr_smem_size",
+          "%dynamic_smem_size", "%current_graph_exec", "%warpsize"}
+         | {"%%pm%d" % i for i in range(8)} | {"%%pm%d_64" % i for i in range(8)} | {"%%envreg%d" % i for i in range(32)})
+
+def check_regs(fname, ld):
+    """every %-register operand is declared in the function or is a special register (ISA 6.1, 10)"""
+    def walk(x):
+        if isinstance(x, tuple):
+            if len(x) >= 2 and x[0] == "reg" and isinstance(x[1], str):
+                yield x[1]
+            for y in x:
+                yield from walk(y)
+        elif isinstance(x, list):
+            for y in x:
+                yield from walk(y)
+    for c in ld.code:
+        if c[0] == "declvar":
+            continue
+        _, g, opc, ops = c
+        names = list(walk(ops)) + ([g[0]] if g is not None else [])
+        for n in names:
+            base = n.split(".")[0]          # %r.b1 / %r.h10: video selectors; %tid.x: components
+            if not n.startswith("%") or n in ld.rw or base in ld.rw or base in SREGS or n.split("@")[0] in ld.rw:
+                continue
+            raise PtxError("%s: register %s is not declared" % (fname, n))
+
 def serialize(mod):
     lines = []
     for td in mod:
@@ -1063,6 +1099,7 @@ def serialize(mod):
             fname, fkind, rs, ps = func_head(kw, rets, name, params)
             ld = Loader(fmarks(rs + ps))
             ld.pp(body)
+            check_regs(fname, ld)
             labels = {k2: v for k2, v in ld.L.items() if not (k2.startswith("@ren:") or k2 in ("@depth", "@renid"))}
             lab_lines = []
             tgt_lines = []
