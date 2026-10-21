@@ -32,8 +32,9 @@ the reference for correctness.
 - [x] Barrier ids ≥ 16 should be rejected (§9.7.14.1: 0..15) rather than accepted. Now an error ("barrier id outside
       0..15"); a thread count that is not a multiple of 32 counts whole warps and is reported under `.ub strict`
       (tests/neg/bar-id.ptx, tests/neg/bar-count-ub.ptx, tests/bar-count-round.ptx).
-- [ ] `clusterlaunchcontrol.try_cancel … .multicast::cluster::all` writes the response and signals the mbarrier only in
-      the issuing CTA. To check against the ISA section on clusterlaunchcontrol.
+- [x] `clusterlaunchcontrol.try_cancel … .multicast::cluster::all` writes the response and signals the mbarrier only in
+      the issuing CTA. Checked against §9.7.14.18: the model writes addr and signals mbar in every CTA of the cluster
+      (tests/clc-multicast.ptx).
 - [ ] `sail/common/io.c`: addresses wrap at 2^64 (`ad + i`), keys outside [0, 2^64) are dropped; `calloc`/`realloc`
       results unchecked.
 - [ ] `docs/prior-work.md` (tcgen05.cp decompression) says 4-bit values land in the low bits; Figure 195 puts them in
