@@ -58,6 +58,8 @@ function do_exit() = {
     if string_startswith(k, "cnt:") then ids = str2base(sdrop(k, 4), 10) :: ids
   };
   while is_cons(ids) do match ids { b :: rest => { barCheck(t_cta[t], b); ids = rest }, [||] => () };
+  /* warp collectives that wait only for the non-exited lanes of their mask */
+  collRecheck(t_cta[t], tdiv_int(t_tid[t], 32));
   cluster_exit();
   t_alive[t] = false;
   t_status[t] = 2;

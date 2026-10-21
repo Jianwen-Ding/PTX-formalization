@@ -142,6 +142,8 @@ val matchAny : (list(int), list((int, list(int))), list(int)) -> list((int, list
 val electAll : (list(int), int) -> list((int, list(int)))
 val sum_contrib : (list((int, list(int))), list(int)) -> int
 val sum_list : list(int) -> int
+/* the lanes of the arrivals as a mask */
+val arrMask : list((int, list(int))) -> int
 
 val collCompute : (string, list(cval), list((int, list(int)))) -> list((int, list(int)))
 function collCompute(k, d, arr) = {
@@ -158,7 +160,8 @@ function collCompute(k, d, arr) = {
     "vote.ballot" => sameAll(ls, [|ballotv(arr, ls)|]),
     "match.any" => matchAny(ls, arr, ls),
     "match.all" => {
-      if sameValueMask(arr, ls, at(listAt(arr, minLane(ls)), 0)) == cv_int(d, 0) then sameAll(ls, [|cv_int(d, 0), 1|])
+      /* "d is set to mask corresponding to non-exited threads in membermask" (the lanes that took part) */
+      if sameValueMask(arr, ls, at(listAt(arr, minLane(ls)), 0)) == arrMask(arr) then sameAll(ls, [|arrMask(arr), 1|])
       else sameAll(ls, [|0, 0|])
     },
     "elect" => electAll(ls, minLane(ls)),
@@ -218,6 +221,46 @@ function drop_coll(key) = {
 val list_len_pairs : list((int, list(int))) -> int
 function list_len_pairs(l) = match l { [||] => 0, _ :: t => 1 + list_len_pairs(t) }
 
+/* shfl.sync, vote.sync, match.sync and redux.sync wait for "all non-exited threads corresponding to
+ * membermask" (PTX ISA 9.3, shfl.sync, vote.sync, match.sync, redux.sync), and bar.warp.sync is a barrier,
+ * and "Barriers exclusively waiting on arrivals from exited threads are always released" (exit).  For these
+ * kinds the lanes of the mask that have exited do not take part; elect.sync waits for "all threads in the
+ * membermask" and the warp-wide matrix instructions are undefined after an exit, so they keep the full mask. */
+val collExitOk : string -> bool
+function collExitOk(k) =
+  string_startswith(k, "shfl.") | string_startswith(k, "vote.") | string_startswith(k, "match.")
+  | string_startswith(k, "redux.") | k == "bar.warp"
+
+function arrMask(a) = match a { [||] => 0, (l, _) :: rest => lor_int(pow2(l), arrMask(rest)) }
+
+/* the lanes an instance of kind K, mask M of warp W waits for */
+val collNeed : (int, int, string, int) -> int
+function collNeed(c, w, k, m) = if collExitOk(k) then land_int(m, smap_get(c_wlive[cchk(c)], dec_str(w))) else m
+
+val collComplete : (int, int, coll) -> coll
+function collComplete(c, w, x) =
+  if not_bool(x.cdone) & land_int(collNeed(c, w, x.ckind, x.cmask), lnot_int(arrMask(x.carr))) == 0
+  then { x with cres = collCompute(x.ckind, x.cdata, x.carr), cdone = true }
+  else x
+
+/* a lane of warp W of CTA C exited: the instances that only waited for exited lanes complete */
+val collRecheck : (int, int) -> unit
+function collRecheck(c, w) = {
+  let pre = concat_str(dec_str(c), concat_str("#", concat_str(dec_str(w), "#")));
+  var l = colls;
+  var out : list(coll) = [||];
+  while is_cons(l) do {
+    match l {
+      x :: rest => {
+        out = (if string_startswith(x.ckey, pre) & collExitOk(x.ckind) then collComplete(c, w, x) else x) :: out;
+        l = rest
+      },
+      [||] => ()
+    }
+  };
+  colls = out
+}
+
 /* #coll(K, M, D, Cn, Ds) */
 val do_coll : (string, int, list(cval), list(int), list(xop)) -> unit
 function do_coll(k, m, d, cn, ds) = {
@@ -236,10 +279,7 @@ function do_coll(k, m, d, cn, ds) = {
       None() => struct { ckey = key, ckind = k, cdata = d, cmask = m, carr = [||], cres = [||], cdone = false, ctaken = 0 }
     };
     let arr = pend_append(c0.carr, [|(lane, cn)|]);
-    let c1 : coll = if list_len_pairs(arr) == popc_int(m)
-                    then { c0 with ckind = k, cdata = d, cmask = m, carr = arr, cres = collCompute(k, d, arr), cdone = true }
-                    else { c0 with ckind = k, cdata = d, cmask = m, carr = arr };
-    put_coll(c1);
+    put_coll(collComplete(cur_cta(), tdiv_int(tid, collW(k)), { c0 with ckind = k, cdata = d, cmask = m, carr = arr }));
     t_cont[t] = K_collwait(key, ds);
     yielded = true
   }
@@ -282,7 +322,7 @@ function coll_take() = {
           P_none() => collWrite(ds, vs),
           p => { t_post[t] = P_none(); coll_post_ext(p, vs) }
         };
-        if c.ctaken + 1 == popc_int(c.cmask) then drop_coll(key) else put_coll({ c with ctaken = c.ctaken + 1 });
+        if c.ctaken + 1 == list_len_pairs(c.carr) then drop_coll(key) else put_coll({ c with ctaken = c.ctaken + 1 });
         t_cont[t] = K_none()
       },
       None() => ()
