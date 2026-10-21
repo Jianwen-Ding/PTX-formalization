@@ -24,8 +24,10 @@ the reference for correctness.
 
 ## Found, not fixed yet
 
-- [ ] ue4m3 scale 0x7F is not NaN in block-scaled `mma` / `tcgen05.mma`, and bit 7 is not masked. §5.2: ue4m3 "NaN value is
-      limited to 0x7f", "MSB bit padded with zero".
+- [x] ue4m3 scale 0x7F is not NaN in block-scaled `mma` / `tcgen05.mma`, and bit 7 is not masked. §5.2: ue4m3 "NaN value is
+      limited to 0x7f", "MSB bit padded with zero". Also: the tcgen05 idesc scale type is the one bit 23 (UE4M3 = 0,
+      UE8M0 = 1; bits 24-26 reserved); the model read bits 23-24 and had a bias-15 format the ISA does not define.
+      Fixed; `tests/mma-bs-nan.ptx`.
 - [ ] Implement `mma.sync.m8n8k4` with `.f16` / `.f32` accumulators from §9.7.15.5.1 (Figures 46–52).
 - [ ] Barrier ids ≥ 16 should be rejected (§9.7.14: 0..15) rather than accepted.
 - [ ] `clusterlaunchcontrol.try_cancel … .multicast::cluster::all` writes the response and signals the mbarrier only in

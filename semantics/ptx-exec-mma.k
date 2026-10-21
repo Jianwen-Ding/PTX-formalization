@@ -250,9 +250,12 @@ module PTX-EXEC-MMA
   syntax Float ::= bsScale(Bool, Int) [function, total]                     // is UE4M3?, byte
   rule bsScale(false, X) => scaleP2(Int2Float(1, 64, WEXP), X -Int 127) requires X =/=Int 255
   rule bsScale(false, 255) => Int2Float(0, 64, WEXP) /Float Int2Float(0, 64, WEXP)   // ue8m0: 0xFF is NaN
+  // ue4m3 (ISA 5.2): 7 bits with the MSB padded, NaN is 0x7f
+  rule bsScale(true, X) => Int2Float(0, 64, WEXP) /Float Int2Float(0, 64, WEXP) requires X &Int 127 ==Int 127
   rule bsScale(true, X) =>
-       #if (X >>Int 3) ==Int 0 #then scaleP2(Int2Float(X &Int 7, 64, WEXP), 0 -Int 9)
-       #else scaleP2(Int2Float((X &Int 7) +Int 8, 64, WEXP), (X >>Int 3) -Int 10) #fi
+       #if ((X &Int 127) >>Int 3) ==Int 0 #then scaleP2(Int2Float(X &Int 7, 64, WEXP), 0 -Int 9)
+       #else scaleP2(Int2Float((X &Int 7) +Int 8, 64, WEXP), ((X &Int 127) >>Int 3) -Int 10) #fi
+    requires X &Int 127 =/=Int 127
   syntax Int ::= bsReg(Map, Int, Int) [function, total]                      // arrivals, lane, index
   rule bsReg(Arr, L, I) => {listAt(Arr, L)[I]}:>Int
   syntax Map ::= bsScA(Map, Int, Int, Int, Int, Map) [function, total]       // arrivals, register offset, #chunks, row, chunk, acc

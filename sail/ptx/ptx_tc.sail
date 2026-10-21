@@ -408,9 +408,13 @@ function tcUE(x, mn, bi) =
   if asr_int(x, mn) == 0 then FV_Fin(false, land_int(x, mask(mn)), 1 - bi - mn)
   else FV_Fin(false, land_int(x, mask(mn)) + pow2(mn), asr_int(x, mn) - bi - mn)
 val tcScaleF : (int, int) -> fv
-function tcScaleF(st, x) = match st { 1 => if x == 255 then FV_NaN() else FV_Fin(false, 1, x - 127), 2 => tcUE(x, 3, 15), _ => tcUE(x, 3, 7) }
+/* idesc bit 23 (ISA tcgen05 instruction descriptor): UE8M0 = 1 (NaN 0xff), UE4M3 = 0 (MSB padded, NaN 0x7f) */
+function tcScaleF(st, x) = match st {
+  1 => if x == 255 then FV_NaN() else FV_Fin(false, 1, x - 127),
+  _ => if land_int(x, 127) == 127 then FV_NaN() else tcUE(land_int(x, 127), 3, 7)
+}
 val tcScaleTy : (list(string), int) -> int
-function tcScaleTy(m, id) = if has(m, "kind::mxf4nvf4") then land_int(asr_int(id, 23), 3) else 1
+function tcScaleTy(m, id) = if has(m, "kind::mxf4nvf4") then land_int(asr_int(id, 23), 1) else 1
 
 val tc_mmabs : (list(string), bool, int, int, int, int, bool, int, int, int) -> unit
 function tc_mmabs(m, ad, av, bv, id, da, en, sac, sbc, meta) = {

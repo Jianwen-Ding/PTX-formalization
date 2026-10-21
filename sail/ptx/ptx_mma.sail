@@ -265,8 +265,10 @@ function bsNB(m) =
 val bsScale : (bool, int) -> fv
 function bsScale(e43, x) =
   if not_bool(e43) then (if x == 255 then FV_NaN() else FV_Fin(false, 1, x - 127))   /* ue8m0: 0xFF is NaN */
-  else if asr_int(x, 3) == 0 then FV_Fin(false, land_int(x, 7), -9)
-  else FV_Fin(false, land_int(x, 7) + 8, asr_int(x, 3) - 10)
+  /* ue4m3 (ISA 5.2): 7 bits with the MSB padded, NaN is 0x7f */
+  else if land_int(x, 127) == 127 then FV_NaN()
+  else if asr_int(land_int(x, 127), 3) == 0 then FV_Fin(false, land_int(x, 7), -9)
+  else FV_Fin(false, land_int(x, 7) + 8, asr_int(land_int(x, 127), 3) - 10)
 
 val bsReg : (list((int, list(int))), int, int) -> int
 function bsReg(arr, l, i) = at(listAt(arr, l), i)
