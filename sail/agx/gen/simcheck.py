@@ -200,7 +200,7 @@ class ProgGen:
             if not st:
                 out.append(["WAIT", 0])
         else:
-            op = R.choice(agxgen.AOPS)
+            op = R.choice(agxgen.AOPS + ["cmpxchg"])
             if R.random() < 0.5:
                 base = ["I", 0]
             else:
@@ -212,7 +212,7 @@ class ProgGen:
                 out.append(iand(37, R.choice(DATA), 31, 1, 1))
                 idx = RG(37, 1)
             d = ["S"] + reg(0, R.choice(DATA), R.choice((0, 0, 1, 2))) if R.random() < 0.8 else ["N"]
-            out.append(["TGATOM", op] + d + base + idx + RG(R.choice(DATA)))
+            out.append(["TGATOM", op] + d + base + idx + (RG(R.choice(DATA[:-1]), 3) if op == "cmpxchg" else RG(R.choice(DATA))))
         if R.random() < 0.2:
             out.append(["TG_BARRIER"])
         return out

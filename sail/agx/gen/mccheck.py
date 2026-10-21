@@ -46,6 +46,9 @@ SR_NAMES = dict(XA.applegpu.SR_NAMES) if XA is not None else {}
 
 
 def sail_encode(instrs):
+    # the model reads at most 4096 instructions per run
+    if len(instrs) > 1000:
+        return sum((sail_encode(instrs[i:i + 1000]) for i in range(0, len(instrs), 1000)), [])
     code, out, err = agxtest.run_tokens([["I"] + t for t in instrs] + [["X"]])
     printed = [l for l in out.splitlines() if l.startswith(("ENC ", "NOENC "))]
     assert len(printed) == len(instrs), (len(printed), len(instrs), err[-500:])
@@ -59,6 +62,8 @@ def sail_encode(instrs):
 
 
 def sail_decode(words):
+    if len(words) > 1000:
+        return sum((sail_decode(words[i:i + 1000]) for i in range(0, len(words), 1000)), [])
     code, out, err = agxtest.run_tokens([["V", w] for w in words])
     decs = [l for l in out.splitlines() if l.startswith("DEC ")]
     assert len(decs) == len(words), err[-500:]

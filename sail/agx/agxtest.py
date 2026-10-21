@@ -224,7 +224,7 @@ def instr(stmt):
                 raise ParseError("bad trailing operands in %r" % stmt)
         return ["TGMEM", int(mnem.endswith("store")), pre[0], mask_field(pre[1])] + reg(ops[0]) + base + op(ops[1]) + [intv(ops[2])]
     if mnem in ("device_atomic", "threadgroup_atomic"):
-        if len(pre) != 1 or pre[0] not in (DEV_AOPS if mnem == "device_atomic" else AOPS):
+        if len(pre) != 1 or pre[0] not in (DEV_AOPS if mnem == "device_atomic" else AOPS + ["cmpxchg"]):
             raise ParseError("bad atomic op in %r" % stmt)
         dst = ["N"] if ops[0] == "_" else ["S"] + reg(ops[0])
         if mnem == "device_atomic":

@@ -1259,24 +1259,31 @@ function clause execute(DEVATOM(op, d, p, i, sgn, v, _, _)) = {
   }
 }
 
-/* threadgroup atomics: the word at byte base + 16 * index (as a threadgroup access with 32-bit
+/* threadgroup atomics: the word at byte base + 16 * index (cmpxchg: S is the pair rN_rN+1, rN the new value and
+ * rN+1 the compare value; measured, Apple-M2-Playground 2026-10-17-tg-atomic-followup) (as a threadgroup access with 32-bit
  * elements); the old value is written to the 32-bit register that holds D when the instruction
  * completes (no wait: applegpu notes that threadgroup atomics have no wait group) */
 function clause execute(TGATOM(op, d, base, i, v)) = {
   match op {
     A_add => (), A_sub => (), A_xchg => (), A_umin => (), A_imin => (), A_umax => (), A_imax => (), A_and => (), A_or => (), A_xor => (),
+    A_cmpxchg => (),
     _ => fatal("threadgroup_atomic: only the ten 32-bit operations are modelled")
   };
   var olds : vector(32, int) = vector_init(0);
   var vals : vector(32, int) = vector_init(0);
+  var cmps : vector(32, int) = vector_init(0);
   var addrs : vector(32, int) = vector_init(0);
   foreach (t from 0 to 31) {
-    if is_active(t) then { addrs[t] = opv(t, base, 16) + 16 * opv(t, i, 16); vals[t] = opv(t, v, 32) }
+    if is_active(t) then {
+      addrs[t] = opv(t, base, 16) + 16 * opv(t, i, 16);
+      vals[t] = trunc_int(opv(t, v, 64), 32);
+      cmps[t] = shr_int(opv(t, v, 64), 32)
+    }
   };
   foreach (t from 0 to 31) {
     if is_active(t) then {
       let o = rdBytes(SP_TG, addrs[t], 4);
-      wrBytes(SP_TG, addrs[t], aopv(op, o, vals[t]), 4);
+      wrBytes(SP_TG, addrs[t], if op == A_cmpxchg then (if o == cmps[t] then vals[t] else o) else aopv(op, o, vals[t]), 4);
       olds[t] = o
     }
   };

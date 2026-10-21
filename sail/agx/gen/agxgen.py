@@ -278,7 +278,7 @@ def schemas():
     add("atomic", [("op", DEV_AOPS), ("dst", ["reg", "none"]), ("base", ["gpr", "uni"]), ("idx", ["imm", "gpr"]), ("sg", BOOL), ("g", BOOL),
                    ("mode", [0, 1, 2, 3])],
         lambda c, g: _devatom(c, g))
-    add("threadgroup_atomic", [("op", AOPS), ("dst", [R32, R16L, R16H, "none"]), ("base", ["zero", "r16", "u16"]), ("idx", ["imm", R16L, R16H])],
+    add("threadgroup_atomic", [("op", AOPS + ["cmpxchg"]), ("dst", [R32, R16L, R16H, "none"]), ("base", ["zero", "r16", "u16"]), ("idx", ["imm", R16L, R16H])],
         lambda c, g: _tgatom(c, g))
     for st in (0, 1):
         add("stack_" + ("store" if st else "load"),
@@ -383,7 +383,8 @@ def _tgatom(c, g):
         d = ["N"]
     else:
         d = ["S"] + reg(0, g.rn(128), {R32: 0, R16L: 1, R16H: 2}[c["dst"]])
-    return ["TGATOM", c["op"]] + d + _tgbase(g, c["base"]) + _tgidx(g, c["idx"]) + ["R"] + reg(0, g.rn(128), 0)
+    v = reg(0, g.rn(127), 3) if c["op"] == "cmpxchg" else reg(0, g.rn(128), 0)
+    return ["TGATOM", c["op"]] + d + _tgbase(g, c["base"]) + _tgidx(g, c["idx"]) + ["R"] + v
 
 
 SCHEMAS = schemas()

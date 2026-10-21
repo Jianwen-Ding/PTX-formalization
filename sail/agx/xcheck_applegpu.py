@@ -257,7 +257,7 @@ def applegpu_text(toks):
     if c == "TGATOM":
         o = T.next(); dk = T.next(); d = reg_text(*rd_reg(T)) if dk == "S" else "None"
         b = rd_op(T); i = rd_op(T); v = rd_op(T)
-        return "threadgroup_atomic", [AOP[o], d, b, i, v, "0", "2", "128", "0"]
+        return "threadgroup_atomic", [DEV_AOP[o], d, b, i, v, "0", "2", "128", "0"]
     if c == "STACKMEM":
         st = T.int(); fmt = T.next(); mask = T.int(); r = rd_reg(T); o = rd_op(T); g = T.int()
         F = {"u8": "i8", "u16": "i16", "u32": "i32"}[fmt]
@@ -439,7 +439,8 @@ def rinstr():
         d = ["S", 0, R.randrange(124), R.choice((0, 1, 2)), 0, 0, 0, 0] if R.random() < 0.8 else ["N"]
         base = ["I", 0] if R.random() < 0.4 else ["R"] + [R.randrange(2), R.randrange(128), R.choice((1, 2)), 0, 0, 0, 0]
         idx = ["I", R.randrange(-32768, 32768)] if R.random() < 0.5 else ["R", 0, R.randrange(128), R.choice((1, 2)), 0, 0, 0, 0]
-        return ["TGATOM", R.choice(list(AOP))] + d + base + idx + ["R", 0, R.randrange(128), 0, 0, 0, 0, 0]
+        o = R.choice(list(AOP) + ["cmpxchg"])
+        return ["TGATOM", o] + d + base + idx + ["R", 0, R.randrange(127), 3 if o == "cmpxchg" else 0, 0, 0, 0, 0]
     if c == "STACKMEM":
         r = rreg(hints=False)
         r[1] = R.randrange(124 if r[2] == 0 else 126)

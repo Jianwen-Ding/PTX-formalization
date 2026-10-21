@@ -486,6 +486,14 @@ function e_memreg(w, r, off, offx, offt) = {
   fput(fput2(w, off, 6, offx, 2, value), offt, 1, t)
 }
 
+/* a memory register tuple (one register per element of the mask) stays within r0 .. r127 (applegpu and the LLVM
+ * backend have no names beyond) */
+val tuple_ok : (areg, int) -> bool
+function tuple_ok(r, mask) = {
+  let n = popc_int(mask);
+  if r.view == 0 then r.num + n <= 128 else 2 * r.num + r.view - 1 + n <= 256
+}
+
 val d_memreg : (int, int, int, int) -> areg
 function d_memreg(w, off, offx, offt) = {
   let value = fget2(w, off, 6, offx, 2);
@@ -903,7 +911,7 @@ function d_qballot(isf, w) = match d_ballot(isf, w) {
 val e_stackmem : (bool, afmt, int, areg, aop, int) -> option(int)
 function e_stackmem(st, f, mask, r, o, g) = {
   start_enc();
-  if not_bool(int_fmt(f)) then enc_err = true;
+  if not_bool(int_fmt(f) & tuple_ok(r, mask)) then enc_err = true;
   let c = fmt_code(f);
   let w = e_memidx(e_memreg(fput(fput(fput2(0, 8, 2, 50, 2, c), 52, 4, mask), 30, 1, g), r, 10, 40, 49), o);
   finish(if st then C_STACKSTORE else C_STACKLOAD, w)
@@ -912,7 +920,7 @@ val d_stackmem : (bool, int) -> option(ast)
 function d_stackmem(st, w) = {
   start_dec();
   let f = code_fmt(fget2(w, 8, 2, 50, 2));
-  dchk(int_fmt(f));
+  dchk(int_fmt(f) & tuple_ok(d_memreg(w, 10, 40, 49), fget(w, 52, 4)));
   fin_dec(STACKMEM(st, f, fget(w, 52, 4), d_memreg(w, 10, 40, 49), d_memidx(w), fget(w, 30, 1)))
 }
 
@@ -930,6 +938,7 @@ function e_stackadj(n) = {
 val e_devmem : (bool, afmt, int, areg, apair, aop, bool, int, int, int) -> option(int)
 function e_devmem(st, f, mask, r, p, i, sgn, s, g, u6) = {
   start_enc();
+  if not_bool(tuple_ok(r, mask)) then enc_err = true;
   /* shift field value 3: applegpu's notes (commented-out code in MemoryShiftDesc.decode, and its
    * emulator's `if shift == 3: shift = 2`) suggest it acts as 2, which is not confirmed; agx.k adds the
    * shift as given.  The value is rejected in both directions, so every encoded / decoded access has
@@ -943,7 +952,7 @@ val d_devmem : (bool, int) -> option(ast)
 function d_devmem(st, w) = {
   start_dec();
   let f = code_fmt(fget2(w, 7, 3, 48, 1));
-  dchk(fget(w, 42, 2) != 3);   /* see e_devmem */
+  dchk(fget(w, 42, 2) != 3 & tuple_ok(d_memreg(w, 10, 40, 49), fget(w, 52, 4)));   /* see e_devmem */
   fin_dec(DEVMEM(st, f, fget(w, 52, 4), d_memreg(w, 10, 40, 49), d_membase(w), d_memidx(w), not_bool(bit_int(w, 25)),
                  fget(w, 42, 2), fget(w, 30, 1), fget(w, 44, 2)))
 }
@@ -952,7 +961,7 @@ function d_devmem(st, w) = {
 val e_tgmem : (bool, afmt, int, areg, aop, aop, int) -> option(int)
 function e_tgmem(st, f, mask, r, base, i, s) = {
   start_enc();
-  if s != 0 | not_bool(int_fmt(f)) then enc_err = true;
+  if s != 0 | not_bool(int_fmt(f)) | not_bool(tuple_ok(r, mask)) then enc_err = true;
   let w = e_tgidx(e_tgbase(e_memreg(fput(fput(0, 24, 4, fmt_code(f)), 36, 4, mask), r, 9, 60, 8), base), i);
   finish(if st then C_TGSTORE else C_TGLOAD, w)
 }
@@ -960,7 +969,7 @@ val d_tgmem : (bool, int) -> option(ast)
 function d_tgmem(st, w) = {
   start_dec();
   let f = code_fmt(fget(w, 24, 4));
-  dchk(int_fmt(f));
+  dchk(int_fmt(f) & tuple_ok(d_memreg(w, 9, 60, 8), fget(w, 36, 4)));
   fin_dec(TGMEM(st, f, fget(w, 36, 4), d_memreg(w, 9, 60, 8), d_tgbase(w), d_tgidx(w), 0))
 }
 
@@ -1042,14 +1051,20 @@ function d_devatom(w) = {
   fin_dec(DEVATOM(op, d, d_membase(w), d_memidx(w), not_bool(bit_int(w, 25)), OReg(v), fget(w, 30, 1), m))
 }
 
-/* threadgroup atomic: op (24,4), R (9,6)+(60,2) flag 8, present 38, base, index, S (64, 8);
+/* threadgroup atomic: op (24,4) (the ten 32-bit operations and cmpxchg, op 3), R (9,6)+(60,2) flag 8, present 38, base, index, S (64, 8);
  * observed values u1 (6,2) = 0, u3 (35,3) = 2, u4 (40,8) = 128, u5 (72,8) = 0 */
 val e_tgatom : (aaop, option(areg), aop, aop, aop) -> option(int)
 function e_tgatom(op, d, base, i, v) = {
   start_enc();
-  var w : int = fput(0, 24, 4, atom_code(op));
+  var w : int = fput(0, 24, 4, if op == A_cmpxchg then 3 else atom_code(op));
   match d { Some(r) => w = fput(e_memreg(w, r, 9, 60, 8), 38, 1, 1), None() => () };
-  match op_reg32(v) { Some(r) => w = fput(w, 64, 8, 2 * r.num), None() => enc_err = true };
+  if op == A_cmpxchg then {
+    /* cmpxchg: the register pair S (new value), S + 1 (compare value) */
+    match v {
+      OReg(r) => { if r.file != GPR | r.view != 3 | not_bool(nomods(r)) | r.hint != HNone then enc_err = true; w = fput(w, 64, 8, 2 * r.num) },
+      _ => enc_err = true
+    }
+  } else match op_reg32(v) { Some(r) => w = fput(w, 64, 8, 2 * r.num), None() => enc_err = true };
   w = e_tgidx(e_tgbase(w, base), i);
   w = fput(fput(w, 35, 3, 2), 40, 8, 128);
   finish(C_TGATOMIC, w)
@@ -1061,7 +1076,8 @@ function d_tgatom(w) = {
   let d : option(areg) = if bit_int(w, 38) then Some(d_memreg(w, 9, 60, 8)) else { dchk(fget2(w, 9, 6, 60, 2) == 0 & fget(w, 8, 1) == 0); None() };
   let sv = fget(w, 64, 8);
   dchk(not_bool(bit_int(sv, 0)));
-  fin_dec(TGATOM(code_atom(fget(w, 24, 4)), d, d_tgbase(w), d_tgidx(w), OReg(mkreg(GPR, shr_int(sv, 1), 0, HNone))))
+  let op = if fget(w, 24, 4) == 3 then A_cmpxchg else code_atom(fget(w, 24, 4));
+  fin_dec(TGATOM(op, d, d_tgbase(w), d_tgidx(w), OReg(mkreg(GPR, shr_int(sv, 1), if op == A_cmpxchg then 3 else 0, HNone))))
 }
 
 val e_wait : int -> option(int)
