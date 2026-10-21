@@ -186,6 +186,46 @@ function do_static(l) = match l {
   }
 }
 
+/* A kernel's own .shared variables belong to its CTAs only (PTX ISA 5.1.5: .shared variables are per CTA, function-scope
+   names are visible in the function): they are laid out per kernel after the module-scope / device-function .shared data
+   (kernels never share a CTA) and bound in the kernel's environment, so equal names in two kernels do not clash. */
+register kstat : list((string, list(sdecl))) = [||]
+register kfixed : bool = false
+register scommon : int = 0
+
+val kernel_statics : list(sdecl) -> (list(sdecl), list(sdecl))
+function kernel_statics(l) = {
+  var own : list(sdecl) = [||];
+  var rest : list(sdecl) = [||];
+  var x = l;
+  while is_cons(x) do {
+    match x { d :: r => { if d.sspace == "shared" & not_bool(d.sextern) then own = d :: own else rest = d :: rest; x = r }, [||] => () }
+  };
+  (reverse_list(own), reverse_list(rest))
+}
+
+/* at a launch of kernel k: its .shared variables from the end of the common .shared data, bound in SP_KENV; stop = its end */
+val bind_kernel_statics : string -> unit
+function bind_kernel_statics(k) = {
+  if not_bool(kfixed) then { scommon = stop; kfixed = true };
+  stop = scommon;
+  var x = kstat;
+  while is_cons(x) do {
+    match x {
+      (n, sh) :: r => {
+        if n == k then {
+          var y = sh;
+          while is_cons(y) do {
+            match y { d :: yr => { let a = alignUp(stop, d.salign); smap_set(SP_KENV, d.sname, mksym("shared", a)); stop = a + d.ssize; y = yr }, [||] => () }
+          }
+        };
+        x = r
+      },
+      [||] => ()
+    }
+  }
+}
+
 /* #link(A, sdecls, Acc) */
 val do_link : (list(string), list(sdecl)) -> unit
 function do_link(attrs, l) = {
@@ -282,7 +322,11 @@ function read_func() = {
         let fa = sym_addr(smap_get(SP_SYMS, name));
         if smap_has(SP_FADDRS, dec_str(fa)) then smap_set(SP_FADDRS, dec_str(fa), f + 1)
       };
-      do_static(sh)
+      if kind == "entry" then {
+        let (own, rest) = kernel_statics(sh);
+        kstat = (name, own) :: kstat;
+        do_static(rest)
+      } else do_static(sh)
     }
   }
 }
@@ -405,10 +449,11 @@ function do_launch(k, g, b, dyn, args) = {
             if o > 32764 then fault(concat_str("kernel parameters of ", concat_str(dec_str(o), " bytes exceed the 32764-byte limit")), o)
             else {
               kptop = o;
-              /* fixDyn: `.extern .shared` arrays start after the static shared data */
+              bind_kernel_statics(k);
+              /* fixDyn: `.extern .shared` arrays start after the kernel's static shared data */
               var dn = dyn_names;
               while is_cons(dn) do {
-                match dn { n :: rest => { if smap_get(SP_SYMS, n) == mksym("dynshared", 0) then smap_set(SP_SYMS, n, mksym("shared", alignUp(stop, DYNSHARED))); dn = rest }, [||] => () }
+                match dn { n :: rest => { smap_set(SP_SYMS, n, mksym("shared", alignUp(stop, DYNSHARED))); dn = rest }, [||] => () }
               };
               kernel = k; kfid = f; gridDim = g; blockDim = b; clusterDim = cd;
               dynsmem = dyn; explcl = hasPerf(perf_of(k), "reqnctapercluster");
