@@ -356,7 +356,8 @@ function testp(op, v, w) = match op {
   "infinite" => expField(v, w) == mask(ebits(w)) & manField(v, w) == 0,
   "number" => not_bool(expField(v, w) == mask(ebits(w)) & manField(v, w) != 0),
   "notanumber" => expField(v, w) == mask(ebits(w)) & manField(v, w) != 0,
-  "normal" => expField(v, w) != 0 & expField(v, w) != mask(ebits(w)),
+  /* "As a special case, positive and negative zero are considered normal numbers" (9.7.3.1) */
+  "normal" => (expField(v, w) != 0 | manField(v, w) == 0) & expField(v, w) != mask(ebits(w)),
   "subnormal" => expField(v, w) == 0 & manField(v, w) != 0,
   _ => false
 }

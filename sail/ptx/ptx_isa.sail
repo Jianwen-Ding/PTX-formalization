@@ -321,7 +321,13 @@ function isaQual(o, ops) = {
   let w : int = match o.tys { t :: _ => t.w, _ => 0 };
   let hk : string = match o.tys { [|t|] => if (t.k == "f" & t.w == 16) | t.k == "f16x2" then "f16" else if t.k == "bf" | t.k == "bf16x2" then "bf16" else "", _ => "" };
   let hArith = hk != "" & isaAny([|b|], [|"add", "sub", "mul", "fma"|]);
-  if hArith & isaAny(m, [|"rz", "rm", "rp"|]) then
+  let dk : string = match o.tys { t :: _ => t.k, _ => "" };
+  if b == "cvt" & isaAny([|dk|], [|"e4m3x2", "e5m2x2", "e2m3x2", "e3m2x2", "e2m1x2", "s2f6x2", "e4m3x4", "e5m2x4", "e2m3x4", "e3m2x4", "e2m1x4"|])
+     & isaAny(m, [|"rz", "rm", "rp", "rna"|]) then
+    concat_str("cvt to .", concat_str(dk, " rounds only with .rn (or .rs for the x4 forms) [PTX ISA 9.3 9.7.9.21]"))
+  else if b == "cvt" & dk == "ue8m0x2" & isaAny(m, [|"rm", "rna"|]) then
+    "cvt to .ue8m0x2 rounds with .rz or .rp [PTX ISA 9.3 9.7.9.21]"
+  else if hArith & isaAny(m, [|"rz", "rm", "rp"|]) then
     concat_str(b, " on .f16 / .bf16 values rounds only with .rn [PTX ISA 9.3 9.7.4]")
   else if hk == "bf16" & isaAny([|b|], [|"add", "sub", "mul", "fma", "min", "max"|]) & isaAny(m, [|"ftz", "sat"|]) then
     concat_str(b, ": no .ftz / .sat form on .bf16 / .bf16x2 [PTX ISA 9.3 9.7.4]")

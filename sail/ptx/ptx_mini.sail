@@ -86,12 +86,18 @@ function miniEncR(k, a, rdm, rb, nb) = {
 val miniSign : (string, fv) -> int
 function miniSign(k, x) = if fv_sign(x) & k != "ue5m3" then pow2(mBits(k) - 1) else 0
 
+/* the rounding of a magnitude for a directed mode: .rp (2) rounds a negative value's magnitude down, .rm (4) rounds a
+   positive value's magnitude down and a negative one's up (cvt: ".rp rounding toward positive infinity", ".rm rounding
+   toward negative infinity", 9.7.9.21) */
+val magMode : (int, bool) -> int
+function magMode(rdm, neg) = if rdm == 2 then (if neg then 1 else 2) else if rdm == 4 then (if neg then 2 else 1) else rdm
+
 val miniFromRS : (string, fv, bool, int, int, int) -> int
 function miniFromRS(k, x, rl, rdm, rb, nb) = {
   if fv_is_nan(x) then (if k == "e4m3" | k == "e5m2" then 127 else if k == "ue5m3" then 255 else mTop(k))
   else if (rl | k == "ue5m3") & fv_sign(x) then 0
   else if fv_is_inf(x) then lor_int(miniSign(k, x), mTop(k))
-  else lor_int(miniSign(k, x), miniEncR(k, fv_abs(x), rdm, rb, nb))
+  else lor_int(miniSign(k, x), miniEncR(k, fv_abs(x), magMode(rdm, fv_sign(x)), rb, nb))
 }
 val miniFromR : (string, fv, bool, int) -> int
 function miniFromR(k, x, rl, rdm) = miniFromRS(k, x, rl, rdm, 0, 0)
@@ -115,7 +121,7 @@ val flushIn : (bool, fv, int) -> fv
 function flushIn(b, x, mn) =
   if b & not_bool(fv_is_nan(x)) & not_bool(fv_is_inf(x)) & fv_cmp(fv_abs(x), FV_Fin(false, 1, mn)) < 0 then FV_Fin(false, 0, 0) else x
 val mrnd : list(string) -> int
-function mrnd(m) = if has(m, "rz") then 1 else if has(m, "rp") then 2 else 0
+function mrnd(m) = if has(m, "rz") then 1 else if has(m, "rp") then 2 else if has(m, "rm") then 4 else 0
 val pzoFix : (bool, string, int) -> int
 function pzoFix(p, k, c) = if p & k != "ue5m3" & c == pow2(mBits(k) - 1) then 0 else c
 val miniCvt : (list(string), string, fv, int) -> int
@@ -143,8 +149,8 @@ function s2f6Code(m, x) = {
   if fv_is_nan(x) then 127
   else if has(m, "relu") & fv_sign(x) then 0
   else if fv_is_inf(x) then (if fv_sign(x) then 128 else 127)
-  else if fv_sign(x) then land_int(0 - min_int(128, roundGrid(scaleP2(fv_abs(x), 6), mrnd(m))), 255)
-  else min_int(127, roundGrid(scaleP2(x, 6), mrnd(m)))
+  else if fv_sign(x) then land_int(0 - min_int(128, roundGrid(scaleP2(fv_abs(x), 6), magMode(mrnd(m), true))), 255)
+  else min_int(127, roundGrid(scaleP2(x, 6), magMode(mrnd(m), false)))
 }
 val s2f6Enc : (list(string), fv, int) -> int
 function s2f6Enc(m, x, s) = s2f6Code(m, scDiv(x, s))

@@ -177,6 +177,16 @@ Open:
 - [x] `.isacheck` reports half-precision forms outside the §9.7.4 syntax: rounding other than `.rn`, `.ftz` / `.sat` on
       `.bf16`, `.relu` with `.sat`, `.oob` with `.ftz` / `.sat`, `ex2.approx` with / without `.ftz` on the wrong type
       (tests/neg/isa-half-*.ptx)
+- [x] `testp.normal` is true for ±0 ("As a special case, positive and negative zero are considered normal numbers",
+      §9.7.3.1); scripts/gen_pred.py had the same mistake (tests/pred-4.ptx corrected)
+- [x] `.rp` / `.rm` to the small float formats (e4m3, e5m2, e2m3, e3m2, e2m1, s2f6) round the signed value toward
+      ±infinity; the model rounded the magnitude up (`.rp`) or to nearest (`.rm`). The ISA allows only `.rn` (`.rs` for
+      x4) there, so `.isacheck` reports these forms (tests/cvt-mini-dir.ptx, tests/neg/isa-cvt-mini-rnd.ptx)
+- [ ] `cvt.rn.satfinite.ue8m0x2.f32` is listed at isa.txt 15298 while `.frnd3 = { .rz, .rp }`; the model rounds `.rn`
+      like `.rz`
+- [ ] deprecated non-`.sync` `vote` / `shfl` (targets below sm_70) are not implemented
+- [ ] `elect.sync` with exited lanes in the membermask waits for them (the text does not say "non-exited"); consider a
+      `.ub strict` report instead of the deadlock
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 
