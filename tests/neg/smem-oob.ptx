@@ -1,0 +1,16 @@
+// expect: shared access outside the CTA's shared memory
+// a shared access past the CTA's shared memory (its variables, the dynamic size of the launch, the reserved region) is
+// undefined, reported under .ub strict
+.version 8.0
+.target sm_90
+.address_size 64
+.ub strict ;
+.visible .entry k()
+{
+    .reg .b32 %r<2>;
+    .shared .align 4 .b32 sh[4];
+    mov.u32 %r1, sh;
+    st.shared.u32 [%r1+65536], 7;
+    ret;
+}
+.launch k <<< 1, 1 >>> ();

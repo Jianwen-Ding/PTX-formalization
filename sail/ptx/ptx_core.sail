@@ -213,6 +213,13 @@ function resvHit(a, n) = {
   } else false
 }
 
+/* [a, a + n) reaches past the CTA's shared memory (static, dynamic and the reserved region after them) */
+val resvAbove : (int, int) -> bool
+function resvAbove(a, n) = {
+  let sp = t_sregs[tchk(cur)];
+  smap_has(sp, "%reserved_smem_offset_end") & a + n > smap_get(sp, "%reserved_smem_offset_end")
+}
+
 /* #mem(L, OP) => #res(V): one atomic step */
 val memop_do : (loc, memop) -> int
 function memop_do(l, op) = match l {
@@ -229,6 +236,8 @@ function memop_do(l, op) = match l {
       /* "This region of shared memory is not available to users, and accessing this region from user code results in
          undefined behavior" (10.29) */
       fault("shared access to the region reserved for system software", a); 0
+    } else if ub & s == "shared" & nb > 0 & cur >= 0 & resvAbove(a, nb) then {
+      fault("shared access outside the CTA's shared memory", a); 0
     } else if s == "global" & a >= 4096 then mem_apply(SP_GMEM, a, op)
     else if s == "shared" & a >= 0 then mem_apply(cta_smem(), a, op)
     else if s == "local" & a >= 0 then mem_apply(t_lmem[tchk(cur)], a, op)

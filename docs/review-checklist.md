@@ -212,7 +212,8 @@ Open:
       the model added the unrounded byte count (tests/smem-sregs.ptx)
 - [x] `%reserved_smem_offset_cap` is the "Total size of the reserved shared memory region" (§10.29): 1024 (it held the end
       offset); a user shared access into the reserved region is reported under `.ub strict` ("accessing this region from
-      user code results in undefined behavior") (tests/smem-reserved-cap.ptx, tests/neg/smem-reserved-access.ptx)
+      user code results in undefined behavior"), and so is an access past the CTA's shared memory
+      (tests/smem-reserved-cap.ptx, tests/neg/smem-reserved-access.ptx, tests/neg/smem-oob.ptx)
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 
