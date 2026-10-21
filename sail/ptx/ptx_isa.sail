@@ -337,6 +337,11 @@ function isaQual(o, ops) = {
     "fma.oob takes no .ftz / .sat [PTX ISA 9.3 9.7.4.4]"
   else if hk != "" & b == "ex2" & (if hk == "bf16" then not_bool(has(m, "ftz")) else has(m, "ftz")) then
     "ex2.approx: .ftz is required on .bf16 / .bf16x2 and not allowed on .f16 / .f16x2 [PTX ISA 9.3 9.7.4.10]"
+  else if (b == "ld" | b == "st") & has(m, "v8") & not_bool(w == 32 & isaAny([|match o.tys { t :: _ => t.k, _ => "" }|], [|"b", "s", "u", "f"|])) then
+    concat_str(b, ".v8 takes only .b32 / .s32 / .u32 / .f32 [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
+  else if (b == "ld" | b == "st") & (has(m, "v8") | (has(m, "v4") & w == 64))
+          & isaAny(m, [|"shared", "local", "param", "const", "shared::cta", "shared::cluster"|]) then
+    concat_str(b, ": .v8, and .v4 with a 64-bit type, need the .global state space or generic addressing [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
   else if (b == "discard" | b == "applypriority") & isaBadImm(ops, 2, 1, 128, 128, 1) then
     concat_str(b, if b == "discard" then ": the only supported size is 128 [PTX ISA 9.3 9.7.9.18]"
                   else ": the only supported size is 128 [PTX ISA 9.3 9.7.9.17]")

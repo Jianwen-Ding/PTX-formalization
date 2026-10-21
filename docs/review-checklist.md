@@ -214,6 +214,9 @@ Open:
       offset); a user shared access into the reserved region is reported under `.ub strict` ("accessing this region from
       user code results in undefined behavior"), and so is an access past the CTA's shared memory
       (tests/smem-reserved-cap.ptx, tests/neg/smem-reserved-access.ptx, tests/neg/smem-oob.ptx)
+- [x] ld / st `.v8` only with 32-bit types, and `.v8` / `.v4` with 64-bit types only with `.global` or generic
+      addressing (§9.7.9.8, §9.7.9.11): reported under `.isacheck` (tests/neg/isa-ld-v8-*.ptx); ld.global.nc with sink
+      elements (tests/ld-nc-vec-sink.ptx)
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 
