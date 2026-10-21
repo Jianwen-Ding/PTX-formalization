@@ -396,6 +396,18 @@ function exec_warp(o, ops) = {
               [|rdb32(a), rdu32(b), rdu32(c)|], dests(dp));
       true
     },
+    /* shfl / vote without .sync (deprecated, targets below sm_70): the same exchange among the active lanes of the
+     * warp ("Each thread in the currently executing warp ..."; "An inactive thread in warp will contribute a 0 for its
+     * entry when participating in vote.ballot.b32"); the active lanes are found as for activemask */
+    ("shfl", [|dp, a, b, c|]) => if has(m, "sync") then false else {
+      do_coll(concat_str("shfl.", pick(m, [|"up", "down", "bfly", "idx"|], "idx")), actGroup(cur), [||],
+              [|rdb32(a), rdu32(b), rdu32(c)|], dests(dp));
+      true
+    },
+    ("vote", [|d, q|]) => if has(m, "sync") then false else {
+      do_coll(concat_str("vote.", pick(m, [|"all", "any", "uni", "ballot"|], "all")), actGroup(cur), [||], [|rdp(q)|], [|d|]);
+      true
+    },
     ("vote", [|d, q, mm|]) => {
       do_coll(concat_str("vote.", pick(m, [|"all", "any", "uni", "ballot"|], "all")), rdu32(mm), [||], [|rdp(q)|], [|d|]);
       true

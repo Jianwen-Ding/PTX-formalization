@@ -184,7 +184,8 @@ Open:
       x4) there, so `.isacheck` reports these forms (tests/cvt-mini-dir.ptx, tests/neg/isa-cvt-mini-rnd.ptx)
 - [ ] `cvt.rn.satfinite.ue8m0x2.f32` is listed at isa.txt 15298 while `.frnd3 = { .rz, .rp }`; the model rounds `.rn`
       like `.rz`
-- [ ] deprecated non-`.sync` `vote` / `shfl` (targets below sm_70) are not implemented
+- [x] deprecated non-`.sync` `vote` / `shfl` (targets below sm_70): the same exchange among the active lanes, found as
+      for `activemask` (tests/warp-nosync.ptx)
 - [ ] `elect.sync` with exited lanes in the membermask waits for them (the text does not say "non-exited"); consider a
       `.ub strict` report instead of the deadlock
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
