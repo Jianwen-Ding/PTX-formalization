@@ -153,7 +153,8 @@ Open:
       return list discards the results; an undefined `wgmma` shape stops with an error instead of deadlocking.  Kept as
       errors (no meaning to give): undeclared registers, special-register writes, `d|literal`, partial return lists,
       tcgen05 descriptor bit 52 and `cta_group::2` disable-output-lane (layouts not specified), inc / dec on floats
-- [ ] tcgen05 allocation patterns (alloc after relinquish, growing size, exit without dealloc) under `.ub strict`
+- [x] tcgen05 allocation patterns (alloc after relinquish, growing size, exit without dealloc) under `.ub strict`
+      (§9.7.17.7.1; tests/neg/tc-ub-relinq.ptx, tc-ub-grow.ptx, tc-ub-leak.ptx)
 - [x] sm_1x single-precision default: on an sm_1x target every `.f32` instruction that takes `.ftz` flushes subnormal
       inputs and results (§9.7.3); `.f64` keeps them (tests/sm1x-ftz.ptx)
 - [ ] sm_1x `mad.f32` mantissa truncation of the product (§9.7.3.5); `brkpt` suspends

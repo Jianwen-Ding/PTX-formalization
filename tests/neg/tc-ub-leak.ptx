@@ -1,0 +1,15 @@
+// expect: tensor memory still allocated when the CTA exits
+// tcgen05 allocation rule of 9.7.17.7.1, reported under .ub strict
+.version 8.8
+.target sm_100a
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %r<4>;
+    .shared .align 16 .b32 slot[4];
+    tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [slot], 32;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 32 >>> (O);

@@ -150,7 +150,13 @@ function run_grid() = {
     };
     /* finished CTAs leave; with an occupancy limit the next CTA starts */
     foreach (c from 0 to (ncta_slots - 1)) {
-      if c_alive[cchk(c)] & c_live[cchk(c)] == 0 then { c_alive[cchk(c)] = false; resident = resident - 1 }
+      if c_alive[cchk(c)] & c_live[cchk(c)] == 0 then {
+        /* "All of the Tensor Memory that was allocated using tcgen05.alloc instruction in a kernel, must be explicitly
+           deallocated using tcgen05.dealloc before the kernel exits" (9.7.17.7.1): reported under .ub strict */
+        let mp = c_misc[cchk(c)];
+        if ub & smap_has(mp, "sp:al") then { if smap_size(smap_get(mp, "sp:al")) > 0 then fault("tcgen05: tensor memory still allocated when the CTA exits", c) };
+        c_alive[cchk(c)] = false; resident = resident - 1
+      }
     };
     if not_bool(any_alive()) then {
       if nextcta >= vol(gridDim) then go = false

@@ -69,11 +69,18 @@ function tcAllocTry(l, n) = {
   let inst = tcInst("tcgen05.alloc");
   if smap_has(rs, inst) then { let _ = memop_do(l, WrOp(4, smap_get(rs, inst))); true }
   else if not_bool(tcPow2(n)) then { fault("tcgen05.alloc: invalid size", n); true }
-  else if tcFind(al, n) >= 0 then {
+  /* "it is illegal for a CTA to perform tcgen05.alloc after any of its constituent threads execute
+     tcgen05.relinquish_alloc_permit"; "The number of columns allocated should not increase between any two allocations
+     in the execution order within the CTA" (9.7.17.7.1): reported under .ub strict */
+  else if ub & smap_has(c_misc[cchk(c)], "tcrelinq") then { fault("tcgen05.alloc after tcgen05.relinquish_alloc_permit", n); true }
+  else if ub & smap_has(c_misc[cchk(c)], "tclast") & n > smap_get(c_misc[cchk(c)], "tclast") then {
+    fault("tcgen05.alloc: the number of columns increases between two allocations", n); true
+  } else if tcFind(al, n) >= 0 then {
     let b = tcFind(al, n);
     let _ = memop_do(l, WrOp(4, b));
     smap_set(rs, inst, b);
     smap_set(al, dec_str(b), n);
+    smap_set(c_misc[cchk(c)], "tclast", n);
     true
   } else false
 }
@@ -589,7 +596,8 @@ function exec_tc(o, ops) = {
   let tl = fmod_int(t_tid[t], 32);
   let full : int = 4294967295;
   if o.base != "tcgen05" then false
-  else if has(m, "wait") | has(m, "fence") | has(m, "relinquish_alloc_permit") then true
+  else if has(m, "relinquish_alloc_permit") then { smap_set(c_misc[cchk(c)], "tcrelinq", 1); true }
+  else if has(m, "wait") | has(m, "fence") then true
   else if has(m, "alloc") then match ops {
     [|XB([|d|], [||]), n|] => {
       t_post[t] = P_tcalloc(ea(d, if has(m, "shared::cta") | has(m, "shared") then "shared" else "generic"), rdu32(n));
