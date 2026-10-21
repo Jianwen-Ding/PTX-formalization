@@ -1,0 +1,15 @@
+// expect: discard: address not aligned to 128 bytes
+// discard (9.7.9.18): a must be aligned to 128 bytes (.ub strict)
+.version 8.0
+.target sm_80
+.address_size 64
+.ub strict ;
+.global .align 256 .b8 g[512];
+.shared .align 16 .b8 s[16];
+.visible .entry k()
+{
+    .reg .b64 %a;
+    mov.u64 %a, g; add.u64 %a, %a, 64; discard.global.L2 [%a], 128;
+    ret;
+}
+.launch k <<< 1, 1 >>> ();

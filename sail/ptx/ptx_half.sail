@@ -238,7 +238,20 @@ function gx_memq(o, ops) = {
   let m = o.mods;
   if has(m, "L2::cache_hint") & not_bool(has(m, "bulk") | has(m, "tensor")) & has([|"ld", "st", "atom", "red", "cp"|], o.base) then {
     exec_dispatch({ o with mods = drop_mod(m, "L2::cache_hint") }, drop_last(ops)); true
-  } else o.base == "discard" | o.base == "applypriority"
+  } else if o.base == "discard" then {
+    /* "behaves like a weak write of an unstable indeterminate value" (9.7.9.18): the old bytes are one such value, so
+       memory is left as it is; "If the specified address does not fall within the address window of .global state
+       space then the behavior is undefined", "a must be aligned to 128 bytes": reported under .ub strict */
+    match ops {
+      XB([|a|], [||]) :: _ => if ub then match ea(a, if has(m, "global") then "global" else "generic") {
+        Loc(sp, off) => if sp != "global" then fault("discard: address outside the .global window", off)
+                        else if tmod_int(off, 128) != 0 then fault("discard: address not aligned to 128 bytes", off),
+        _ => fault("discard: address outside the .global window", 0)
+      },
+      _ => ()
+    };
+    true
+  } else o.base == "applypriority"
 }
 
 /* ---------------------------------------------------------------- PTX-EXEC-VIDEO */

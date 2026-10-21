@@ -203,6 +203,9 @@ Open:
 - [x] `elect.sync` with exited lanes in the membermask waits for them: "wait until all threads in the membermask execute
       the elect instruction" (§9.7.13 elect, isa.txt 22011) has no "non-exited" exception, unlike vote / match / redux /
       shfl, so the model follows the text and reports the resulting deadlock
+- [x] `discard` (§9.7.9.18) "behaves like a weak write of an unstable indeterminate value": the model keeps the old
+      bytes (one such value); an address outside the `.global` window or not 128-byte aligned is reported under
+      `.ub strict`, a size other than 128 under `.isacheck` (tests/neg/discard-*.ptx, isa-discard-size.ptx)
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

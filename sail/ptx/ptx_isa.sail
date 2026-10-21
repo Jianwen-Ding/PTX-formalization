@@ -337,6 +337,8 @@ function isaQual(o, ops) = {
     "fma.oob takes no .ftz / .sat [PTX ISA 9.3 9.7.4.4]"
   else if hk != "" & b == "ex2" & (if hk == "bf16" then not_bool(has(m, "ftz")) else has(m, "ftz")) then
     "ex2.approx: .ftz is required on .bf16 / .bf16x2 and not allowed on .f16 / .f16x2 [PTX ISA 9.3 9.7.4.10]"
+  else if b == "discard" & isaBadImm(ops, 2, 1, 128, 128, 1) then
+    "discard: the only supported size is 128 [PTX ISA 9.3 9.7.9.18]"
   else if b == "fabric" & (has(m, "try_atom") | has(m, "tensor")) then
     "fabric: the .try_atom and .tensor forms are not in PTX ISA 9.3 (9.7.10.5 lists try_get / try_put / try_red / try_pullred / submit / wait)"
   else if (b == "ld" | b == "st") & isaCount(m, [|"weak", "volatile", "relaxed", sem|]) > 1 then
