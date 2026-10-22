@@ -1,0 +1,23 @@
+// multimem counted try_put bumps the counter on every destination device (9.7.10.4: counters only track accesses at their destination device)
+.version 9.4
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %off, %coff; .reg .u32 %le; .reg .b32 %r<4>;
+    .shared .align 16 .b8 data[64];
+    .shared .align 8 .b64 bar;
+    ld.param.u64 %o, [po];
+    mbarrier.init.shared.layout::v1.b64 [bar], 1;
+    st.shared.v4.u32 [data], {1, 2, 3, 4}; st.shared.v4.u32 [data+16], {5, 6, 7, 8};
+    mov.u32 %le, 1; mov.u64 %off, 0; mov.u64 %coff, 256;
+    mbarrier.arrive.expect_tx.shared.b64 _, [bar], 2;
+    fabric.try_put.async.multimem.shared::cta.mbarrier::complete_tx::16B.mbarrier::report::fabric.counted::bytes.relaxed.sys.b128 [%le, %off, %coff], [data], 32, [bar];
+    ret;
+}
+.buffer D0 .u64 [40];
+.buffer D1 .u64 [40];
+.fabric 1 .size 320 { D0, D1 } ;
+.launch k <<< 1, 1 >>> (D0);
+.expect D0 .u64 = { 0x200000001, 0x400000003, 0x600000005, 0x800000007, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0 };
+.expect D1 .u64 = { 0x200000001, 0x400000003, 0x600000005, 0x800000007, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0 };

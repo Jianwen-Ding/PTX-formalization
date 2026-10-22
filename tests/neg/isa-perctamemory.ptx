@@ -1,0 +1,16 @@
+// expect: %perctamemoryoffset / %perctamemorysize are valid only in an entry function with .minperctamemory [PTX ISA 9.4 10.34]
+// without .minperctamemory the registers read 0 (no per-CTA memory); .isacheck reports their use
+.version 9.4
+.target sm_90
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %sz;
+    ld.param.u64 %o, [po];
+    mov.u32 %sz, %perctamemorysize;
+    st.global.u32 [%o], %sz;
+    ret;
+}
+.buffer OUT .u32 [1];
+.launch k <<< 1, 1 >>> (OUT);

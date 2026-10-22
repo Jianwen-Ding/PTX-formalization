@@ -1,0 +1,18 @@
+// vector register elements by colour field (.r .g .b .a = .x .y .z .w, PTX ISA 9.3 6.4.2 Vectors as Operands)
+.version 8.0
+.target sm_80
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r<4>; .reg .v4 .b32 %V;
+    ld.param.u64 %o, [po];
+    mov.b32 %V.x, 1; mov.b32 %V.y, 2; mov.b32 %V.z, 3; mov.b32 %V.w, 4;
+    add.u32 %r1, %V.r, %V.a;
+    add.u32 %r2, %V.g, %V.b;
+    mov.b32 %V.b, 30;
+    st.global.v4.u32 [%o], {%r1, %r2, %V.z, %V.x};
+    ret;
+}
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 5, 5, 30, 1 };

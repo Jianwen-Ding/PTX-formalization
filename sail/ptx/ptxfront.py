@@ -21,11 +21,11 @@ TOKEN_RES = [
     ("dotword", r"\.[a-zA-Z_][a-zA-Z0-9_]*"),
     ("reg", r"%[a-zA-Z_$][a-zA-Z0-9_$]*(\.[a-zA-Z][a-zA-Z0-9]*)?"),
     ("qname", r"[a-z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)*::[a-zA-Z0-9_]+(:[0-9]+)*((\.|::)[a-zA-Z0-9_]+(:[0-9]+)*)*"),
-    ("hex", r"0[xXfFdDbB][0-9a-fA-F]+[uU]?"),
+    ("hex", r"[+-]?0[xXfFdDbB][0-9a-fA-F]+[uU]?"),
     ("float", r"([+-]?[0-9]+(\.[0-9]*)?|[+-]?\.[0-9]+)([eE][+-]?[0-9]+)?([fFdD]|[pP][0-9]+[xX][0-9]+)?"),
-    ("int", r"[+-]?[0-9]+"),
+    ("int", r"[+-]?[0-9]+[uU]?"),
     ("name", r"[a-zA-Z_$][a-zA-Z0-9_$]*(\.[a-zA-Z0-9_$]+)*"),
-    ("punct", r"<<<|>>>|[,;:{}\[\]()<>=+\-!|@]"),
+    ("punct", r"<<<|>>>|<<|>>|<=|>=|==|!=|&&|\|\||[,;:{}\[\]()<>=+\-!|@*/%&^~?]"),
 ]
 TOKEN_CRE = [(k, re.compile(r)) for k, r in TOKEN_RES]
 PRIO = {"hex": 3, "int": 2, "float": 1}
@@ -55,6 +55,17 @@ def lex(text):
     toks.append(("eof", ""))
     return toks
 
+def ptx_int(s):
+    """an integer literal (ISA 4.5.1): decimal, octal 0{octal digit}+, optional U suffix (0x / 0b go through hex)"""
+    s = s.rstrip("uU")
+    neg = s.startswith("-")
+    d = s.lstrip("+-")
+    if len(d) > 1 and d[0] == "0" and all(c in "01234567" for c in d):
+        v = int(d, 8)
+    else:
+        v = int(d)   # loose: a leading 0 followed by 8 / 9 is read as decimal
+    return -v if neg else v
+
 def float_bits(s):
     """the value of a K Float token as binary64 bits (f/F suffix: binary32 precision)"""
     single = False
@@ -74,7 +85,7 @@ def float_bits(s):
 TYPES = {".u8", ".u16", ".u32", ".u64", ".s8", ".s16", ".s32", ".s64", ".b8", ".b16", ".b32", ".b64", ".f16", ".f32",
          ".f64", ".pred", ".b128", ".bf16", ".tf32", ".f16x2", ".bf16x2", ".s16x2", ".u16x2", ".u8x4", ".s8x4", ".f32x2",
          ".ue5m3x2", ".s2f6x2", ".e4m3", ".e5m2", ".e4m3x2", ".e5m2x2", ".e4m3x4", ".e5m2x4", ".e2m3x2", ".e3m2x2",
-         ".e2m3x4", ".e3m2x4", ".e2m1x2", ".e2m1x4", ".ue8m0x2", ".u4", ".s4", ".u2", ".s2", ".b1"}
+         ".e2m3x4", ".e3m2x4", ".e2m1x2", ".e2m1x4", ".ue8m0x2", ".ue8m0x4", ".e2m1p4x4", ".u4", ".s4", ".u2", ".s2", ".b1"}
 DATTRS = {".visible", ".extern", ".weak", ".common", ".global", ".shared", ".local", ".const", ".param", ".reg",
           ".align", ".ptr", ".v2", ".v4", ".v8", ".attribute"}
 TEXKINDS = {".texref", ".samplerref", ".surfref"}
@@ -91,7 +102,8 @@ def type_of(t):
                "e4m3": ("e4m3", 8), "e5m2": ("e5m2", 8), "e4m3x2": ("e4m3x2", 16), "e5m2x2": ("e5m2x2", 16),
                "e4m3x4": ("e4m3x4", 32), "e5m2x4": ("e5m2x4", 32), "e2m3x2": ("e2m3x2", 16), "e3m2x2": ("e3m2x2", 16),
                "e2m3x4": ("e2m3x4", 32), "e3m2x4": ("e3m2x4", 32), "e2m1x2": ("e2m1x2", 8), "e2m1x4": ("e2m1x4", 16),
-               "ue8m0x2": ("ue8m0x2", 16), "b1": ("b", 1)}
+               "ue8m0x2": ("ue8m0x2", 16), "ue8m0x4": ("ue8m0x4", 32), "e2m1p4x4": ("e2m1p4x4", 32),
+               "b1": ("b", 1)}
     if s in special:
         return special[s]
     return (s[0], int(s[1:]))
@@ -99,11 +111,71 @@ def type_of(t):
 def tbytes(ty):
     return max(ty[1] // 8, 1)
 
+# ------------------------------------------------------------------ constant expressions (ISA 4.5.4 - 4.5.6)
+# A value is (v, unsigned, isfloat); integers are 64-bit .s64 / .u64, floats binary64.
+M64 = (1 << 64) - 1
+CPREC = {"||": 1, "&&": 2, "|": 3, "^": 4, "&": 5, "==": 6, "!=": 6, "<": 7, ">": 7, "<=": 7, ">=": 7,
+         "<<": 8, ">>": 8, "+": 9, "-": 9, "*": 10, "/": 10, "%": 10}
+
+def cnorm(v, u):
+    v &= M64
+    return v - (1 << 64) if not u and v >> 63 else v
+
+def cval(v, u):
+    return (cnorm(v, u), u, False)
+
+def cfloat(x):
+    return x[0] if x[2] else float(x[0])
+
+def cusual(a, b):
+    u = a[1] or b[1]
+    return cnorm(a[0], u), cnorm(b[0], u), u
+
+def cbin(op, a, b):
+    if a[2] or b[2]:
+        if op in ("<<", ">>", "%", "&", "|", "^"):
+            raise PtxError("operator %s needs integer operands in a constant expression" % op)
+        x, y = cfloat(a), cfloat(b)
+        if op in ("+", "-", "*", "/"):
+            if op == "/" and y == 0.0:
+                r = float("nan") if x == 0.0 or x != x else (float("inf") if (x > 0) == (str(y)[0] != "-") else float("-inf"))
+            else:
+                r = {"+": x + y, "-": x - y, "*": x * y, "/": (x / y) if y != 0.0 else 0.0}[op]
+            return (r, False, True)
+        if op in ("&&", "||"):
+            return (int((x != 0.0) and (y != 0.0)) if op == "&&" else int((x != 0.0) or (y != 0.0)), False, False)
+        return (int({"<": x < y, ">": x > y, "<=": x <= y, ">=": x >= y, "==": x == y, "!=": x != y}[op]), False, False)
+    if op in ("&&", "||"):
+        return (int((a[0] != 0) and (b[0] != 0)) if op == "&&" else int((a[0] != 0) or (b[0] != 0)), False, False)
+    if op in ("<<", ">>"):                       # 2nd operand .u64, result type of the 1st (4.5.5)
+        n = cnorm(b[0], True)
+        if op == "<<":
+            return cval(0 if n >= 64 else a[0] << n, a[1])
+        if a[1]:
+            return cval(0 if n >= 64 else cnorm(a[0], True) >> n, True)
+        return cval(a[0] >> min(n, 63), False)  # arithmetic shift of a signed value
+    if op == "%":                                # operands .u64, result .s64 (Table 5)
+        x, y = cnorm(a[0], True), cnorm(b[0], True)
+        if y == 0:
+            raise PtxError("remainder by zero in a constant expression")
+        return cval(x % y, False)
+    x, y, u = cusual(a, b)
+    if op in ("<", ">", "<=", ">=", "==", "!="):
+        return (int({"<": x < y, ">": x > y, "<=": x <= y, ">=": x >= y, "==": x == y, "!=": x != y}[op]), False, False)
+    if op == "/":
+        if y == 0:
+            raise PtxError("division by zero in a constant expression")
+        q = abs(x) // abs(y)
+        return cval(q if (x < 0) == (y < 0) else -q, u)   # C: truncation toward zero
+    # & | ^ keep the converted type (4.5.5; Table 5 says .u64 -- the same bits)
+    return cval({"+": x + y, "-": x - y, "*": x * y, "&": x & y, "|": x | y, "^": x ^ y}[op], u)
+
 # ------------------------------------------------------------------ parser
 class Parser:
     def __init__(self, toks):
         self.t = toks
         self.i = 0
+        self.isa_notes = []   # legality notes reported under .isacheck
 
     def peek(self, k=0):
         return self.t[self.i + k]
@@ -125,11 +197,145 @@ class Parser:
     def kind(self, k=0):
         return self.t[self.i + k][0]
 
+    # -------------------------------------------------------------- constant expressions
+    def lit_at(self, k=0):
+        kk, ss = self.peek(k)
+        return kk in ("int", "float", "hex") or (kk == "name" and ss == "WARP_SZ")
+
+    def binop_at(self, k=0):
+        kk, ss = self.peek(k)
+        if kk == "punct" and (ss in CPREC or ss == "?"):
+            return True
+        return kk in ("int", "float", "hex") and ss[:1] in "+-"     # 1-2 lexes as 1, -2
+
+    def cstart_at(self, k=0):
+        """a constant expression (not a single literal) starts at token k"""
+        kk, ss = self.peek(k)
+        if self.lit_at(k):
+            return self.binop_at(k + 1) or (kk == "hex" and ss[:1] in "+-")   # -0x10
+        if kk == "punct" and ss == "(" and k == 0 and getattr(self, "in_call", False):
+            return False
+        if kk == "punct" and ss == "(":
+            # not a list such as (a, b) or the launch arguments (0f40000000, X)
+            d, j = 0, k
+            while self.peek(j)[0] != "eof":
+                tj = self.peek(j)
+                if tj[0] == "punct" and tj[1] == "(":
+                    d += 1
+                elif tj[0] == "punct" and tj[1] == ")":
+                    d -= 1
+                    if d == 0:
+                        break
+                elif tj[0] == "punct" and tj[1] in (",", ";") and d == 1:
+                    return False
+                j += 1
+            k2, s2 = self.peek(k + 1)
+            return self.lit_at(k + 1) or (k2 == "dotword" and s2 in (".s64", ".u64")) or \
+                (k2 == "punct" and s2 in ("(", "-", "+", "!", "~")) or self.cstart_at(k + 1)
+        if kk == "punct" and ss in ("-", "+", "!", "~"):
+            k2, s2 = self.peek(k + 1)
+            return self.lit_at(k + 1) or (k2 == "punct" and s2 in ("(", "-", "+", "!", "~"))
+        return False
+
+    def split_sign(self):
+        """turn a sign-folded literal token (-2) into the operator and the literal"""
+        kk, ss = self.peek()
+        if kk in ("int", "float", "hex") and ss[:1] in "+-":
+            self.t[self.i:self.i + 1] = [("punct", ss[0]), (kk, ss[1:])]
+
+    def cprimary(self):
+        self.split_sign()
+        kk, ss = self.peek()
+        if kk == "punct" and ss in ("-", "+", "!", "~"):
+            self.next()
+            x = self.cprimary()
+            if ss == "+":
+                return x
+            if ss == "-":
+                return (-x[0], False, True) if x[2] else cval(-x[0], x[1])
+            if ss == "!":
+                return (int(x[0] == 0), False, False)
+            if x[2]:
+                raise PtxError("~ needs an integer operand in a constant expression")
+            return cval(~cnorm(x[0], True), True)
+        if kk == "punct" and ss == "(":
+            if self.peek(1)[0] == "dotword" and self.peek(1)[1] in (".s64", ".u64") and self.at(")", 2):
+                self.next(); c = self.next()[1]; self.next()
+                x = self.cprimary()
+                if x[2]:
+                    raise PtxError("cast of a floating-point constant expression")
+                return cval(x[0], c == ".u64")
+            self.next()
+            x = self.cexpr()
+            self.expect(")")
+            return x
+        self.next()
+        if kk == "name" and ss == "WARP_SZ":
+            return (32, False, False)
+        if kk == "int":
+            v = ptx_int(ss)
+            return cval(v, ss[-1] in "uU" or v > (1 << 63) - 1)
+        if kk == "hex" and ss[1] in "fF":     # loose: 0f / 0d literals by their value (the ISA keeps them out)
+            # 0f values "retain their exact 32-bit single-precision value and may not be used in constant
+            # expressions" (4.5.2): reported under .isacheck
+            self.isa_notes.append("a 0f single-precision literal may not be used in a constant expression "
+                                  "[PTX ISA 9.4 4.5.2]")
+            return (struct.unpack("<f", struct.pack("<I", int(ss.rstrip("uU")[2:], 16)))[0], False, True)
+        if kk == "hex" and ss[1] in "dD":
+            return (struct.unpack("<d", struct.pack("<Q", int(ss.rstrip("uU")[2:], 16)))[0], False, True)
+        if kk == "hex":
+            d = ss.rstrip("uU")
+            v = int(d[2:], 16 if d[1] in "xX" else 2)
+            return cval(v, ss[-1] in "uU" or v > (1 << 63) - 1)
+        if kk == "float":
+            return (struct.unpack("<d", struct.pack("<Q", float_bits(ss)))[0], False, True)
+        raise PtxError("bad constant expression at %r" % ss)
+
+    def cbinrest(self, lhs, minp):
+        while True:
+            self.split_sign()
+            kk, op = self.peek()
+            if kk != "punct" or op not in CPREC or CPREC[op] < minp:
+                return lhs
+            self.next()
+            rhs = self.cprimary()
+            while True:
+                self.split_sign()
+                k2, op2 = self.peek()
+                if k2 == "punct" and op2 in CPREC and CPREC[op2] > CPREC[op]:
+                    rhs = self.cbinrest(rhs, CPREC[op2])
+                else:
+                    break
+            lhs = cbin(op, lhs, rhs)
+
+    def cexpr(self, lhs=None):
+        c = self.cbinrest(self.cprimary() if lhs is None else lhs, 1)
+        if self.at("?"):
+            self.next()
+            a = self.cexpr(); self.expect(":"); b = self.cexpr()
+            if c[2]:
+                raise PtxError("the condition of ?: must be an integer")
+            if a[2] or b[2]:
+                return (cfloat(a) if c[0] != 0 else cfloat(b), False, True)
+            x, y, u = cusual(a, b)
+            return cval(x if c[0] != 0 else y, u)
+        return c
+
+    def cint(self):
+        x = self.cexpr()
+        if x[2]:
+            raise PtxError("an integer constant expression is required")
+        return x[0]
+
+    def cop(self, x):
+        """the operand / initializer of a constant expression's value"""
+        return ("float", struct.unpack("<Q", struct.pack("<d", x[0]))[0]) if x[2] else ("int", x[0])
+
     def take_int(self):
         tok = self.next()
         if tok[0] != "int":
             raise PtxError("expected an integer, got %r" % (tok[1],))
-        return int(tok[1])
+        return ptx_int(tok[1])
 
     def take_name(self):
         tok = self.next()
@@ -166,7 +372,7 @@ class Parser:
         if s == ".nv_intermediate_source_section":
             self.next(); self.skip_braces(); return ("skip",)
         if s == ".pragma":
-            self.next(); self.next(); self.expect(";"); return ("skip",)
+            self.next(); self.pragma_strings(); self.expect(";"); return ("skip",)
         if s in HARNESS:
             return self.harness()
         return self.decl_or_func(top=True)
@@ -185,6 +391,21 @@ class Parser:
         while self.at(","):
             self.next(); ns.append(self.take_name())
         return ns
+
+    def target_names(self):
+        """a .branchtargets / .calltargets list; "The list of labels may use the compact, shorthand syntax for
+        enumerating a range of labels having a common prefix" (11.3.1): N<5> is N0, .., N4"""
+        ns = []
+        while True:
+            n = self.take_name()
+            if self.at("<"):
+                self.next(); cnt = self.take_int(); self.expect(">")
+                ns.extend(n + str(i) for i in range(cnt))
+            else:
+                ns.append(n)
+            if not self.at(","):
+                return ns
+            self.next()
 
     def ints(self):
         xs = [self.take_int()]
@@ -223,7 +444,7 @@ class Parser:
                 if self.at("]"):
                     dims.append(None)
                 else:
-                    dims.append(self.take_int())
+                    dims.append(self.cint())
                 self.expect("]")
             return ("array", s, dims)
         return ("plain", k, s)
@@ -235,6 +456,8 @@ class Parser:
         return items
 
     def initval(self):
+        if self.cstart_at():
+            return self.cop(self.cexpr())
         k, s = self.peek()
         if s == "{":
             self.next()
@@ -245,6 +468,20 @@ class Parser:
                     self.next(); vs.append(self.initval())
             self.expect("}")
             return ("brace", vs)
+        if k == "hex" and s[1] in "xX" and self.at("(", 1):
+            # mask(expr) (PTX ISA 5.4.4): an integer constant expression or a symbol expression
+            self.next(); self.next()
+            inner = self.initval()
+            if inner[0] == "hex" and inner[1][1] in "xX":
+                inner = ("int", int(inner[1].rstrip("uU")[2:], 16))
+            while inner[0] == "int" and ((self.at("+") and self.kind(1) == "int") or self.kind() == "int"):
+                if self.at("+"):
+                    self.next()
+                inner = ("int", inner[1] + self.take_int())
+            self.expect(")")
+            if inner[0] not in ("int", "name", "nameoff", "generic", "genericoff"):
+                raise PtxError("bad expression in the mask() operator %s" % s)
+            return ("mask", int(s.rstrip("uU")[2:], 16), inner)
         if k == "name" and s == "generic" and self.at("(", 1):
             self.next(); self.next(); n = self.take_name(); self.expect(")")
             if self.at("+"):
@@ -253,7 +490,7 @@ class Parser:
                 return ("genericoff", n, self.take_int())
             return ("generic", n)
         self.next()
-        if k == "int": return ("int", int(s))
+        if k == "int": return ("int", ptx_int(s))
         if k == "float": return ("float", float_bits(s))
         if k == "hex": return ("hex", s)
         if k == "name":
@@ -294,7 +531,11 @@ class Parser:
                        ".abi_preserve_control", ".minperctamemory"):
                 ds.append((d, [self.take_int()]))
             elif d in (".pragma",):
-                self.next(); ds.append((d, []))
+                # .pragma list-of-strings ; (11.4.1), also between a kernel's header and its body
+                self.pragma_strings()
+                if self.at(";"):
+                    self.next()
+                ds.append((d, []))
             elif d == ".language":
                 self.next()
                 if self.at(","):
@@ -323,8 +564,15 @@ class Parser:
         self.expect(";")
         return ("decl", a1, t, a2, items, init)
 
+    def pragma_strings(self):
+        self.next()
+        while self.at(","):
+            self.next(); self.next()
+
     def funcdef(self, a1):
         kw = self.next()[1]
+        if self.at(".attribute"):
+            a1 = list(a1) + self.dattrs()   # .func .attribute(attr-list) fname (11.3.2)
         rets = None
         if kw == ".func" and self.at("("):
             rets = self.paramdecls()
@@ -347,10 +595,11 @@ class Parser:
 
     def stmt(self):
         k, s = self.peek()
+        prev, self.prev_dir = getattr(self, "prev_dir", None), None
         if s == "{" and k == "punct":
             return ("block", self.block())
         if s == ".pragma":
-            self.next(); self.next(); self.expect(";"); return ("skip",)
+            self.next(); self.pragma_strings(); self.expect(";"); return ("skip",)
         if s == ".loc":
             self.next(); self.take_int(); self.take_int(); self.take_int()
             while True:
@@ -368,8 +617,13 @@ class Parser:
                         self.take_int(); self.take_int(); self.take_int()
                 else:
                     break
+            self.prev_dir = "loc"
             return ("skip",)
         if s == ".loc_intermediate":
+            # "must be immediately preceded ... by a .loc directive for the same instruction. Only one
+            # .loc_intermediate may appear per instruction" (11.5.5): reported under .isacheck
+            if prev != "loc":
+                self.isa_notes.append(".loc_intermediate must immediately follow a .loc directive [PTX ISA 9.4 11.5.5]")
             self.next(); self.take_int(); self.take_int(); self.take_int(); return ("skip",)
         if s == "@" and k == "punct":
             self.next()
@@ -388,7 +642,7 @@ class Parser:
                 return ("skip",)
             if self.at(".calltargets") or self.at(".branchtargets"):
                 kw = self.next()[1]
-                ns = self.names(); self.expect(";")
+                ns = self.target_names(); self.expect(";")
                 return ("targets", kw, name, ns)
             return ("label", name)
         if k in ("name", "qname"):
@@ -399,36 +653,46 @@ class Parser:
 
     def instr(self):
         k, opc = self.next()
+        # call's parenthesized operands are argument / return lists, also with one constant: (21) (9.7.13.5)
+        self.in_call = opc.split(".")[0] == "call"
         ops = []
         if not self.at(";"):
             ops.append(self.operand())
             while self.at(","):
                 self.next(); ops.append(self.operand())
         self.expect(";")
+        # an array element as a memory operand, `ld.global.u32 s, a[0];` (6.4.1, 6.4.2): the location a + 0
+        base = opc.split(".")[0]
+        ai = {"ld": 1, "ldu": 1, "atom": 1, "st": 0, "red": 0}.get(base)
+        if ai is not None and len(ops) > ai and ops[ai][0] == "nameplus":
+            ops[ai] = ("mem", [("anameoff", ops[ai][1], ops[ai][2])])
+        if ai is not None and len(ops) > ai and ops[ai][0] == "nameidx":
+            ops[ai] = ("mem", [("anamereg", ops[ai][1], ops[ai][2], ops[ai][3])])
+        if any(o[0] == "nameidx" for o in ops):
+            raise PtxError("a register-indexed array element is supported as a memory operand only (%s)" % opc)
+        self.in_call = False
         return opc, ops
 
     # -------------------------------------------------------------- operands
     def addr_or_op(self):
         k, s = self.peek()
-        if k == "reg":
+        if k in ("reg", "name"):
             self.next()
-            if self.kind() == "int":
-                return ("aregoff", s, int(self.next()[1]))
-            if self.at("+") and self.kind(1) == "int":
-                self.next(); return ("aregoff", s, int(self.next()[1]))
-            return ("areg", s)
-        if k == "name":
-            self.next()
-            if self.kind() == "int":
-                return ("anameoff", s, int(self.next()[1]))
-            if self.at("+") and self.kind(1) == "int":
-                self.next(); return ("anameoff", s, int(self.next()[1]))
-            return ("aname", s)
-        if k == "int":
-            self.next(); return ("aint", int(s))
+            # [r + off], [r - off], [r+8-4], [r + (2*4)]: the offset is an integer constant expression (6.4.1)
+            self.split_sign()
+            if (self.at("+") or self.at("-")) and not self.at("]", 1):
+                off = self.cexpr((0, False, False))
+                if off[2]:
+                    raise PtxError("the address offset must be an integer")
+                return ("aregoff" if k == "reg" else "anameoff", s, off[0])
+            return ("areg" if k == "reg" else "aname", s)
+        if k == "int" or self.cstart_at():
+            return ("aint", self.cint())
         return ("op", self.operand())
 
     def operand(self):
+        if self.cstart_at():
+            return self.cop(self.cexpr())
         k, s = self.peek()
         if k == "punct" and s == "[":
             self.next()
@@ -481,11 +745,23 @@ class Parser:
                     raise PtxError("bad operand after %s|: %r" % (s, b[1]))
                 return ("pipe", ("name", s), ("name", b[1]))
             if self.at("+") and self.kind(1) == "int":
-                self.next(); return ("nameplus", s, int(self.next()[1]))
+                self.next(); return ("nameplus", s, ptx_int(self.next()[1]))
             if self.kind() == "int":
-                return ("nameint", s, int(self.next()[1]))
+                return ("nameint", s, ptx_int(self.next()[1]))
+            if self.at("[") and self.kind(1) == "reg":
+                # a[r], a[r+4], a[r-4]: register index (6.4.2) -- an address of ld / st / atom / red
+                self.next(); r = self.next()[1]
+                self.split_sign()
+                off = self.cexpr((0, False, False))[0] if (self.at("+") or self.at("-")) else 0
+                self.expect("]")
+                return ("nameidx", s, r, off)
+            if self.at("[") and (self.lit_at(1) or self.cstart_at(1)):
+                # a[1], a[N-1]: the address of the array element (PTX ISA 6.4.2); the index is a byte offset as in
+                # the example of 4.3 (array[r1] with r1 = tid << 2)
+                self.next(); i = self.cint(); self.expect("]")
+                return ("nameplus", s, i)
             return ("name", s)
-        if k == "int": return ("int", int(s))
+        if k == "int": return ("int", ptx_int(s))
         if k == "float": return ("float", float_bits(s))
         if k == "hex": return ("hex", s)
         raise PtxError("bad operand %r" % s)
@@ -604,8 +880,9 @@ def align_of(attrs):
             return a[1]
     return 0
 
-def align_or(a1, a2, ty):
-    return align_of(a1) or align_of(a2) or tbytes(ty)
+def align_or(a1, a2, ty, st=()):
+    # vector variables are aligned to their overall size by default (PTX ISA 5.4.2)
+    return align_of(a1) or align_of(a2) or tbytes(ty) * (vwidth(st) or 1)
 
 def dspace(s):
     for k in ("reg", "shared", "local", "param", "global", "const"):
@@ -616,31 +893,49 @@ def dspace(s):
 def item_name(it):
     return it[2] if it[0] in ("plain", "range") else it[1]
 
-def item_size(it, ty):
-    if it[0] == "array":
-        n = 1
-        for d in it[1:][1]:
-            n *= (d or 0)
-        if it[2] and it[2][-1] is None and len(it[2]) == 1:
-            n = 0
-        return n * tbytes(ty)
-    return tbytes(ty)
-
 def dims_count(dims):
-    # dimsCount: [N] R => N * dimsCount(R); [N] => N; [] => 0 (a [] followed by more dims is not covered)
-    if not dims:
-        return 1
-    d = dims[0]
-    if len(dims) == 1:
-        return d if d is not None else 0
-    if d is None:
-        return 0
-    return d * dims_count(dims[1:])
+    # dimsCount: [N] R => N * dimsCount(R); [N] => N; [] => 0 (an unsized array without initializer)
+    n = 1
+    for d in dims:
+        n *= d or 0
+    return n
 
-def item_size2(it, ty):
-    if it[0] == "array":
-        return dims_count(it[2]) * tbytes(ty)
-    return tbytes(ty)
+def item_dims(it, st):
+    """the dimensions of a declarator; a .v2 / .v4 / .v8 vector is an innermost dimension (PTX ISA 5.4.2)"""
+    dims = list(it[2]) if it[0] == "array" else []
+    k = vwidth(st)
+    return dims + [k] if k else dims
+
+def item_size2(it, ty, st=()):
+    return dims_count(item_dims(it, st)) * tbytes(ty)
+
+def shape_init(init, dims):
+    """the flat element list of an initializer for an object of the given dimensions, and the dimensions with
+    an omitted first one taken from the initializer (PTX ISA 5.4.3, 5.4.4).  As in C, a nested list may be
+    incomplete: the rest of its sub-array is filled with zeros (only up to the last initialized element)."""
+    if not dims:
+        if init[0] == "brace":
+            if len(init[1]) != 1:
+                raise PtxError("a scalar takes a single initializer value")
+            return shape_init(init[1][0], [])
+        return [init], []
+    if init[0] != "brace":
+        return [init], [dims[0] or 1] + dims[1:]
+    inner = dims_count(dims[1:])
+    out, pad = [], False
+    for v in init[1]:
+        if pad or (v[0] == "brace" and len(dims) > 1):
+            out.extend([("int", 0)] * (-len(out) % inner))
+        pad = False
+        if v[0] == "brace" and len(dims) > 1:
+            out.extend(shape_init(v, dims[1:])[0])
+            pad = True
+        else:
+            out.extend(shape_init(v, [])[0])
+    n = -(-len(out) // inner) if inner else 0
+    if dims[0] is not None and n > dims[0]:
+        raise PtxError("too many initializers")
+    return out, [dims[0] if dims[0] is not None else n] + dims[1:]
 
 def vwidth(s):
     for k, n in (("v2", 2), ("v4", 4), ("v8", 8)):
@@ -660,7 +955,7 @@ def pdecls(ps):
         s = aset(a1) | aset(a2)
         name = item_name(it)
         if "reg" not in s:
-            out.append((name, ty, item_size2(it, ty), align_or(a1, a2, ty)))
+            out.append((name, ty, item_size2(it, ty, s), align_or(a1, a2, ty, s)))
         else:
             k = vwidth(s)
             if k == 0:
@@ -696,6 +991,7 @@ class Loader:
         self.code = []
         self.L = {}
         self.rw = rw
+        self.rk = {}          # register name -> declared type (kind, width), for the .isacheck type rules
         self.sh = []
 
     # renaming (rnS / rnO / rnA)
@@ -708,6 +1004,7 @@ class Loader:
         if a[0] == "aname": return ("aname", self.rn_s(a[1]))
         if a[0] == "aregoff": return ("aregoff", self.rn_s(a[1]), a[2])
         if a[0] == "anameoff": return ("anameoff", self.rn_s(a[1]), a[2])
+        if a[0] == "anamereg": return ("anamereg", self.rn_s(a[1]), self.rn_s(a[2]), a[3])
         return a
 
     def rn_item(self, it):
@@ -791,10 +1088,14 @@ class Loader:
             _, a1, t, a2, items, init = s
             st = aset(a1) | aset(a2)
             ty = type_of(t)
-            al = align_or(a1, a2, ty)
+            al = align_or(a1, a2, ty, st)
             sp = dspace(st)
+            # loose: a declaration of %-registers without a state space (`.pred %p;`) declares registers
+            if not (st & {"reg", "shared", "local", "param", "global", "const"}) and items and \
+                    all(it[0] in ("plain", "range") and it[1] == "reg" for it in items):
+                sp = "reg"
             if init is not None and sp in ("shared", "global", "const"):
-                self.sh.extend(sdecls(st, al, ty, items, init_of(init)))
+                self.sh.extend(sdecls(st, al, ty, items, init))
             else:
                 self.pp_decl(sp, st, al, ty, list(items))
         elif k in ("skip", "texdecl"):
@@ -805,6 +1106,8 @@ class Loader:
             raise PtxError("unexpected statement %r" % (k,))
 
     def pp_decl(self, sp, st, al, ty, items):
+        if sp != "reg":
+            items = expand_ranges(items)
         while items:
             it = items.pop(0)
             if sp == "reg":
@@ -820,28 +1123,26 @@ class Loader:
                     if k == 0:
                         for i in range(it[3]):
                             self.rw[it[2] + str(i)] = ty[1]
+                            self.rk[it[2] + str(i)] = ty
                     else:
                         for i in range(it[3]):
-                            self.vdeclare(it[2] + str(i), ty[1], k)
+                            self.vdeclare(it[2] + str(i), ty[1], k, ty)
                 elif k > 0 and plain:
-                    self.vdeclare(item_name(it), ty[1], k)
+                    self.vdeclare(item_name(it), ty[1], k, ty)
                 else:
                     self.rw[item_name(it)] = ty[1]
+                    self.rk[item_name(it)] = ty
             elif sp in ("local", "param"):
-                self.code.append(("declvar", sp, item_name(it), item_size2(it, ty), al))
+                self.code.append(("declvar", sp, item_name(it), item_size2(it, ty, st), al))
             else:
-                self.sh.extend(sdecls(st, al, ty, [it] + items, []))
+                self.sh.extend(sdecls(st, al, ty, [it] + items, None))
                 return
 
-    def vdeclare(self, n, w, k):
+    def vdeclare(self, n, w, k, ty=None):
         for i in range(k):
             self.rw[n + "." + vcomp(i)] = w
+            if ty is not None: self.rk[n + "." + vcomp(i)] = ty
         self.rw["@vec:" + n] = k
-
-def init_of(v):
-    if v[0] == "brace":
-        return iv_list(v[1])
-    return [v]
 
 def iv_list(vs):
     out = []
@@ -852,8 +1153,26 @@ def iv_list(vs):
             out.append(v)
     return out
 
+def expand_ranges(items):
+    """parameterized names: "This shorthand syntax may be used with any of the fundamental types and with any state
+    space" (PTX ISA 5.4.6): name<N> declares name0 .. name(N-1)"""
+    out = []
+    for it in items:
+        if it[0] == "range":
+            out.extend(("plain", it[1], it[2] + str(i)) for i in range(it[3]))
+        else:
+            out.append(it)
+    return out
+
 def sdecls(st, al, ty, items, init):
-    return [(dspace(st), item_name(it), ty, item_size2(it, ty), al, "extern" in st, init) for it in items]
+    out = []
+    for it in expand_ranges(items):
+        dims = item_dims(it, st)
+        vals = []
+        if init is not None:
+            vals, dims = shape_init(init, dims)
+        out.append((dspace(st), item_name(it), ty, dims_count(dims) * tbytes(ty), al, "extern" in st, vals))
+    return out
 
 def func_head(kw, rets, name, params):
     return name, ("entry" if kw == ".entry" else "func"), pdecls(rets), pdecls(params)
@@ -882,6 +1201,7 @@ def ser_addr(a):
     if t == "aint": return "AI %d" % a[1]
     if t == "aregoff": return "ARO %s %d" % (a[1], a[2])
     if t == "anameoff": return "ANO %s %d" % (a[1], a[2])
+    if t == "anamereg": return "ANR %s %s %d" % (a[1], a[2], a[3])
     raise PtxError("bad address %r" % (a,))
 
 def addr_as_op(a):
@@ -935,7 +1255,8 @@ def split_opc(s):
 TY_STRS = {"u8", "u16", "u32", "u64", "s8", "s16", "s32", "s64", "b8", "b16", "b32", "b64", "f16", "f32", "f64", "pred",
            "b128", "bf16", "tf32", "f16x2", "bf16x2", "s16x2", "u16x2", "u8x4", "s8x4", "f32x2", "ue5m3x2", "s2f6x2",
            "e4m3", "e5m2", "e4m3x2", "e5m2x2", "e4m3x4", "e5m2x4", "e2m3x2", "e3m2x2", "e2m3x4", "e3m2x4", "e2m1x2",
-           "e2m1x4", "ue8m0x2", "e3m2", "e2m3", "e2m1", "ue8m0", "ue4m3", "u4", "s4", "u2", "s2", "b1"}
+           "e2m1x4", "ue8m0x2", "ue8m0x4", "e2m1p4x4", "e3m2", "e2m3", "e2m1", "ue8m0", "ue4m3", "u4", "s4", "u2", "s2",
+           "b1"}
 def is_ty_str(x):
     return x in TY_STRS
 
@@ -968,6 +1289,12 @@ def ser_init(v):
     if t == "namediff": return "ND %s %s" % (v[1], v[2])
     if t == "generic": return "G " + v[1]
     if t == "genericoff": return "GO %s %d" % (v[1], v[2])
+    if t == "mask":
+        x = v[2]
+        kind, name, off = {"int": (0, "-", x[1]), "name": (1, x[1], 0), "generic": (2, x[1], 0),
+                           "nameoff": (1, x[1], x[2]) if len(x) > 2 else None,
+                           "genericoff": (2, x[1], x[2]) if len(x) > 2 else None}[x[0]]
+        return "M %d %d %s %d" % (v[1], kind, name, off)
     raise PtxError("bad initializer %r" % (v,))
 
 def ser_sdecl(d):
@@ -980,8 +1307,235 @@ def ser_pdecl(p):
 def ser_perf(pd):
     return " ".join("%s %d %s" % (d[0][1:], len(xs), " ".join(map(str, xs))) for d, xs in [((d,), xs) for d, xs in pd])
 
+# the predefined, read-only special registers of PTX ISA 9.3 chapter 10 (%warpsize: older code, value 32)
+SREGS = ({"%tid", "%ntid", "%laneid", "%warpid", "%nwarpid", "%ctaid", "%nctaid", "%smid", "%nsmid", "%gridid",
+          "%is_explicit_cluster", "%clusterid", "%nclusterid", "%cluster_ctaid", "%cluster_nctaid", "%cluster_ctarank",
+          "%cluster_nctarank", "%lanemask_eq", "%lanemask_le", "%lanemask_lt", "%lanemask_ge", "%lanemask_gt",
+          "%clock", "%clock_hi", "%clock64", "%globaltimer", "%globaltimer_lo", "%globaltimer_hi",
+          "%reserved_smem_offset_begin", "%reserved_smem_offset_end", "%reserved_smem_offset_cap",
+          "%reserved_smem_offset_0", "%reserved_smem_offset_1", "%total_smem_size", "%aggr_smem_size",
+          "%dynamic_smem_size", "%current_graph_exec", "%warpsize", "%perctamemoryoffset", "%perctamemorysize"}
+         | {"%%pm%d" % i for i in range(8)} | {"%%pm%d_64" % i for i in range(8)} | {"%%envreg%d" % i for i in range(32)})
+
+COLOUR = {"r": "x", "g": "y", "b": "z", "a": "w"}
+
+def colour_fields(ld):
+    """vector elements may be named by the colour fields .r .g .b .a as well as .x .y .z .w (ISA 6.4.2)"""
+    def fix(x):
+        if isinstance(x, tuple):
+            if len(x) == 2 and x[0] == "reg" and isinstance(x[1], str) and "." in x[1]:
+                base, c = x[1].rsplit(".", 1)
+                if c in COLOUR and "@vec:" + base in ld.rw:
+                    return ("reg", base + "." + COLOUR[c])
+            return tuple(fix(y) for y in x)
+        if isinstance(x, list):
+            return [fix(y) for y in x]
+        return x
+    ld.code = [c if c[0] == "declvar" else (c[0], c[1], c[2], fix(c[3])) for c in ld.code]
+
+def check_regs(fname, ld):
+    """every %-register operand is declared in the function or is a special register (ISA 6.1, 10)"""
+    def walk(x):
+        if isinstance(x, tuple):
+            if len(x) >= 2 and x[0] == "reg" and isinstance(x[1], str):
+                yield x[1]
+            if len(x) == 4 and x[0] == "anamereg":
+                yield x[2]
+            for y in x:
+                yield from walk(y)
+        elif isinstance(x, list):
+            for y in x:
+                yield from walk(y)
+    for c in ld.code:
+        if c[0] == "declvar":
+            continue
+        _, g, opc, ops = c
+        names = list(walk(ops)) + ([g[0]] if g is not None else [])
+        for n in names:
+            base = n.split(".")[0]          # %r.b1 / %r.h10: video selectors; %tid.x: components
+            if not n.startswith("%") or n in ld.rw or base in ld.rw or base in SREGS or n.split("@")[0] in ld.rw:
+                continue
+            raise PtxError("%s: register %s is not declared" % (fname, n))
+
+# ---------------------------------------------------------------- operand type rules (ISA 9.4, Tables 26-28)
+SIMPLE_TY = {"b8": ("b", 8), "b16": ("b", 16), "b32": ("b", 32), "b64": ("b", 64), "b128": ("b", 128),
+             "s8": ("s", 8), "s16": ("s", 16), "s32": ("s", 32), "s64": ("s", 64),
+             "u8": ("u", 8), "u16": ("u", 16), "u32": ("u", 32), "u64": ("u", 64),
+             "f16": ("f", 16), "f32": ("f", 32), "f64": ("f", 64)}
+# instructions whose register operands all carry the instruction type (Table 26); setp from its second operand
+SAME_TY = {"add", "sub", "mul", "mad", "min", "max", "abs", "neg", "div", "rem", "and", "or", "xor", "not", "cnot",
+           "fma", "rcp", "sqrt", "rsqrt", "sin", "cos", "lg2", "ex2", "copysign", "mov", "setp", "selp"}
+
+def ty_agrees(it, ot, relaxed):
+    """Table 26 (exact) or Tables 27 / 28 (ld, st, cvt: wider operands allowed)"""
+    (ik, iw), (ok, ow) = it, ot
+    if ok not in ("b", "s", "u", "f"):
+        return True
+    if relaxed:
+        if ow < iw: return False
+    elif ow != iw:
+        return False
+    if ik == "f":
+        return ok == "b" or (ok == "f" and ow == iw)
+    if ik in ("s", "u"):
+        return ok != "f"
+    return True
+
+def check_types(fname, ld):
+    """.isacheck: register operands must agree with the instruction type (ISA 9.4)"""
+    def regs(o):
+        if o[0] == "reg": return [o[1]]
+        if o[0] == "vec": return [x[1] for x in o[1] if x[0] == "reg"]
+        if o[0] == "pipe": return [x[1] for x in o[1:] if isinstance(x, tuple) and x[0] == "reg"]
+        return []
+    for c in ld.code:
+        if c[0] != "ins": continue
+        opc, ops = c[2], c[3]
+        parts = opc.split(".")
+        base = parts[0]
+        # mov takes a register, a special register, a variable (with an offset) or a function name, not a label
+        # (9.7.10.3)
+        if base == "mov" and len(ops) == 2 and ops[1][0] in ("name", "nameplus") and ops[1][1] in ld.L:
+            raise PtxError("%s: %s: a label is not a mov operand [PTX ISA 9.4 9.7.10.3]" % (fname, opc))
+        tys = [SIMPLE_TY[p] for p in parts[1:] if p in SIMPLE_TY]
+        alltys = [p for p in parts[1:] if p in SIMPLE_TY or p in ("pred", "bf16", "tf32") or "x" in p and p[-1].isdigit()]
+        checks = []
+        if base in SAME_TY and len(tys) == 1 and len(alltys) == 1 and "wide" not in parts:
+            sel = ops[1:] if base == "setp" else (ops[:3] if base == "selp" else ops)
+            # mov d, {a, b} packs / unpacks elements of their own size (9.7.9.10)
+            checks = [(o, tys[0], False) for o in sel if not (base == "mov" and o[0] == "vec")]
+        elif base in ("shl", "shr") and len(tys) == 1 and len(alltys) == 1 and len(ops) == 3:
+            # "the shift amount operand for left and right shift instructions always has type .u32" (9.4)
+            checks = [(ops[0], tys[0], False), (ops[1], tys[0], False), (ops[2], ("u", 32), False)]
+        elif base in ("mul", "mad") and "wide" in parts and len(tys) == 1 and len(alltys) == 1 and len(ops) >= 3:
+            # .wide: d (and c of mad) are twice the instruction width (9.7.1.3, 9.7.1.4)
+            wt = (tys[0][0], 2 * tys[0][1])
+            checks = [(ops[0], wt, False), (ops[1], tys[0], False), (ops[2], tys[0], False)] + \
+                     ([(ops[3], wt, False)] if base == "mad" and len(ops) == 4 else [])
+        elif base in ("popc", "clz") and len(tys) == 1 and len(alltys) == 1 and len(ops) == 2:
+            # d has type .u32, a the instruction type (9.7.1.15, 9.7.1.16)
+            checks = [(ops[0], ("u", 32), False), (ops[1], tys[0], False)]
+        elif base == "ld" and len(tys) == 1 and len(alltys) == 1 and ops:
+            checks = [(ops[0], tys[0], True)]
+        elif base == "st" and len(tys) == 1 and len(alltys) == 1 and ops:
+            checks = [(ops[-1], tys[0], True)]
+        elif base == "cvt" and len(tys) == 2 and len(alltys) == 2 and len(ops) == 2:
+            checks = [(ops[0], tys[0], True), (ops[1], tys[1], True)]
+        for o, it, rel in checks:
+            for r in regs(o):
+                ot = ld.rk.get(r)
+                if ot is not None and not ty_agrees(it, ot, rel):
+                    raise PtxError("%s: %s: operand %s of type .%s%d does not agree with the instruction type .%s%d "
+                                   "[PTX ISA 9.4 section 9.4, Table %s]" % (fname, opc, r.split("@")[0], ot[0], ot[1], it[0], it[1],
+                                                                    "27 / 28" if rel else "26"))
+
+# ---------------------------------------------------------------- declaration rules (ISA 9.4 5.4), under .isacheck
+MASKS = {0xFF << (8 * i) for i in range(8)}
+
+def init_leaves(v):
+    if v is None:
+        return []
+    if v[0] == "brace":
+        return [x for e in v[1] for x in init_leaves(e)]
+    return [v]
+
+def init_names(v):
+    """the symbols an initializer value refers to, and whether it is inside mask()"""
+    if v[0] in ("name", "nameoff", "generic", "genericoff"):
+        return [(v[1], False)]
+    if v[0] == "namediff":
+        return [(v[1], False), (v[2], False)]
+    if v[0] == "mask":
+        return [(n, True) for n, _ in init_names(v[2])]
+    return []
+
+def check_decl(td, spaces, labels):
+    _, a1, t, a2, items, init = td
+    st = aset(a1) | aset(a2)
+    sp = dspace(st)
+    ty = type_of(t)
+    tn = t[1:]
+    name = item_name(items[0])
+    def err(msg, sec):
+        raise PtxError("%s: %s [PTX ISA 9.4 %s]" % (name, msg, sec))
+    if not st & {"reg", "shared", "local", "param", "global", "const"}:
+        err("a variable declaration names the state space in which the variable resides", "5.4.1")
+    if tn == "pred" and sp != "reg":
+        err("predicate variables may only be declared in the register state space", "5.4.1")
+    vec = [v for v in ("v2", "v4", "v8") if v in st]
+    if vec:
+        if tn == "pred":
+            err("vectors of .pred are not allowed", "5.4.2")
+        if vec[0] == "v8":
+            err("vector variables have length 2 or 4", "5.4.2")
+        if int(vec[0][1:]) * ty[1] > 128:
+            err("vectors cannot exceed 128 bits in length", "5.4.2")
+    for a in a1 + a2:
+        if a[0] == ".align" and (a[1] <= 0 or a[1] & (a[1] - 1)):
+            err("the .align byte-count must be a power of two", "5.4.5")
+    if init is None:
+        return
+    if any(it[0] == "range" for it in items):
+        err("initializers are not permitted with parameterized variable names", "5.4.6")
+    if sp not in ("global", "const"):
+        err("variable initialization is supported only for the .const and .global state spaces", "5.4.4")
+    if "extern" in st:
+        err("initializers are not allowed in external variable declarations", "5.4.4")
+    if tn in ("f16", "f16x2", "pred"):
+        err("initializers are allowed for all types except .f16, .f16x2 and .pred", "5.4.4")
+    addr = False
+    for v in init_leaves(init):
+        if v[0] == "mask" and v[1] not in MASKS:
+            err("mask() takes 0xFF shifted by a whole number of bytes", "5.4.4")
+        for n, masked in init_names(v):
+            if n in labels:
+                err("labels cannot be used in initializers", "5.4.4")
+            if spaces.get(n, "global") not in ("global", "const", "func"):
+                err("only variables in .global or .const state spaces may be used in initializers", "5.4.4")
+            addr = True
+            if tn == "u8" and not masked:
+                err("type .u8 holds an address only with the mask() operator", "5.4.4")
+    if addr and tn not in ("u8", "u32", "u64"):
+        err("variables that hold addresses of variables or functions should be of type .u8 or .u32 or .u64", "5.4.4")
+
+def check_decls(mod):
+    spaces = {}
+    for td in mod:
+        if td[0] == "decl":
+            for it in td[4]:
+                spaces[item_name(it)] = dspace(aset(td[1]) | aset(td[3]))
+        elif td[0] in ("func", "proto"):
+            spaces[td[4] if td[0] == "func" else td[3]] = "func"
+    def body(stmts, labels, sps):
+        for st in stmts:
+            if st[0] == "block":
+                body(st[1], labels, sps)
+            elif st[0] == "decl":
+                check_decl(st, sps, labels)
+    for td in mod:
+        if td[0] == "decl":
+            check_decl(td, spaces, set())
+        elif td[0] == "func":
+            labels = set()
+            def labs(stmts):
+                for st in stmts:
+                    if st[0] == "block": labs(st[1])
+                    elif st[0] in ("label", "targets"): labels.add(st[2] if st[0] == "targets" else st[1])
+            labs(td[7])
+            sps = dict(spaces)
+            def locs(stmts):
+                for st in stmts:
+                    if st[0] == "block": locs(st[1])
+                    elif st[0] == "decl":
+                        for it in st[4]:
+                            sps[item_name(it)] = dspace(aset(st[1]) | aset(st[3]))
+            locs(td[7])
+            body(td[7], labels, sps)
+
 def serialize(mod):
     lines = []
+    if any(t[0] == "isacheck" for t in mod):
+        check_decls(mod)
     for td in mod:
         k = td[0]
         if k == "version":
@@ -998,7 +1552,7 @@ def serialize(mod):
             _, a1, t, a2, items, init = td
             st = aset(a1) | aset(a2)
             ty = type_of(t)
-            sds = sdecls(st, align_or(a1, a2, ty), ty, items, init_of(init) if init is not None else [])
+            sds = sdecls(st, align_or(a1, a2, ty, st), ty, items, init)
             lines.append("DECL %d %s %d %s" % (len(st), " ".join(sorted(st)), len(sds), " ".join(ser_sdecl(d) for d in sds)))
         elif k == "func":
             _, a1, kw, rets, name, params, pd, body = td
@@ -1006,6 +1560,10 @@ def serialize(mod):
             fname, fkind, rs, ps = func_head(kw, rets, name, params)
             ld = Loader(fmarks(rs + ps))
             ld.pp(body)
+            colour_fields(ld)
+            check_regs(fname, ld)
+            if any(t[0] == "isacheck" for t in mod):
+                check_types(fname, ld)
             labels = {k2: v for k2, v in ld.L.items() if not (k2.startswith("@ren:") or k2 in ("@depth", "@renid"))}
             lab_lines = []
             tgt_lines = []
@@ -1067,7 +1625,14 @@ def serialize(mod):
     return "\n".join(lines) + "\n"
 
 def front(text):
-    return serialize(Parser(lex(text)).module())
+    # .nv_intermediate_source_section: the text between .source_begin and .source_end "may contain arbitrary text
+    # including newlines" (raw IR source, 11.5.6); it is not PTX and is dropped before lexing
+    text = re.sub(r"(\.source_begin)\b.*?(\.source_end)\b", r"\1 \2", text, flags=re.S)
+    p = Parser(lex(text))
+    mod = p.module()
+    if p.isa_notes and any(t[0] == "isacheck" for t in mod):
+        raise PtxError(p.isa_notes[0])
+    return serialize(mod)
 
 if __name__ == "__main__":
     sys.stdout.write(front(open(sys.argv[1]).read()))

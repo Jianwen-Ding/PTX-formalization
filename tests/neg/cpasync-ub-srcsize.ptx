@@ -1,0 +1,16 @@
+// expect: cp.async: src-size larger than cp-size
+// cp.async: "Specifying src-size larger than cp-size results in undefined behavior" (9.7.9.26.3.1), reported under .ub strict
+.version 8.0
+.target sm_90
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 pi)
+{
+    .reg .b64 %i, %g, %s; .reg .b32 %r;
+    .shared .align 16 .b8 buf[64];
+    ld.param.u64 %i, [pi];
+    cp.async.ca.shared.global [buf], [%i], 8, 12;
+    ret;
+}
+.buffer I .u32 [16];
+.launch k <<< 1, 1 >>> (I);

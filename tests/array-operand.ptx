@@ -1,0 +1,25 @@
+// array elements as operands (PTX ISA 9.3 6.4.1, 6.4.2): `ld.global.u32 s, a[0];`, `st.global.u32 a[8], r;` and
+// `mov.u32 s, a[4];` (the index is a byte offset, as in the example of 4.3: array[r1] with r1 = tid << 2)
+.version 8.0
+.target sm_80
+.address_size 64
+.global .u32 a[4] = { 10, 20, 30, 40 };
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %p0, %p1; .reg .b32 %r<4>;
+    ld.param.u64 %o, [po];
+    ld.global.u32 %r1, a[0];
+    ld.global.u32 %r2, a[3 * 4];
+    add.u32 %r3, %r1, %r2;
+    st.global.u32 a[2 * 4], %r3;
+    mov.u64 %p0, a[4];
+    mov.u64 %p1, a;
+    sub.u64 %p0, %p0, %p1;
+    cvt.u32.u64 %r3, %p0;
+    st.global.v2.u32 [%o], {%r1, %r3};
+    ret;
+}
+.buffer OUT .u32 [2];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 10, 4 };
+.expect a .u32 = { 10, 20, 50, 40 };

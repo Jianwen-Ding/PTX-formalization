@@ -1,18 +1,17 @@
-.version 8.6
+// vector atom.v4.f32.add / red.v2.f32.add (9.7.14.5, 9.7.14.6), checked under .ub strict (aligned)
+.version 8.1
 .target sm_90
 .address_size 64
-.visible .entry k(.param .u64 pa, .param .u64 po)
+.ub strict ;
+.visible .entry k(.param .u64 po)
 {
-    .reg .b64 %a, %o; .reg .b32 %x<4>, %y<4>; .reg .f32 %f<4>, %g<4>;
-    ld.param.u64 %a, [pa]; ld.param.u64 %o, [po];
-    mov.b32 %x0, 0x3f800000; mov.b32 %x1, 0x40000000; // 1.0, 2.0
-    atom.global.add.v2.f32 {%f0, %f1}, [%a], {%x0, %x1};
-    st.global.b32 [%o], %f0; st.global.b32 [%o+4], %f1;
-    red.global.add.v4.f32 [%a+8], {%x0, %x1, %x0, %x1};
+    .reg .b64 %o; .reg .f32 %a<4>, %d<4>;
+    ld.param.u64 %o, [po];
+    mov.f32 %a0, 0f3F800000; mov.f32 %a1, 0f40000000; mov.f32 %a2, 0f40400000; mov.f32 %a3, 0f40800000;
+    atom.global.v4.f32.add {%d0, %d1, %d2, %d3}, [%o], {%a0, %a1, %a2, %a3};
+    red.global.v2.f32.add [%o+16], {%a0, %a1};
     ret;
 }
-.buffer M .u32 = { 0x40400000, 0x40800000, 0, 0, 0, 0 };
-.buffer O .u32 [4];
-.launch k <<< 1, 1 >>> (M, O);
-.expect O .u32 = { 0x40400000, 0x40800000, 0, 0 };
-.expect M .u32 = { 0x40800000, 0x40c00000, 0x3f800000, 0x40000000, 0x3f800000, 0x40000000 };
+.buffer O .f32 = { 1.0, 1.0, 1.0, 1.0, 5.0, 6.0, 0.0, 0.0 };
+.launch k <<< 1, 1 >>> (O);
+.expect O .f32 = { 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 0.0, 0.0 };

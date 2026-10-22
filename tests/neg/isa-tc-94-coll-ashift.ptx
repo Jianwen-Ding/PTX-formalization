@@ -1,0 +1,15 @@
+// expect: .collector::a::use and .collector::a::fill are illegal with .ashift
+// "It is illegal to specify either of .collector::a::use or .collector::a::fill along with .ashift" (PTX ISA 9.4 9.7.18.10.10.1), under .isacheck
+.version 9.4
+.target sm_100a
+.address_size 64
+.isacheck ;
+.visible .entry k()
+{
+    .reg .b32 %r<4>; .reg .b64 %dB; .reg .pred %q;
+    mov.u32 %r1, 0; mov.u32 %r2, 256; mov.u32 %r3, 134348816; mov.b64 %dB, 0;
+    setp.eq.u32 %q, %r1, 1;
+    @%q tcgen05.mma.cta_group::1.kind::f16.ashift.collector::a::fill [%r1], [%r2], %dB, %r3, {%r1, %r1, %r1, %r1}, 1;
+    ret;
+}
+.launch k <<< 1, 1 >>> ();

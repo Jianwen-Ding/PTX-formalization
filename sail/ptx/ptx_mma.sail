@@ -3,9 +3,9 @@
  * mma.sync with block scaling, wmma.mma / wmma.load / wmma.store.
  *
  * The warp's fragments are gathered into matrices through the fragment layouts, the products and
- * sums are exact and rounded once into the accumulator format (K computes them in 300-bit floats,
- * which is exact for every shape and type except f64 sums whose terms span more than 300 bits),
- * and the D fragments are scattered back.  Matrices are sparse maps (C runtime string maps keyed by
+ * sums are exact and rounded once into the accumulator format (the ISA leaves accumulation order and
+ * rounding unspecified for these types), except .f64, which is a chain of f64 fused multiply-adds
+ * (9.7.15.5.14), and the D fragments are scattered back.  Matrices are sparse maps (C runtime string maps keyed by
  * the position r * 1024 + c, absent = 0, as `orDefault 0` in K).
  * ============================================================================= */
 
@@ -167,11 +167,11 @@ function fillC(sp, s, t, arr, off) = {
 val fv_zero : unit -> fv
 function fv_zero() = FV_Fin(false, 0, 0)
 
-val dotF : (ty, ty, int, int, int, fv) -> fv
-function dotF(at_, bt, r, c, k, acc0) = {
+val dotF : (ty, ty, int, int, int, fv, rmode) -> fv
+function dotF(at_, bt, r, c, k, acc0, md) = {
   var acc : fv = acc0;
   foreach (i from 0 to (k - 1))
-    acc = fv_add_exact(acc, fv_mul_exact(elemF(at_, mget(SP_MA, rc(r, i))), elemF(bt, mget(SP_MB, rc(i, c)))), RN);
+    acc = fv_add_exact(acc, fv_mul_exact(elemF(at_, mget(SP_MA, rc(r, i))), elemF(bt, mget(SP_MB, rc(i, c)))), md);
   acc
 }
 
@@ -189,12 +189,22 @@ function dotI(at_, bt, r, c, k, acc0, op) = {
 val noMods : unit -> fmods
 function noMods() = fmods_of([||])
 
-/* one result element, as bits of the D type */
+/* one result element, as bits of the D type; the rounding modifier (.rn / .rz / .rm / .rp, ISA 9.7.15.5: f64 only,
+   .rn by default) rounds the exact sum */
 val resElem : (ty, ty, ty, ty, int, int, int, list(string)) -> int
 function resElem(dt, at_, bt, ct, r, c, k, m) = {
   let cv = mget(SP_MC, rc(r, c));
-  if isFloatElem(at_) then
-    fin({ noMods() with satfinite = has(m, "satfinite") }, fw(dt), dotF(at_, bt, r, c, k, elemF(ct, cv)), false)
+  let md = fmods_of(m).rm;
+  /* .f64: "Precision of the element-wise multiplication and addition operation is identical to that of .f64 precision
+     fused multiply-add" (9.7.15.5.14): each product is added by an f64 fma rounded with the modifier, starting from c,
+     in k order (the order is the model's choice) */
+  if isFloatElem(at_) & fw(at_) == 64 then {
+    let fm = { noMods() with rm = md };
+    var acc : int = cv;
+    foreach (i from 0 to (k - 1)) acc = fpFma(fm, 64, mget(SP_MA, rc(r, i)), mget(SP_MB, rc(i, c)), acc);
+    acc
+  } else if isFloatElem(at_) then
+    fin({ noMods() with satfinite = has(m, "satfinite"), rm = md }, fw(dt), dotF(at_, bt, r, c, k, elemF(ct, cv), md), false)
   else if ew(at_) > 1 then {
     let v = dotI(at_, bt, r, c, k, ival(cv, ct), "");
     trunc(if has(m, "satfinite") then clamp(v, dt) else v, 32)
@@ -236,8 +246,86 @@ function scatterAll(s, dt, arr) = {
 val cv_str : (list(cval), int) -> string
 function cv_str(d, i) = match d { [||] => "", h :: t => if i == 0 then (match h { CVS(x) => x, _ => "" }) else cv_str(t, i - 1) }
 
+/* ---------------------------------------------------------------- mma.m8n8k4 with .f16 A / B (ISA 9.7.15.5.1)
+ * Four independent 8x8x4 products: quad pair Q = (%laneid % 16) / 4 (lanes 4Q..4Q+3 low, 4Q+16..4Q+19 high group).
+ * Product Q is kept at rows / columns 8Q..8Q+7 of D and C, rows 8Q.. of A and columns 8Q.. of B, so the
+ * dense dot product above is reused (it reads only the 4 columns of A / rows of B of its own product). */
+val layCol : (list(string), int) -> bool
+function layCol(m, n) = {
+  /* the N-th (0 = .alayout, 1 = .blayout) .row / .col qualifier is .col */
+  var l = m;
+  var k : int = 0;
+  var r : bool = false;
+  while is_cons(l) do {
+    match l { x :: rest => { if x == "row" | x == "col" then { if k == n then r = x == "col"; k = k + 1 }; l = rest }, [||] => () }
+  };
+  r
+}
+
+val m884Q : int -> int
+function m884Q(l) = tdiv_int(fmod_int(l, 16), 4)
+val m884H : int -> int
+function m884H(l) = 4 * tdiv_int(l, 16)
+
+/* (row, col) of element i of lane l of the accumulator: .f16 (Figure 50) or .f32 (Figures 51, 52) */
+val posC884 : (ty, int, int) -> int
+function posC884(t, l, i) = {
+  let o = 8 * m884Q(l);
+  if ew(t) == 16 then rc(o + fmod_int(l, 4) + m884H(l), o + i)
+  else rc(o + land_int(l, 1) + land_int(i, 2) + m884H(l), o + land_int(i, 4) + land_int(l, 2) + land_int(i, 1))
+}
+
+val m884_compute : (list(cval), list((int, list(int)))) -> list((int, list(int)))
+function m884_compute(d, arr) = {
+  let dt = cv_ty(d, 1);
+  let at_ = cv_ty(d, 2);
+  let bt = cv_ty(d, 3);
+  let ct = cv_ty(d, 4);
+  let m = cv_mods(d, 5);
+  let acol = layCol(m, 0);
+  let bcol = layCol(m, 1);
+  smap_clear(SP_MA);
+  smap_clear(SP_MB);
+  smap_clear(SP_MC);
+  foreach (l from 0 to 31) {
+    match lane_get(arr, l) {
+      Some(rs) => {
+        let o = 8 * m884Q(l);
+        let t = fmod_int(l, 4);
+        let h = m884H(l);
+        foreach (i from 0 to 3) {
+          /* A: Figures 46 / 47; B: Figures 48 / 49 */
+          mset(SP_MA, if acol then rc(o + i + h, t) else rc(o + t + h, i), fragBits(rs, 0, at_, i));
+          mset(SP_MB, if bcol then rc(i, o + t + h) else rc(t, o + i + h), fragBits(rs, 2, bt, i))
+        };
+        foreach (i from 0 to 7) mset(SP_MC, posC884(ct, l, i), fragBits(rs, 4, ct, i))
+      },
+      None() => ()
+    }
+  };
+  smap_clear(SP_MD);
+  foreach (q from 0 to 3)
+    foreach (r from 0 to 7)
+      foreach (c from 0 to 7)
+        mset(SP_MD, rc(8 * q + r, 8 * q + c), resElem(dt, at_, bt, ct, 8 * q + r, 8 * q + c, 4, m));
+  var out : list((int, list(int))) = [||];
+  foreach (l from 31 downto 0) {
+    if is_some(lane_get(arr, l)) then {
+      let per = perReg(dt);
+      var regs : list(int) = [||];
+      foreach (r from 0 to (tdiv_int(8, per) - 1)) {
+        var v : int = 0;
+        foreach (j from 0 to (per - 1)) v = lor_int(v, shl_int(mget(SP_MD, posC884(dt, l, r * per + j)), ew(dt) * j));
+        regs = pend_append(regs, [|v|])
+      };
+      out = (l, regs) :: out
+    }
+  };
+  out
+}
+
 val mma_compute : (list(cval), list((int, list(int)))) -> list((int, list(int)))
-function mma_compute(d, arr) = {
+function mma_compute(d, arr) = if cv_str(d, 0) == "m8n8k4" & ew(cv_ty(d, 2)) == 16 then m884_compute(d, arr) else {
   let s = cv_str(d, 0);
   let dt = cv_ty(d, 1);
   let at_ = cv_ty(d, 2);
@@ -265,8 +353,10 @@ function bsNB(m) =
 val bsScale : (bool, int) -> fv
 function bsScale(e43, x) =
   if not_bool(e43) then (if x == 255 then FV_NaN() else FV_Fin(false, 1, x - 127))   /* ue8m0: 0xFF is NaN */
-  else if asr_int(x, 3) == 0 then FV_Fin(false, land_int(x, 7), -9)
-  else FV_Fin(false, land_int(x, 7) + 8, asr_int(x, 3) - 10)
+  /* ue4m3 (ISA 5.2): 7 bits with the MSB padded, NaN is 0x7f */
+  else if land_int(x, 127) == 127 then FV_NaN()
+  else if asr_int(land_int(x, 127), 3) == 0 then FV_Fin(false, land_int(x, 7), -9)
+  else FV_Fin(false, land_int(x, 7) + 8, asr_int(land_int(x, 127), 3) - 10)
 
 val bsReg : (list((int, list(int))), int, int) -> int
 function bsReg(arr, l, i) = at(listAt(arr, l), i)
@@ -427,14 +517,41 @@ function wmLoc(mat, s, t, l, col, st, base, i) = {
   (loc_add(base, tdiv_int(x, 8)), fmod_int(x, 8))
 }
 
-val wm_load : (opcode, xop, addr, xop) -> unit
-function wm_load(o, dv, a, sto) = {
+/* the default wmma stride: the leading dimension (A: K row-major / M column-major, B: N / K, C and D: N / M) */
+val wmDefStride : (string, string, bool) -> int
+function wmDefStride(mat, s, col) = match mat {
+  "a" => if col then shM(s) else shK(s),
+  "b" => if col then shK(s) else shN(s),
+  _ => if col then shM(s) else shN(s)
+}
+
+/* under .ub strict: "Specifying a value lower than the default value results in undefined behavior" (9.7.15.4.3 / .4);
+   "The starting address of each instance of the leading dimension ... must be aligned with the size of the corresponding
+   fragment in bytes", i.e. p and the stride in bytes are multiples of the fragment size (9.7.15.4.2) */
+val locOffW : loc -> int
+function locOffW(l) = match l { Loc(_, x) => x, _ => 0 }
+
+val wmUb : (string, string, string, ty, bool, int, loc) -> bool
+function wmUb(op, mat, s, t, col, st, base) =
+  if not_bool(ub) then true
+  else {
+    let fb = tdiv_int(wmNel(mat, s, t) * ew(t), 8);
+    let off : int = match base { Loc(_, a) => a, _ => 0 };
+    if st < wmDefStride(mat, s, col) then { fault(concat_str(op, ": stride below the default of the shape"), st); false }
+    else if fb > 0 & (tmod_int(off, fb) != 0 | tmod_int(tdiv_int(st * ew(t), 8), fb) != 0) then {
+      fault(concat_str(op, ": address or stride not aligned to the fragment size"), off); false
+    } else true
+  }
+
+val wm_load : (opcode, xop, addr, int) -> unit
+function wm_load(o, dv, a, st) = {
   let m = o.mods;
   let t = ty1(o);
   let mat = pick(m, [|"a", "b", "c"|], "a");
   let s = shapeOf(m);
-  let st = rdu32(sto);
   let base = ea(a, spaceOf(m));
+  if not_bool(wmUb("wmma.load", mat, s, t, has(m, "col"), st, base)) then return ();
+  if not_bool(warpUniform("wmma.load", "p", locOffW(base)) & warpUniform("wmma.load", "stride", st)) then return ();
   let l = fmod_int(t_tid[tchk(cur)], 32);
   let n = wmNel(mat, s, t);
   var els : list(int) = [||];
@@ -460,13 +577,14 @@ function wm_load(o, dv, a, sto) = {
   }
 }
 
-val wm_store : (opcode, addr, xop, xop) -> unit
-function wm_store(o, a, vs, sto) = {
+val wm_store : (opcode, addr, xop, int) -> unit
+function wm_store(o, a, vs, st) = {
   let m = o.mods;
   let t = ty1(o);
   let s = shapeOf(m);
-  let st = rdu32(sto);
   let base = ea(a, spaceOf(m));
+  if not_bool(wmUb("wmma.store", "c", s, t, has(m, "col"), st, base)) then return ();
+  if not_bool(warpUniform("wmma.store", "p", locOffW(base)) & warpUniform("wmma.store", "stride", st)) then return ();
   let l = fmod_int(t_tid[tchk(cur)], 32);
   let n = wmNel("c", s, t);
   let rs = vecRegs(vs, t);
@@ -485,9 +603,9 @@ function exec_mma(o, ops) = {
   let full : int = 4294967295;
   match (o.base, o.tys, ops) {
     ("mma", [|dt, at_, bt, ct|], [|dv, av, bv, cv|]) => {
-      /* m8n8k4 is modelled for .f64 only (the sm_70 .f16 form has other fragments): anything else is unsupported */
-      if has(m, "sync") & not_bool(has(m, "sp")) & not_bool(has(m, "sp::ordered_metadata"))
-         & not_bool(shapeOf(m) == "m8n8k4" & wid(at_) != 64) then {
+      if has(m, "sync") & not_bool(has(m, "sp")) & not_bool(has(m, "sp::ordered_metadata")) then {
+        /* ".m8n8k4 : When .ctype is .f32, .dtype must also be .f32" (ISA 9.7.15.5.14) is reported under .isacheck;
+           otherwise the f32 accumulation is rounded to the .f16 destination */
         do_coll("mma", full, [|CVS(shapeOf(m)), CVT(dt), CVT(at_), CVT(bt), CVT(ct), CVM(m)|],
                 pend_append(pend_append(vecRegs(av, at_), vecRegs(bv, bt)), vecRegs(cv, ct)), vecOps(dv));
         true
@@ -517,8 +635,13 @@ function exec_mma(o, ops) = {
         true
       } else false
     },
-    ("wmma", [|_|], [|dv, XB([|a|], [||]), sto|]) => if has(m, "load") then { wm_load(o, dv, a, sto); true } else false,
-    ("wmma", [|_|], [|XB([|a|], [||]), vs, sto|]) => if has(m, "store") then { wm_store(o, a, vs, sto); true } else false,
+    ("wmma", [|_|], [|dv, XB([|a|], [||]), sto|]) => if has(m, "load") then { wm_load(o, dv, a, rdu32(sto)); true } else false,
+    ("wmma", [|_|], [|XB([|a|], [||]), vs, sto|]) => if has(m, "store") then { wm_store(o, a, vs, rdu32(sto)); true } else false,
+    /* stride is optional: the default is the leading dimension of the matrix (ISA 9.7.15.3 Matrix Storage for WMMA) */
+    ("wmma", [|_|], [|dv, XB([|a|], [||])|]) =>
+      if has(m, "load") then { wm_load(o, dv, a, wmDefStride(pick(m, [|"a", "b", "c"|], "a"), shapeOf(m), has(m, "col"))); true } else false,
+    ("wmma", [|_|], [|XB([|a|], [||]), vs|]) =>
+      if has(m, "store") then { wm_store(o, a, vs, wmDefStride("c", shapeOf(m), has(m, "col"))); true } else false,
     _ => false
   }
 }
@@ -542,11 +665,21 @@ function spChunk(t, u, tg) = if ew(t) >= 16 then tg + 4 * tdiv_int(u, 2) else 2 
 val spMeta : (list((int, list(int))), int) -> int
 function spMeta(arr, l) = { let c = listAt(arr, l); at(c, list_length(c) - 1) }
 
-val spNib : (list((int, list(int))), int, int, int, int, int) -> int
-function spNib(arr, g, rh, c, nc, sel) =
-  if nc == 4 then land_int(asr_int(spMeta(arr, 4 * g + sel), 16 * rh + 4 * c), 15)
-  else if nc == 8 then land_int(asr_int(spMeta(arr, 4 * g + 2 * sel + rh), 4 * c), 15)
-  else if nc == 16 then land_int(asr_int(spMeta(arr, 4 * g + 2 * tdiv_int(c, 8) + rh), 4 * fmod_int(c, 8)), 15)
+/* (lane in the group of four, bit offset) of the nibble of chunk c of row g + 8 rh, from NC chunks per row and the
+   selector: one thread (NC = 4), a thread pair (NC = 8) or all four threads (NC = 16).  With eight chunks the
+   16- and 32-bit types (Figures 122, 125; wgmma Figures 176, 178) give thread 2 sel + c / 4 chunks 4 (c / 4) .. + 3
+   of both rows (row g + 8 in the upper half), the 8-bit types (Figure 129) give thread 2 sel + rh all chunks of
+   one row */
+val spNibAt : (ty, int, int, int, int) -> (int, int)
+function spNibAt(t, rh, c, nc, sel) =
+  if nc == 4 then (sel, 16 * rh + 4 * c)
+  else if nc == 8 & ew(t) >= 16 then (2 * sel + tdiv_int(c, 4), 16 * rh + 4 * fmod_int(c, 4))
+  else if nc == 8 then (2 * sel + rh, 4 * c)
+  else (2 * tdiv_int(c, 8) + rh, 4 * fmod_int(c, 8))
+
+val spNib : (ty, list((int, list(int))), int, int, int, int, int) -> int
+function spNib(t, arr, g, rh, c, nc, sel) =
+  if nc == 4 | nc == 8 | nc == 16 then { let (ln, b) = spNibAt(t, rh, c, nc, sel); land_int(asr_int(spMeta(arr, 4 * g + ln), b), 15) }
   else 0
 
 val spPos : (ty, int, int) -> int
@@ -555,22 +688,39 @@ function spPos(t, nib, j) =
   else if ew(t) == 4 then 2 * land_int(asr_int(nib, 2 * tdiv_int(j, 2)), 3) + fmod_int(j, 2)
   else land_int(asr_int(nib, 2 * j), 3)
 
-val spFillAll : (string, ty, list((int, list(int))), int) -> unit
-function spFillAll(s, t, arr, sel) = {
+/* 9.7.15.6.1, under .ub strict: the sparsity selector is in {0..3} when one thread holds the metadata, {0, 1} for a
+ * thread pair, 0 when all four threads do; metadata values: .tf32 "0b1110 and 0b0100 are the only meaningful index
+ * values"; for mma.sp::ordered_metadata and the f8f6f4 / mx kinds "0b0100, 0b1000, 0b1001, 0b1100, 0b1101, 0b1110 are
+ * the meaningful values"; otherwise "0b0000, 0b0101, 0b1010, 0b1111 are invalid values for metadata" */
+val spSelOk : (int, int) -> bool
+function spSelOk(nc, sel) = if nc == 4 then sel >= 0 & sel <= 3 else if nc == 8 then sel == 0 | sel == 1 else sel == 0
+val spNibOk : (ty, bool, int) -> bool
+function spNibOk(t, ord, nib) =
+  if t.k == "tf" then nib == 14 | nib == 4
+  else if ord then has([|"4", "8", "9", "12", "13", "14"|], dec_str(nib))
+  else not_bool(nib == 0 | nib == 5 | nib == 10 | nib == 15)
+
+val spFillAll : (string, ty, list((int, list(int))), int, bool) -> unit
+function spFillAll(s, t, arr, sel, ord) = {
   smap_clear(SP_MA);
+  if ub & not_bool(spSelOk(tdiv_int(shK(s), spCw(t)), sel)) then fault("mma.sp: sparsity selector outside the values of the shape", sel);
   foreach (l from 0 to 31) {
     match lane_get(arr, l) {
       Some(rs) => foreach (i from 0 to (spNel(s) - 1)) {
         let u = tdiv_int(i, spNz(t));
         let rh = spRh(t, u);
         let ch = spChunk(t, u, fmod_int(l, 4));
-        let nib = spNib(arr, tdiv_int(l, 4), rh, ch, tdiv_int(shK(s), spCw(t)), sel);
+        let nib = spNib(t, arr, tdiv_int(l, 4), rh, ch, tdiv_int(shK(s), spCw(t)), sel);
+        if ub & not_bool(stuck) & not_bool(spNibOk(t, ord, nib)) then fault("mma.sp: metadata index value that is not meaningful", nib);
         mset(SP_MA, rc(tdiv_int(l, 4) + 8 * rh, spCw(t) * ch + spPos(t, nib, fmod_int(i, spNz(t)))), fragBits(rs, 0, t, i))
       },
       None() => ()
     }
   }
 }
+
+val spOrd : list(string) -> bool
+function spOrd(m) = has(m, "sp::ordered_metadata") | has(m, "kind::f8f6f4") | has(m, "kind::mxf8f6f4") | has(m, "kind::mxf4") | has(m, "kind::mxf4nvf4")
 
 val mmasp_compute : (list(cval), list((int, list(int)))) -> list((int, list(int)))
 function mmasp_compute(d, arr) = {
@@ -581,7 +731,7 @@ function mmasp_compute(d, arr) = {
   let ct = cv_ty(d, 4);
   let ra = regsOf(spNel(s), at_);
   let rb = regsOf(nElB(s), bt);
-  spFillAll(s, at_, arr, cv_int(d, 6));
+  spFillAll(s, at_, arr, cv_int(d, 6), spOrd(cv_mods(d, 5)));
   fillAll(SP_MB, 1, s, bt, arr, nElB(s), ra);
   fillC(SP_MC, s, ct, arr, ra + rb);
   resRows(s, dt, at_, bt, ct, cv_mods(d, 5));
@@ -592,7 +742,7 @@ val mmabssp_compute : (list(cval), list((int, list(int)))) -> list((int, list(in
 function mmabssp_compute(d, arr) = {
   let s = cv_str(d, 0);
   let at_ = cv_ty(d, 2);
-  spFillAll(s, at_, arr, cv_int(d, 7));
+  spFillAll(s, at_, arr, cv_int(d, 7), spOrd(cv_mods(d, 5)));
   mmabs_core(d, arr, regsOf(spNel(s), at_))
 }
 

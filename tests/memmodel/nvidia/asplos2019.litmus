@@ -1,0 +1,116 @@
+# The litmus tests of Lustig, Sahasrabuddhe, Giroux, "A Formal Analysis of the NVIDIA PTX Memory Consistency Model"
+# (ASPLOS'19, github.com/NVlabs/ptxmemorymodel, PTXMemoryModelASPLOS2019.pdf), transcribed into the ptxmm format.
+# `expect` is the paper's verdict.  "st.strong.gpu" / "ld.strong.gpu" of the paper are .relaxed.gpu.  Memory is zero
+# initialised; the threads are in different CTAs of one GPU.  Run by scripts/nvmm.py (`paper`); not by `make memmodel`.
+
+test Paper-Fig5-MP
+desc Figure 5: message passing with st.release.gpu / ld.acquire.gpu
+init x=0 y=0
+thread T0 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.gpu y 1
+thread T1 cta=1 cluster=0 gpu=0
+  r1 = ld.acquire.gpu y
+  r2 = ld.weak x
+exists r1==1 && r2==0
+expect forbidden
+
+test Paper-Fig6-SB
+desc Figure 6: store buffering with fence.sc.gpu
+init x=0 y=0
+thread T0 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.sc.gpu
+  r1 = ld.weak y
+thread T1 cta=1 cluster=0 gpu=0
+  st.weak y 1
+  fence.sc.gpu
+  r2 = ld.weak x
+exists r1==0 && r2==0
+expect forbidden
+
+test Paper-Fig8-LB-deps
+desc Figure 8: no value out of thin air
+init x=0 y=0
+thread T0 cta=0 cluster=0 gpu=0
+  r1 = ld.weak y
+  st.weak x r1
+thread T1 cta=1 cluster=0 gpu=0
+  r2 = ld.weak x
+  st.weak y r2
+exists r1==42 && r2==42
+expect forbidden
+
+test Paper-Fig9a-CoRR
+desc Figure 9a: strong read then weak read of the same location
+init x=0
+thread T0 cta=0 cluster=0 gpu=0
+  st.relaxed.gpu x 1
+thread T1 cta=1 cluster=0 gpu=0
+  r1 = ld.relaxed.gpu x
+  r2 = ld.weak x
+exists r1==1 && r2==0
+expect forbidden
+
+test Paper-Fig9b-CoRW
+desc Figure 9b: a weak store after a strong read is coherence-after the write read
+init x=0
+thread T0 cta=0 cluster=0 gpu=0
+  st.relaxed.gpu x 1
+thread T1 cta=1 cluster=0 gpu=0
+  r1 = ld.relaxed.gpu x
+  st.weak x 2
+exists r1==1 && [x]==1
+expect forbidden
+
+test Paper-Fig9c-CoWR
+desc Figure 9c: a thread does not read a write older than its own
+init x=0
+thread T0 cta=0 cluster=0 gpu=0
+  st.relaxed.gpu x 1
+thread T1 cta=1 cluster=0 gpu=0
+  st.relaxed.gpu x 2
+  r1 = ld.weak x
+exists [x]==2 && r1==1
+expect forbidden
+
+test Paper-Fig9d-CoWW
+desc Figure 9d: two weak stores of one thread
+init x=0
+thread T0 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.weak x 2
+exists [x]==1
+expect forbidden
+
+test Paper-Fig12-ISA2-rmw-acquire
+desc Figure 12b: RMW_SC mapped to fence.sc; atom.acquire leaves a gap between the two synchronizations
+init x=0 y=0
+thread T0 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.gpu y 1
+thread T1 cta=1 cluster=0 gpu=0
+  fence.sc.gpu
+  r0 = atom.acquire.gpu.add y 1
+  st.relaxed.gpu y 3
+thread T2 cta=2 cluster=0 gpu=0
+  r1 = ld.acquire.gpu y
+  r2 = ld.weak x
+exists r0==1 && r1==3 && r2==0
+expect allowed
+
+test Paper-Fig12-ISA2-rmw-acq_rel
+desc Figure 12: with fence.sc; atom.acq_rel the release pattern (c2) (d) closes the gap
+init x=0 y=0
+thread T0 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.gpu y 1
+thread T1 cta=1 cluster=0 gpu=0
+  fence.sc.gpu
+  r0 = atom.acq_rel.gpu.add y 1
+  st.relaxed.gpu y 3
+thread T2 cta=2 cluster=0 gpu=0
+  r1 = ld.acquire.gpu y
+  r2 = ld.weak x
+exists r0==1 && r1==3 && r2==0
+expect forbidden

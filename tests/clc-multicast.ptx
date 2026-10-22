@@ -1,0 +1,41 @@
+// clusterlaunchcontrol.try_cancel .multicast::cluster::all (PTX ISA 9.3): "the response is asynchronously written using weak
+// async-proxy writes to the corresponding local shared memory addr of each CTA in the requesting cluster. The completion of
+// the writes to addr of a particular CTA is signaled via a complete-tx operation to the mbarrier object on the shared memory
+// of that CTA."  CTA 0 issues the request; both CTAs see the 16-byte response (the model's response is the failure
+// response 0) and the completed phase of their own mbarrier.  Per CTA: first response word, test_wait result.
+.version 8.8
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 po) .reqnctapercluster 2, 1, 1
+{
+    .reg .b64 %o, %mb, %st, %ra, %oo; .reg .b32 %cta, %r1, %r2, %r3, %r4; .reg .pred %p0, %c;
+    .shared .align 8 .b64 bar;
+    .shared .align 16 .b32 resp[4];
+    ld.param.u64 %o, [po];
+    mov.u32 %cta, %ctaid.x;
+    mov.u64 %mb, bar;
+    mov.u64 %ra, resp;
+    st.shared.v4.b32 [%ra], {7, 7, 7, 7};
+    mbarrier.init.shared.b64 [%mb], 1;
+    fence.mbarrier_init.release.cluster;
+    barrier.cluster.arrive.release.aligned;
+    barrier.cluster.wait.acquire.aligned;
+    mbarrier.arrive.expect_tx.relaxed.cluster.shared::cta.b64 %st, [%mb], 16;
+    setp.eq.u32 %p0, %cta, 0;
+    @%p0 clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.multicast::cluster::all.b128 [%ra], [%mb];
+    barrier.cluster.arrive.release.aligned;
+    barrier.cluster.wait.acquire.aligned;
+    mbarrier.test_wait.shared::cta.b64 %c, [%mb], %st;
+    ld.shared.v4.b32 {%r1, %r2, %r3, %r4}, [%ra];
+    selp.u32 %r4, 1, 0, %c;
+    mul.wide.u32 %oo, %cta, 8;
+    add.u64 %oo, %o, %oo;
+    st.global.b32 [%oo], %r1;
+    st.global.b32 [%oo+4], %r4;
+    barrier.cluster.arrive.release.aligned;
+    barrier.cluster.wait.acquire.aligned;
+    ret;
+}
+.buffer O .u32 [4];
+.launch k <<< 2, 1 >>> (O);
+.expect O .u32 = { 0, 1, 0, 1 };

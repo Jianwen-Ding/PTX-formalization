@@ -1,0 +1,50 @@
+// .layout::v1 payload report and conditional phase (PTX ISA 9.4 9.7.15.16.7, 9.7.15.16.8, 9.7.15.16.10) fed by the
+// .report_mechanism of cp.async.bulk (9.7.10.28.1.3, Table 33).  A matching inspection issues a report-on: the
+// primary phase completes with reportPredicate 1 and the conditional phase does not advance; a phase without a report
+// advances both.  per_16bytes samples the first element of each 16-byte chunk (the model's choice of the "sampled
+// element"); per_element::ff matches a 0xff byte; a .layout::v0 object has no payload report.
+.version 9.4
+.target sm_107f
+.address_size 64
+.visible .entry k(.param .u64 po, .param .u64 pg)
+{
+    .reg .b64 %o, %g, %st; .reg .b32 %r<12>, %rv, %rv3, %rv5, %rv6; .reg .pred %c<8>, %rp, %rp3, %rp5, %rp6;
+    .shared .align 8 .b64 bar; .shared .align 8 .b64 bar0; .shared .align 16 .b8 buf[64];
+    ld.param.u64 %o, [po]; ld.param.u64 %g, [pg];
+    mbarrier.init.layout::v1.shared::cta.b64 [bar], 1;
+    mbarrier.init.shared::cta.b64 [bar0], 1;
+    mov.u32 %rv, 7; mov.u32 %rv3, 7; mov.u32 %rv5, 7; mov.u32 %rv6, 7;
+    // phase 0: chunks 0 and 1; chunk 1 starts with -0.0f
+    mbarrier.arrive.expect_tx.shared::cta.b64 %st, [bar], 32;
+    cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes.mbarrier::report::validity::per_16bytes::80000000 [buf], [%g], 32, [bar];
+    mbarrier.try_wait.parity.phase_type::primary.shared::cta.b64 %c0|%rp, %rv, [bar], 0;
+    mbarrier.test_wait.parity.phase_type::conditional.shared::cta.b64 %c1, [bar], 0;
+    // phase 1: chunk 2 starts with 1.0f (its -0.0f second element is not sampled): no report
+    mbarrier.arrive.expect_tx.shared::cta.b64 %st, [bar], 16;
+    cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes.mbarrier::report::validity::per_16bytes::80000000 [buf], [%g+32], 16, [bar];
+    mbarrier.try_wait.parity.phase_type::primary.shared::cta.b64 %c2|%rp3, %rv3, [bar], 1;
+    mbarrier.test_wait.parity.phase_type::conditional.shared::cta.b64 %c3, [bar], 0;
+    // a .layout::v0 object: chunk 3 holds a 0xff byte, the report is always zero
+    mbarrier.arrive.expect_tx.shared::cta.b64 %st, [bar0], 16;
+    cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes.mbarrier::report::validity::per_element::ff [buf], [%g+48], 16, [bar0];
+    mbarrier.try_wait.parity.phase_type::primary.shared::cta.b64 %c4|%rp5, %rv5, [bar0], 0;
+    // phase 2 of bar: the 0xff byte reports; the conditional phase stays at 1
+    mbarrier.arrive.expect_tx.shared::cta.b64 %st, [bar], 16;
+    cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes.mbarrier::report::validity::per_element::ff [buf], [%g+48], 16, [bar];
+    mbarrier.try_wait.parity.phase_type::primary.shared::cta.b64 %c5|%rp6, %rv6, [bar], 0;
+    mbarrier.test_wait.parity.phase_type::conditional.shared::cta.b64 %c6, [bar], 1;
+    selp.u32 %r0, 1, 0, %c0; selp.u32 %r1, 1, 0, %rp; selp.u32 %r2, 1, 0, %c1;
+    selp.u32 %r3, 1, 0, %c2; selp.u32 %r4, 1, 0, %rp3; selp.u32 %r5, 1, 0, %c3;
+    selp.u32 %r6, 1, 0, %c4; selp.u32 %r7, 1, 0, %rp5;
+    selp.u32 %r8, 1, 0, %c5; selp.u32 %r9, 1, 0, %rp6; selp.u32 %r10, 1, 0, %c6;
+    st.global.v4.b32 [%o], {%r0, %r1, %rv, %r2};
+    st.global.v4.b32 [%o+16], {%r3, %r4, %rv3, %r5};
+    st.global.v4.b32 [%o+32], {%r6, %r7, %rv5, %r8};
+    st.global.v4.b32 [%o+48], {%r9, %rv6, %r10, 0};
+    ret;
+}
+.buffer O .u32 [16];
+.buffer G .u32 = { 0x3f800000, 0x3f800000, 0x3f800000, 0x3f800000, 0x80000000, 0, 0, 0,
+                   0x3f800000, 0x80000000, 0, 0, 0x000000ff, 0, 0, 0 };
+.launch k <<< 1, 1 >>> (O, G);
+.expect O .u32 = { 1, 1, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 0 };

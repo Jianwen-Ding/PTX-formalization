@@ -40,7 +40,9 @@ def t_replace():
     G2 = [random.randint(1, 60000) for _ in range(ROW * 7)]
     dims = (64, 6); box = (64, 4); est1 = 2; coords = (0, 1)
     img = []
-    for r in range(box[1]):
+    # tiled mode: the element (traversal) stride reduces the elements of a dimension to ceil(boxDim / elementStride)
+    # (PTX ISA 9.3 5.5.3.2, and 5.5.4.2: "does not impact the total number of elements ... unlike the tiled mode")
+    for r in range(-(-box[1] // est1)):
         for c in range(box[0]):
             x, y = coords[0] + c, coords[1] + r * est1
             img += [0xc0, 0x7f] if (x >= dims[0] or y >= dims[1]) else [G2[y * ROW + x] & 255, G2[y * ROW + x] >> 8]
@@ -97,17 +99,20 @@ def t_sub(code):
     gb = 8 if code == 14 else 12
     rows, cols = 4, 32
     rowbytes = cols * nb_el // 8
-    G = [random.getrandbits(8) for _ in range(rowbytes * rows)]
+    # "tensor stride in every dimension must be 32B aligned" for the padded sub-byte types (9.7.9.26.5.1): rows are
+    # 32 bytes apart, the bytes after a row's data are not read
+    pitch = 32
+    G = [random.getrandbits(8) for _ in range(pitch * rows)]
     img = []
     for r in range(rows):
         for g in range(cols // 16):
-            grp = G[r * rowbytes + g * gb: r * rowbytes + (g + 1) * gb]
+            grp = G[r * pitch + g * gb: r * pitch + (g + 1) * gb]
             img += grp + [0] * (16 - gb)
     r = "global.b1024"
     pre = [f"    @%q tensormap.replace.tile.elemtype.{r}.b32 [%tm], {code};"]
     tma = ["    @%q cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes [%buf32], [%tm, {0, 0}], [%bar32];"]
     k = kernel(pre, tma, len(img), ".param .u64 ptm, .param .u64 pg2, .param .u64 po")
-    k += (f".buffer G .u8 = {{ {h(G)} }};\n.buffer G2 .u8 [8];\n.tensormap TM .u8 G .dims {{ {cols}, {rows} }} .strides {{ {rowbytes} }} .box {{ {cols}, {rows} }} .swizzle 0 ;\n"
+    k += (f".buffer G .u8 = {{ {h(G)} }};\n.buffer G2 .u8 [8];\n.tensormap TM .u8 G .dims {{ {cols}, {rows} }} .strides {{ {pitch} }} .box {{ {cols}, {rows} }} .swizzle 0 ;\n"
           f".buffer O .u32 [{len(img) // 4}];\n.launch k <<< 1, 32 >>> (TM, G2, O);\n.expect O .u32 = {{ {h(words_of(img))} }};\n")
     open(f'tests/tma-rep-sub{code}.ptx', 'w').write(k)
 t_replace(); t_override('addr'); t_override('dimstride'); t_sub(14); t_sub(15)

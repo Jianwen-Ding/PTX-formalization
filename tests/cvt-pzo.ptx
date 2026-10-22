@@ -1,0 +1,31 @@
+// cvt .pzo (PTX ISA 9.4 9.7.10.24): "if the result of the conversion produces -0.0, it will be forced to +0.0", on the
+// .f16 / .bf16 / .tf32 / .f16x2 / .bf16x2 forms (also .rs) and the x4 .rs forms; without .pzo the results stay -0.0.
+// The input -2^-40 rounds to -0.0 in f16; -0.0 itself in the others.
+.version 9.4
+.target sm_107f
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b16 %h<4>; .reg .b32 %r<10>; .reg .f32 %n, %z;
+    ld.param.u64 %o, [po];
+    mov.b32 %n, 0xab800000;            // -2^-40
+    mov.b32 %z, 0x80000000;            // -0.0
+    cvt.rn.pzo.f16.f32 %h0, %n;
+    cvt.rn.f16.f32 %h1, %n;
+    cvt.rn.pzo.bf16.f32 %h2, %z;
+    cvt.rn.bf16.f32 %h3, %z;
+    cvt.u32.u16 %r0, %h0; cvt.u32.u16 %r1, %h1; cvt.u32.u16 %r2, %h2; cvt.u32.u16 %r3, %h3;
+    cvt.rn.satfinite.pzo.tf32.f32 %r4, %z;
+    cvt.rn.pzo.f16x2.f32 %r5, %z, %n;
+    cvt.rn.f16x2.f32 %r6, %z, %n;
+    mov.u32 %r9, 0;
+    cvt.rs.pzo.bf16x2.f32 %r7, %z, %z, %r9;
+    cvt.rs.satfinite.pzo.e4m3x4.f32 %r8, {%z, %n, %z, %n}, %r9;
+    st.global.v4.u32 [%o], {%r0, %r1, %r2, %r3};
+    st.global.v4.u32 [%o+16], {%r4, %r5, %r6, %r7};
+    st.global.u32 [%o+32], %r8;
+    ret;
+}
+.buffer O .u32 [9];
+.launch k <<< 1, 1 >>> (O);
+.expect O .u32 = { 0, 0x8000, 0, 0x8000, 0, 0, 0x80008000, 0, 0 };

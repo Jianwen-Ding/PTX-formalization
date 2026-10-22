@@ -1,0 +1,53 @@
+// PTX ISA 9.3 9.7.9.22 .rs: "rounded in the direction toward zero or away from zero based on the carry out of the
+// integer addition of the supplied random bits (rbits) to the truncated off (discarded) bits of mantissa"; rbits layout
+// (Figures 38-41): .f16x2 rbits[28:16] / [12:0] for a / b (13 = the discarded bits of f32 -> f16); .bf16x2 [31:16] /
+// [15:0]; .e4m3x4 etc. [31:16] for a and b, [15:0] for e and f; .e2m1x4 [31:24], [15:8] for a, b and [23:16], [7:0]
+// for e, f.  Where an f32 has more discarded bits than random bits, the random bits are added to the most
+// significant discarded bits.  Results packed from the upper bits: a, b, e, f.
+.version 8.7
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %r<24>; .reg .f32 %f<8>; .reg .b16 %h<4>; .reg .b64 %o;
+    ld.param.u64 %o, [po];
+    // f16x2: a = 1 + 2^-11 (discarded 0x1000), b = -(1 + 1.5 * 2^-11) (discarded 0x1800)
+    mov.b32 %f0, 0x3F801000; mov.b32 %f1, 0xBF801800;
+    cvt.rs.f16x2.f32 %r0, %f0, %f1, 0x10000800;               // both carry: 0x3C01BC01
+    cvt.rs.f16x2.f32 %r1, %f0, %f1, 0x0FFF07FF;               // no carry:   0x3C00BC00
+    mov.b32 %f2, 0x477FF000;                                  // 65520 = MAX + half ulp
+    cvt.rs.relu.satfinite.f16x2.f32 %r2, %f2, %f1, 0x10000800; // MAX, relu 0: 0x7BFF0000
+    cvt.rs.f16x2.f32 %r3, %f2, %f1, 0x10000800;               // Inf: 0x7C00BC01
+    // bf16x2: a = 1 + 2^-8 (discarded 0x8000), b = 0x3F807FFF (discarded 0x7FFF)
+    mov.b32 %f3, 0x3F808000; mov.b32 %f4, 0x3F807FFF;
+    cvt.rs.bf16x2.f32 %r4, %f3, %f4, 0x80000001;              // 0x3F813F80
+    cvt.rs.bf16x2.f32 %r5, %f3, %f4, 0x7FFF8001;              // 0x3F803F81
+    // e4m3x4: 1 + 2^-4 (half ulp), 1 + 2^-5, -(1 + 2^-4), 500 (> MAX 448)
+    mov.b32 %f0, 0x3F880000; mov.b32 %f1, 0x3F840000; mov.b32 %f2, 0xBF880000; mov.b32 %f3, 0x43FA0000;
+    cvt.rs.satfinite.e4m3x4.f32 %r6, {%f0, %f1, %f2, %f3}, 0x80008000;   // 1.125, 1, -1.125, 448: 0x3938B97E
+    cvt.rs.satfinite.e4m3x4.f32 %r7, {%f0, %f1, %f2, %f3}, 0xC0000000;   // 1.125, 1.125, -1, 448: 0x3939B87E
+    // e5m2x4 with .relu: 1 + 2^-3 (half ulp), -2, NaN, 1
+    mov.b32 %f0, 0x3F900000; mov.b32 %f1, 0xC0000000; mov.b32 %f2, 0x7FC00000; mov.b32 %f3, 0x3F800000;
+    cvt.rs.relu.satfinite.e5m2x4.f32 %r8, {%f0, %f1, %f2, %f3}, 0x80000000; // 1.25, 0, NaN, 1: 0x3D007F3C
+    // e2m1x4: four times 1.25 (between 1 and 1.5)
+    mov.b32 %f0, 0x3FA00000;
+    cvt.rs.satfinite.e2m1x4.f32 %h0, {%f0, %f0, %f0, %f0}, 0x807F807F;  // 1.5, 1.5, 1, 1: 0x3322
+    // e2m1x4: NaN -> +MAX_NORM 6, -7 -> -6, 0.25 (half of 0.5), 5 (between 4 and 6), no random bits
+    mov.b32 %f0, 0x7FC00000; mov.b32 %f1, 0xC0E00000; mov.b32 %f2, 0x3E800000; mov.b32 %f3, 0x40A00000;
+    cvt.rs.satfinite.e2m1x4.f32 %h1, {%f0, %f1, %f2, %f3}, 0;           // 0x7F06
+    cvt.rs.satfinite.e2m1x4.f32 %h2, {%f0, %f1, %f2, %f3}, 0x00FF00FF;  // 0.25 -> 0.5, 5 -> 6: 0x7F17
+    // e3m2x4: four times 1.125 (half ulp)
+    mov.b32 %f0, 0x3F900000;
+    cvt.rs.satfinite.e3m2x4.f32 %r9, {%f0, %f0, %f0, %f0}, 0x80000000;  // 1.25, 1.25, 1, 1: 0x0D0D0C0C
+    st.global.v4.b32 [%o], {%r0, %r1, %r2, %r3};
+    st.global.v4.b32 [%o+16], {%r4, %r5, %r6, %r7};
+    st.global.v2.b32 [%o+32], {%r8, %r9};
+    cvt.u32.u16 %r10, %h0; cvt.u32.u16 %r11, %h1; cvt.u32.u16 %r12, %h2;
+    st.global.v2.b32 [%o+40], {%r10, %r11};
+    st.global.b32 [%o+48], %r12;
+    ret;
+}
+.buffer O .u32 [13];
+.launch k <<< 1, 1 >>> (O);
+.expect O .u32 = { 0x3C01BC01, 0x3C00BC00, 0x7BFF0000, 0x7C00BC01, 0x3F813F80, 0x3F803F81, 0x3938B97E, 0x3939B87E,
+                   0x3D007F3C, 0x0D0D0C0C, 0x3322, 0x7F06, 0x7F17 };

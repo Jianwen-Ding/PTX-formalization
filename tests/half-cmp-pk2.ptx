@@ -1,0 +1,181 @@
+// packed half setp / set with BoolOp on f16x2 / bf16x2 and integer destinations (9.7.7.1, 9.7.7.2)
+.version 9.0
+.target sm_100
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %wa,%wb,%wc,%wd,%rd_; .reg .f32 %fc,%fd; .reg .b16 %ha,%hb,%hc,%hd; .reg .pred %p<4>;
+    ld.param.u64 %o, [po];
+        mov.b16 %ha, 0x3C00; mov.b16 %hb, 0x1000; mov.b16 %hc, 0;
+    add.rn.f16 %hd, %ha, %hb;  // add tie
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+0], %rd_;
+    mov.b16 %ha, 0x3C01; mov.b16 %hb, 0x1000; mov.b16 %hc, 0;
+    add.f16 %hd, %ha, %hb;  // add tie odd
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+4], %rd_;
+    mov.b16 %ha, 0x0001; mov.b16 %hb, 0x0001; mov.b16 %hc, 0;
+    add.ftz.f16 %hd, %ha, %hb;  // add.ftz sub in
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+8], %rd_;
+    mov.b16 %ha, 0x0001; mov.b16 %hb, 0x0001; mov.b16 %hc, 0;
+    add.f16 %hd, %ha, %hb;  // add sub
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+12], %rd_;
+    mov.b16 %ha, 0x0400; mov.b16 %hb, 0x3800; mov.b16 %hc, 0;
+    mul.ftz.f16 %hd, %ha, %hb;  // mul.ftz sub out
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+16], %rd_;
+    mov.b16 %ha, 0x0400; mov.b16 %hb, 0x3800; mov.b16 %hc, 0;
+    mul.f16 %hd, %ha, %hb;  // mul sub out
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+20], %rd_;
+    mov.b16 %ha, 0x7E01; mov.b16 %hb, 0x3C00; mov.b16 %hc, 0;
+    add.sat.f16 %hd, %ha, %hb;  // add.sat NaN
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+24], %rd_;
+    mov.b16 %ha, 0x4000; mov.b16 %hb, 0x0000; mov.b16 %hc, 0;
+    add.sat.f16 %hd, %ha, %hb;  // add.sat 2
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+28], %rd_;
+    mov.b16 %ha, 0x0000; mov.b16 %hb, 0x3C00; mov.b16 %hc, 0;
+    sub.sat.f16 %hd, %ha, %hb;  // sub.sat neg
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+32], %rd_;
+    mov.b16 %ha, 0x7E01; mov.b16 %hb, 0x3C00; mov.b16 %hc, 0;
+    fma.rn.relu.f16 %hd, %ha, %hb, %hc;  // fma relu NaN
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+36], %rd_;
+    mov.b16 %ha, 0xBC00; mov.b16 %hb, 0x3C00; mov.b16 %hc, 0;
+    fma.rn.relu.f16 %hd, %ha, %hb, %hc;  // fma relu neg
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+40], %rd_;
+    mov.b16 %ha, 0xBF80; mov.b16 %hb, 0x3F80; mov.b16 %hc, 0;
+    fma.rn.relu.bf16 %hd, %ha, %hb, %hc;  // fma relu bf neg
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+44], %rd_;
+    mov.b16 %ha, 0x7E00; mov.b16 %hb, 0x3C00; mov.b16 %hc, 0;
+    min.NaN.f16 %hd, %ha, %hb;  // min.NaN
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+48], %rd_;
+    mov.b16 %ha, 0x7E00; mov.b16 %hb, 0x3C00; mov.b16 %hc, 0;
+    min.f16 %hd, %ha, %hb;  // min one NaN
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+52], %rd_;
+    mov.b16 %ha, 0x0000; mov.b16 %hb, 0x8000; mov.b16 %hc, 0;
+    min.f16 %hd, %ha, %hb;  // min zeros
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+56], %rd_;
+    mov.b16 %ha, 0x8000; mov.b16 %hb, 0x0000; mov.b16 %hc, 0;
+    max.f16 %hd, %ha, %hb;  // max zeros
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+60], %rd_;
+    mov.b16 %ha, 0xC000; mov.b16 %hb, 0x4200; mov.b16 %hc, 0;
+    min.xorsign.abs.f16 %hd, %ha, %hb;  // min xorsign
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+64], %rd_;
+    mov.b16 %ha, 0xC000; mov.b16 %hb, 0x4200; mov.b16 %hc, 0;
+    max.xorsign.abs.f16 %hd, %ha, %hb;  // max xorsign
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+68], %rd_;
+    mov.b16 %ha, 0xFE00; mov.b16 %hb, 0x4200; mov.b16 %hc, 0;
+    min.xorsign.abs.f16 %hd, %ha, %hb;  // min xorsign NaN
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+72], %rd_;
+    mov.b16 %ha, 0x0001; mov.b16 %hb, 0x8000; mov.b16 %hc, 0;
+    min.ftz.f16 %hd, %ha, %hb;  // min.ftz
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+76], %rd_;
+    mov.b16 %ha, 0x0001; mov.b16 %hb, 0; mov.b16 %hc, 0;
+    neg.ftz.f16 %hd, %ha;  // neg.ftz
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+80], %rd_;
+    mov.b16 %ha, 0x8001; mov.b16 %hb, 0; mov.b16 %hc, 0;
+    abs.ftz.f16 %hd, %ha;  // abs.ftz
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+84], %rd_;
+    mov.b16 %ha, 0x0001; mov.b16 %hb, 0; mov.b16 %hc, 0;
+    neg.bf16 %hd, %ha;  // neg bf sub
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+88], %rd_;
+    mov.b16 %ha, 0xFC00; mov.b16 %hb, 0; mov.b16 %hc, 0;
+    ex2.approx.f16 %hd, %ha;  // ex2 -inf
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+92], %rd_;
+    mov.b16 %ha, 0x4B80; mov.b16 %hb, 0; mov.b16 %hc, 0;
+    ex2.approx.f16 %hd, %ha;  // ex2 15
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+96], %rd_;
+    mov.b16 %ha, 0x4C00; mov.b16 %hb, 0; mov.b16 %hc, 0;
+    ex2.approx.f16 %hd, %ha;  // ex2 16
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+100], %rd_;
+    mov.b16 %ha, 0x8001; mov.b16 %hb, 0; mov.b16 %hc, 0;
+    ex2.approx.f16 %hd, %ha;  // ex2 -sub
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+104], %rd_;
+    mov.b16 %ha, 0x8001; mov.b16 %hb, 0; mov.b16 %hc, 0;
+    ex2.approx.ftz.bf16 %hd, %ha;  // ex2 bf -sub
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+108], %rd_;
+    mov.b16 %ha, 0xC302; mov.b16 %hb, 0; mov.b16 %hc, 0;
+    ex2.approx.ftz.bf16 %hd, %ha;  // ex2 bf -130
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+112], %rd_;
+    mov.b16 %ha, 0x8000; mov.b16 %hb, 0; mov.b16 %hc, 0;
+    tanh.approx.f16 %hd, %ha;  // tanh -0
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+116], %rd_;
+    mov.b16 %ha, 0x7C00; mov.b16 %hb, 0; mov.b16 %hc, 0;
+    tanh.approx.f16 %hd, %ha;  // tanh inf
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+120], %rd_;
+    mov.b16 %ha, 0xFF80; mov.b16 %hb, 0; mov.b16 %hc, 0;
+    tanh.approx.bf16 %hd, %ha;  // tanh bf -inf
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+124], %rd_;
+    mov.b16 %ha, 0xCE00; mov.b16 %hb, 0; mov.b16 %hc, 0;
+    ex2.approx.f16 %hd, %ha;  // ex2 -24
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+128], %rd_;
+    mov.b16 %ha, 0x7FC1; mov.b16 %hb, 0x3F80; mov.b16 %hc, 0;
+    max.NaN.bf16 %hd, %ha, %hb;  // max.NaN bf
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+132], %rd_;
+    mov.b16 %ha, 0x3F80; mov.b16 %hb, 0x3B80; mov.b16 %hc, 0;
+    add.rn.bf16 %hd, %ha, %hb;  // bf add tie
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+136], %rd_;
+    mov.b16 %ha, 0x3F81; mov.b16 %hb, 0x3B80; mov.b16 %hc, 0;
+    add.bf16 %hd, %ha, %hb;  // bf add tie odd
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+140], %rd_;
+    mov.b16 %ha, 0x0001; mov.b16 %hb, 0x0001; mov.b16 %hc, 0;
+    add.bf16 %hd, %ha, %hb;  // bf add sub
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+144], %rd_;
+    mov.b16 %ha, 0x7C00; mov.b16 %hb, 0x0000; mov.b16 %hc, 0;
+    mul.rn.sat.f16 %hd, %ha, %hb;  // mul.sat inf*0
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+148], %rd_;
+    mov.b16 %ha, 0x3C00; mov.b16 %hb, 0x3C00; mov.b16 %hc, 0x3C00;
+    fma.rn.sat.f16 %hd, %ha, %hb, %hc;  // fma.sat
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+152], %rd_;
+    mov.b16 %ha, 0x7BFF; mov.b16 %hb, 0x7BFF; mov.b16 %hc, 0;
+    add.f16 %hd, %ha, %hb;  // add ovf
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+156], %rd_;
+    mov.b16 %ha, 0x0400; mov.b16 %hb, 0x3800; mov.b16 %hc, 0x0000;
+    fma.rn.ftz.f16 %hd, %ha, %hb, %hc;  // fma.ftz sub
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+160], %rd_;
+    mov.b16 %ha, 0x3F81; mov.b16 %hb, 0x3F81; mov.b16 %hc, 0;
+    mul.rn.bf16 %hd, %ha, %hb;  // bf mul
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+164], %rd_;
+    mov.b16 %ha, 0xBF80; mov.b16 %hb, 0xC000; mov.b16 %hc, 0;
+    max.xorsign.abs.bf16 %hd, %ha, %hb;  // max xorsign bf
+    cvt.u32.u16 %rd_, %hd; st.global.u32 [%o+168], %rd_;
+    mov.b32 %wa, 0x3C004000; mov.b32 %wb, 0x3C003C00; mov.b32 %wc, 0;
+    add.f16x2 %wd, %wa, %wb;  // add f16x2 lanes
+    st.global.u32 [%o+172], %wd;
+    mov.b32 %wa, 0x7FC03F80; mov.b32 %wb, 0x40004000; mov.b32 %wc, 0;
+    min.NaN.bf16x2 %wd, %wa, %wb;  // min.NaN bf16x2
+    st.global.u32 [%o+176], %wd;
+    mov.b32 %wa, 0xBF803F80; mov.b32 %wb, 0x3F803F80; mov.b32 %wc, 0;
+    fma.rn.relu.bf16x2 %wd, %wa, %wb, %wc;  // fma relu bf16x2
+    st.global.u32 [%o+180], %wd;
+    mov.b32 %wa, 0x80003C00; mov.b32 %wb, 0; mov.b32 %wc, 0;
+    neg.f16x2 %wd, %wa;  // neg f16x2
+    st.global.u32 [%o+184], %wd;
+    mov.b32 %wa, 0x3C000000; mov.b32 %wb, 0; mov.b32 %wc, 0;
+    ex2.approx.f16x2 %wd, %wa;  // ex2 f16x2
+    st.global.u32 [%o+188], %wd;
+    mov.b16 %ha, 0x3F80; mov.b16 %hb, 0; mov.b32 %fc, 0x30800000;
+    add.rz.f32.bf16 %fd, %ha, %fc;  // mx add rz
+    mov.b32 %rd_, %fd; st.global.u32 [%o+192], %rd_;
+    mov.b16 %ha, 0x3F80; mov.b16 %hb, 0; mov.b32 %fc, 0x30800000;
+    add.rp.f32.bf16 %fd, %ha, %fc;  // mx add rp
+    mov.b32 %rd_, %fd; st.global.u32 [%o+196], %rd_;
+    mov.b16 %ha, 0x7E00; mov.b16 %hb, 0; mov.b32 %fc, 0;
+    sub.sat.f32.f16 %fd, %ha, %fc;  // mx sub sat NaN
+    mov.b32 %rd_, %fd; st.global.u32 [%o+200], %rd_;
+    mov.b16 %ha, 0x0001; mov.b16 %hb, 0; mov.b32 %fc, 0;
+    add.f32.f16 %fd, %ha, %fc;  // mx add sub
+    mov.b32 %rd_, %fd; st.global.u32 [%o+204], %rd_;
+    mov.b16 %ha, 0x0000; mov.b16 %hb, 0; mov.b32 %fc, 0x80000000;
+    add.rm.f32.f16 %fd, %ha, %fc;  // mx add rm zero
+    mov.b32 %rd_, %fd; st.global.u32 [%o+208], %rd_;
+    mov.b16 %ha, 0x3C01; mov.b16 %hb, 0x3C01; mov.b32 %fc, 0xBF800000;
+    fma.rn.f32.f16 %fd, %ha, %hb, %fc;  // mx fma
+    mov.b32 %rd_, %fd; st.global.u32 [%o+212], %rd_;
+    mov.b16 %ha, 0x3F81; mov.b16 %hb, 0x3F81; mov.b32 %fc, 0;
+    fma.rp.f32.bf16 %fd, %ha, %hb, %fc;  // mx fma rp bf
+    mov.b32 %rd_, %fd; st.global.u32 [%o+216], %rd_;
+    mov.b16 %ha, 0x4000; mov.b16 %hb, 0x4000; mov.b32 %fc, 0;
+    fma.rn.sat.f32.f16 %fd, %ha, %hb, %fc;  // mx fma sat
+    mov.b32 %rd_, %fd; st.global.u32 [%o+220], %rd_;
+    ret;
+}
+.buffer OUT .u32 [56];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 15360, 15362, 0, 2, 0, 512, 0, 15360, 0, 32767, 0, 0, 32767, 15360, 32768, 0, 49152, 49664, 49664, 32768, 32768, 0, 32769, 0, 30720, 31744, 15360, 16256, 0, 32768, 15360, 49024, 1, 32767, 16256, 16258, 2, 0, 15360, 31744, 0, 16258, 16384, 1073758720, 2147434368, 16256, 48128, 1073757184, 1065353216, 1065353217, 0, 864026624, 2147483648, 989859840, 1065484800, 1065353216 };

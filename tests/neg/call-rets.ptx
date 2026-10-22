@@ -1,20 +1,22 @@
 // expect: return values do not match
-// a call that leaves out the declared return value
+// a call whose return list does not match the declaration (two return values declared, one given): no meaning to
+// give it (a call without any return list discards the results, tests/call-noret.ptx)
 .version 8.0
 .target sm_80
 .address_size 64
-.func (.param .b32 r) f(.param .b32 a)
+.func (.param .b32 r1, .param .b32 r2) f(.param .b32 a)
 {
     .reg .b32 %x;
     ld.param.b32 %x, [a];
-    st.param.b32 [r], %x;
+    st.param.b32 [r1], %x;
+    st.param.b32 [r2], %x;
     ret;
 }
 .visible .entry k(.param .u64 po)
 {
-    .reg .b32 %v;
+    .reg .b32 %v, %w;
     mov.u32 %v, 1;
-    { .param .b32 pa; st.param.b32 [pa], %v; call f, (pa); }
+    { .param .b32 pa; .param .b32 pr; st.param.b32 [pa], %v; call (pr), f, (pa); ld.param.b32 %w, [pr]; }
     ret;
 }
 .buffer OUT .u32 [4];

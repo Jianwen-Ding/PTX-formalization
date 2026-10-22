@@ -1,0 +1,16 @@
+// expect: tcgen05.alloc: threads of the warp use different values of nCols
+// "The behavior of the instruction is undefined if all the threads in the warp do not use the same values of nCols"
+// (9.7.17.7.1), under .ub strict
+.version 8.6
+.target sm_100a
+.address_size 64
+.ub strict ;
+.visible .entry k()
+{
+    .shared .align 16 .b32 slot[4];
+    .reg .b32 %n, %l; .reg .pred %p;
+    mov.u32 %l, %laneid; setp.lt.u32 %p, %l, 16; selp.u32 %n, 32, 64, %p;
+    tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [slot], %n;
+    ret;
+}
+.launch k <<< 1, 32 >>> ();

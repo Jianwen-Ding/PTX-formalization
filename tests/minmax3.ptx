@@ -1,0 +1,39 @@
+// PTX ISA 9.3 9.7.3.11 / 9.7.3.12: min / max{.ftz}{.NaN}{.abs}.f32 d, a, b, c: .abs takes |a|, |b|, |c|, then
+// d = two_inputs_min(two_inputs_min(a, b), c) (min_num without .NaN: a NaN operand is ignored unless both are NaN;
+// .NaN: canonical NaN if any input is NaN; -0.0 < +0.0).
+.version 8.8
+.target sm_100
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .f32 %f<24>; .reg .b64 %o;
+    ld.param.u64 %o, [po];
+    mov.b32 %f1, 0x40400000; mov.b32 %f2, 0xBF800000; mov.b32 %f3, 0x40000000;    // 3, -1, 2
+    min.f32 %f10, %f1, %f2, %f3;
+    mov.b32 %f4, 0xC0000000;                                                     // -2
+    min.abs.f32 %f11, %f1, %f2, %f4;
+    mov.b32 %f5, 0xC0A00000; mov.b32 %f6, 0x7FC00000;                            // -5, NaN
+    max.abs.f32 %f12, %f5, %f3, %f6;
+    mov.b32 %f7, 0x3F800000;                                                     // 1
+    min.NaN.f32 %f13, %f7, %f3, %f6;
+    mov.b32 %f8, 0x40800000;                                                     // 4
+    min.f32 %f14, %f6, %f6, %f8;
+    mov.b32 %f20, 0x80000000; mov.b32 %f21, 0x00000000;                          // -0, +0
+    max.f32 %f15, %f20, %f21, %f20;
+    min.f32 %f16, %f21, %f20, %f21;
+    mov.b32 %f22, 0x00000001; mov.b32 %f23, 0x80000002;                          // subnormals
+    min.ftz.f32 %f17, %f22, %f23, %f7;
+    mov.b32 %f9, 0xC0E00000; mov.b32 %f0, 0xC0400000;                            // -7, -3
+    max.NaN.abs.f32 %f18, %f2, %f9, %f0;
+    max.f32 %f19, %f7, %f22, %f4;
+    min.ftz.abs.f32 %f1, %f23, %f9, %f7;
+    st.global.v4.f32 [%o], {%f10, %f11, %f12, %f13};
+    st.global.v4.f32 [%o+16], {%f14, %f15, %f16, %f17};
+    st.global.v2.f32 [%o+32], {%f18, %f19};
+    st.global.f32 [%o+40], %f1;
+    ret;
+}
+.buffer OUT .u32 [11];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 0xBF800000, 0x3F800000, 0x40A00000, 0x7FFFFFFF, 0x40800000, 0x00000000, 0x80000000, 0x80000000,
+                     0x40E00000, 0x3F800000, 0x00000000 };

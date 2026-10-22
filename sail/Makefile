@@ -8,7 +8,7 @@ AGX_SRCS := common/prelude.sail common/ints.sail common/lists.sail common/ieee.s
 PTX_SRCS := common/prelude.sail common/ints.sail common/lists.sail common/ieee.sail $(wildcard ptx/*.sail)
 JOBS ?= 2
 
-.PHONY: all agx ptx test test-agx test-ptx test-ptx-extra report xcheck-agx difftest clean
+.PHONY: all agx ptx isa-table test test-agx test-ptx test-ptx-extra report xcheck-agx difftest clean
 
 all: agx ptx
 
@@ -19,8 +19,12 @@ ptx: ptx/build/ptx
 ptx/build/ptx: $(PTX_SRCS) common/io.c common/io.h
 	bash ptx/build.sh
 
-ptx/ptx_isa_table.sail: ../semantics/ptx-isa-table.k ptx/gen_isa_table.py
-	python3 ptx/gen_isa_table.py
+# ptx/ptx_isa_table.sail (the `.isacheck ;` rows, committed) is generated from the text of the PTX ISA 9.3
+# specification, which is not in the repository (`pdftotext -layout ptx_isa_9.3.pdf isa.txt`):
+#   make -C sail isa-table ISA_TXT=/path/to/isa.txt
+isa-table:
+	@test -n "$(ISA_TXT)" || { echo "usage: make -C sail isa-table ISA_TXT=/path/to/isa.txt" >&2; exit 2; }
+	python3 ptx/gen_isa_table.py "$(ISA_TXT)" ptx/ptx_isa_table.sail
 
 agx/build/agx: $(AGX_SRCS) common/io.c common/io.h
 	bash agx/build.sh

@@ -163,6 +163,14 @@ function mv_compute(arr) = {
 }
 
 /* ---------------------------------------------------------------- instructions */
+/* "If the generic address doesn't fall in .shared state space, then the behavior is undefined" (ldmatrix 9.7.15.5.15,
+   stmatrix 9.7.15.5.16): under .ub strict */
+val ldmShared : (string, loc) -> bool
+function ldmShared(op, l) = match l {
+  Loc(sp, a) => if ub & sp != "shared" then { fault(concat_str(op, ": the address is not in the .shared window"), a); false } else true,
+  _ => true
+}
+
 val exec_ldm : (opcode, list(xop)) -> bool
 function exec_ldm(o, ops) = {
   let m = o.mods;
@@ -171,6 +179,7 @@ function exec_ldm(o, ops) = {
   match (o.base, ops) {
     ("ldmatrix", [|dv, XB([|a|], [||])|]) => {
       let l = ea(a, spaceOf(m));
+      if not_bool(ldmShared("ldmatrix", l)) then return true;
       if has(m, "m16n16") | has(m, "m8n16") then {
         let k = if has(m, "m16n16") then 1 else 0;
         t_post[t] = P_ldm2(locSp(l, spaceOf(m)), if ldmFmt(m, o.tys) == 5 then 8 else 16, k, ldmFmt(m, o.tys), dlist(dv));
@@ -183,6 +192,7 @@ function exec_ldm(o, ops) = {
     },
     ("stmatrix", [|XB([|a|], [||]), vs|]) => {
       let l = ea(a, spaceOf(m));
+      if not_bool(ldmShared("stmatrix", l)) then return true;
       t_post[t] = P_stm(l, numOf(m));
       if has(m, "m16n8") then do_coll("stmatrix2", full, [|CVI(numOf(m))|], vecRegs(vs, mkty("b", 32)), [||])
       else do_coll("stmatrix", full, [|CVI(numOf(m)), CVB(has(m, "trans"))|], vecRegs(vs, mkty("b", 32)), [||]);

@@ -1,0 +1,17 @@
+// expect: needs target sm_100
+// min with three inputs: PTX 8.8, sm_100 (9.7.3.11 L8872, L8881)
+.version 8.8
+.target sm_90
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %rd<4>; .reg .b32 %r<16>; .reg .f32 %f<8>; .reg .b16 %h<4>; .reg .pred %p; .shared .b64 mb;
+    ld.param.u64 %o, [po];
+    mov.u32 %r0, 7;
+    min.f32 %f0, %f1, %f2, %f3;
+    st.global.u32 [%o], %r0;
+}
+
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1 >>> (OUT);

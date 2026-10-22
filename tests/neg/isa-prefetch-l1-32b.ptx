@@ -1,0 +1,18 @@
+// expect: prefetch.L1::32B: .valid_addr must be specified
+// prefetch.L1::32B without .valid_addr (PTX ISA 9.4 9.7.10.16), under .isacheck
+.version 9.4
+.target sm_90
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %a; .reg .b32 %r;
+    .shared .align 4 .b32 s[4];
+    ld.param.u64 %o, [po];
+    mov.u32 %r, 0;
+    prefetch.global.L1::32B [%o];
+    st.global.u32 [%o], %r;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

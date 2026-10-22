@@ -1,0 +1,28 @@
+// expect: ld.param::entry: not a kernel parameter: x
+// "For ld.param::entry instruction, operand a must be a kernel parameter address, otherwise behavior is undefined"
+// (9.7.9.8); here in a device function, under .ub strict
+.version 8.0
+.target sm_90
+.address_size 64
+.ub strict ;
+.func (.param .u32 r) f(.param .u32 x)
+{
+    .reg .u32 %v;
+    ld.param::entry.u32 %v, [x];
+    st.param.u32 [r], %v;
+    ret;
+}
+.visible .entry k(.param .u64 p)
+{
+    .reg .u32 %a; .reg .u64 %q;
+    ld.param::entry.u64 %q, [p];
+    cvt.u32.u64 %a, %q;
+    {
+        .param .u32 pa; .param .u32 pr;
+        st.param.u32 [pa], %a;
+        call (pr), f, (pa);
+    }
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

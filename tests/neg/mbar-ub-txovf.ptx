@@ -1,0 +1,22 @@
+// expect: mbarrier.expect_tx: tx-count outside -(2^20 - 1) .. 2^20 - 1
+// tx-count beyond 2^20 - 1 (Table 37) is undefined, reported under .ub strict
+.version 9.3
+.target sm_90
+.address_size 64
+.ub strict;
+.visible .entry k(.param .u64 po)
+{
+ .reg .b64 %o, %st, %st2, %mb, %g, %x; .reg .b32 %r<16>; .reg .pred %p, %q, %c;
+ .shared .align 8 .b64 bar[4];
+ .global .align 8 .b64 gbar[1];
+ ld.param.u64 %o, [po];
+ mov.u64 %mb, bar;
+ cvta.shared.u64 %g, %mb;
+mbarrier.init.shared.b64 [%mb], 1; mbarrier.expect_tx.shared.b64 [%mb], 1048576;
+st.global.v4.b32 [%o], {%r0,%r1,%r2,%r3};
+ st.global.v4.b32 [%o+16], {%r4,%r5,%r6,%r7};
+ ret;
+}
+.buffer O .u32 [8];
+.launch k <<< 1, 1 >>> (O);
+.expect O .u32 = {0,0,0,0,0,0,0,0};

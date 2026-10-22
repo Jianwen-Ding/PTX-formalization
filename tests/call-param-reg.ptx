@@ -1,0 +1,51 @@
+// Arguments and return values may be .param or .reg variables for .reg as well as for .param formals
+// (PTX ISA 7.1, "For a caller" / "For a callee"): a .param variable passed to a .reg formal passes its value,
+// a .reg return value received in a .param variable is read back with ld.param, and a .param return value
+// can be received in a register.
+.version 8.6
+.target sm_90
+.address_size 64
+.func (.reg .u32 rv) foo (.reg .u32 a, .reg .u32 b) { add.u32 rv, a, b; ret; }
+.func (.param .u32 rv) bar (.param .u32 a, .reg .u32 b)
+{
+    .reg .u32 %x;
+    ld.param.u32 %x, [a];
+    mul.lo.u32 %x, %x, b;
+    st.param.u32 [rv], %x;
+    ret;
+}
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r<8>;
+    ld.param.u64 %o, [po];
+    {
+    .param .b32 p0;
+    .param .b32 p1;
+    .param .b32 r0;
+    st.param.b32 [p0], 5;
+    st.param.b32 [p1], 6;
+    call (r0), foo, (p0, p1);
+    ld.param.b32 %r1, [r0];
+    }
+    {
+    .param .b32 p0;
+    .param .b32 p1;
+    st.param.b32 [p0], 7;
+    st.param.b32 [p1], 8;
+    call (%r2), foo, (p0, p1);
+    }
+    {
+    .param .b32 p0;
+    .param .b32 p1;
+    st.param.b32 [p0], 3;
+    st.param.b32 [p1], 4;
+    call (%r3), bar, (p0, p1);
+    }
+    mov.u32 %r4, 9;
+    call (%r5), foo, (%r4, 1);
+    st.global.v4.u32 [%o], {%r1, %r2, %r3, %r5};
+    ret;
+}
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 11, 15, 12, 10 };

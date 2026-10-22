@@ -1,0 +1,17 @@
+// expect: tcgen05: instructions of the kernel specify different .cta_group values
+// "All tcgen05 instructions within a kernel must specify the same value for the .cta_group qualifier" (9.7.17.7.1),
+// reported under .isacheck
+.version 8.6
+.target sm_100a
+.address_size 64
+.isacheck ;
+.visible .entry k()
+{
+    .shared .align 16 .b32 slot[4];
+    .reg .b32 %a;
+    tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [slot], 32;
+    ld.shared.u32 %a, [slot];
+    tcgen05.dealloc.cta_group::2.sync.aligned.b32 %a, 32;
+    ret;
+}
+.launch k <<< 1, 32 >>> ();

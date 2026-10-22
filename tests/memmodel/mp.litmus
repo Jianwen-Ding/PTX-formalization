@@ -150,3 +150,31 @@ thread T3 cta=2 cluster=0 gpu=0
   r2 = ld.weak x
 exists r0==1 && r1==1 && r2==0
 expect forbidden
+
+test MP-red-release-sequence
+desc observation order runs through an atomic operation, red included (8.9.2 "for some atomic operation Z")
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.gpu f 1
+thread T2 cta=1 cluster=0 gpu=0
+  red.relaxed.gpu.add f 1
+thread T3 cta=2 cluster=0 gpu=0
+  r0 = ld.acquire.gpu f
+  r1 = ld.weak x
+exists r0==2 && r1==0
+expect forbidden
+
+test MP-atom-release-sequence
+desc ... as with atom
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.gpu f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r2 = atom.relaxed.gpu.add f 1
+thread T3 cta=2 cluster=0 gpu=0
+  r0 = ld.acquire.gpu f
+  r1 = ld.weak x
+exists r0==2 && r1==0
+expect forbidden

@@ -97,6 +97,20 @@ def to_bits(ty, v):                       # Fraction -> bits of accumulator type
     if v == 0: return 0
     sg = 1 if v < 0 else 0
     return (sg << (R.CW[w] - 1)) | R.round_mag(abs(v), 0, 'rn', sg, w)
+def fma_chain(cb, prods, mode='rn'):
+    """f64 mma (ISA 9.7.15.5.14): starting from C, each product is added by an f64 fused multiply-add rounded with mode"""
+    acc = cb
+    for a, b in prods:
+        p = fval('f64', a) * fval('f64', b)
+        x = fval('f64', acc) + p
+        if x == 0:
+            ps = (a >> 63) ^ (b >> 63)
+            if p == 0 and fval('f64', acc) == 0 and ps == acc >> 63: acc = ps << 63
+            else: acc = (1 << 63) if mode == 'rm' else 0
+        else:
+            sg = 1 if x < 0 else 0
+            acc = (sg << 63) | R.round_mag(abs(x), 0, mode, sg, 64)
+    return acc
 def sx(x, w): x &= (1 << w) - 1; return x - (1 << w) if x >> (w - 1) else x
 
 # ---------------------------------------------------------------- configurations
@@ -142,7 +156,9 @@ def build(cfg):
     D = {}
     for r in range(m):
         for c in range(n):
-            if isf:
+            if at == 'f64':
+                D[(r, c)] = fma_chain(C[(r, c)], [(A[(r, kk)], B[(kk, c)]) for kk in range(k)])
+            elif isf:
                 s = fval(ct, C[(r, c)]) + sum(fval(at, A[(r, kk)]) * fval(bt, B[(kk, c)]) for kk in range(k))
                 D[(r, c)] = to_bits(dt, s)
             elif at == 'b1':
@@ -190,6 +206,7 @@ for kk, (shape, dt, at, bt, ct, mods, m, n, k, ewa, LA, LB, LC, A, B, C, D) in e
     cb = 'b64' if ct == 'f64' else 'b32'; db = 'b64' if dt == 'f64' else 'b32'; ab = 'b64' if at == 'f64' else 'b32'
     rg = lambda pre, wide, i: f"%{pre.upper()}{i}"
     print(f".visible .entry k{kk}(.param .u64 pa, .param .u64 pb, .param .u64 pc, .param .u64 po)\n{{\n    .reg .b32 %r<130>; .reg .b64 %rd<130>;")
+    print(f"    .reg .{ab} %A<{na}>, %B<{nb}>; .reg .{cb} %C<{nc}>; .reg .{db} %D<{nd}>;")
     print(f"    mov.u32 %r0, %tid.x;")
     for nm, nreg, bt_, wide, par in (('a', na, ab, at == 'f64', 'pa'), ('b', nb, ab, at == 'f64', 'pb'), ('c', nc, cb, ct == 'f64', 'pc')):
         sz = 8 if wide else 4

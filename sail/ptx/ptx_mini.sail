@@ -43,9 +43,10 @@ function miniToF16(k, b) = {
   else encodeF(signedF(asr_int(b, mBits(k) - 1), miniMag(k, c)), 16)
 }
 
-/* floor / ceil / nearest-even integer of a nonnegative value */
-val roundGrid : (fv, int) -> int
-function roundGrid(f, rdm) = match f {
+/* floor / ceil / nearest-even integer of a nonnegative value; rdm 3: stochastic (.rs) with nb random bits rb added to
+ * the most significant nb discarded bits, rounding up on a carry out (ISA 9.7.9.22, Floating Point Notes) */
+val roundGridR : (fv, int, int, int) -> int
+function roundGridR(f, rdm, rb, nb) = match f {
   FV_Fin(_, m, e) => {
     if e >= 0 then m * pow2(e)
     else {
@@ -54,41 +55,53 @@ function roundGrid(f, rdm) = match f {
       let r = m - q * d;
       if rdm == 1 then q
       else if rdm == 2 then (if r > 0 then q + 1 else q)
+      else if rdm == 3 then (if tdiv_int(r * pow2(nb), d) + rb >= pow2(nb) then q + 1 else q)
       else if 2 * r < d then q else if 2 * r > d then q + 1 else if fmod_int(q, 2) == 0 then q else q + 1
     }
   },
   _ => 0
 }
+val roundGrid : (fv, int) -> int
+function roundGrid(f, rdm) = roundGridR(f, rdm, 0, 0)
 
+/* the magnitude code of n * 2^(e - mM) (n < 2^(mM + 1) after rounding at exponent e), before saturation */
+val miniCodeRaw : (string, int, int) -> int
+function miniCodeRaw(k, e, n) =
+  if n >= pow2(mM(k) + 1) then shl_int(e + 1 + mBias(k), mM(k))
+  else if n >= pow2(mM(k)) then shl_int(e + mBias(k), mM(k)) + (n - pow2(mM(k)))
+  else n
 val miniCode : (string, int, int) -> int
-function miniCode(k, e, n) = {
-  let raw = if n >= pow2(mM(k) + 1) then shl_int(e + 1 + mBias(k), mM(k))
-            else if n >= pow2(mM(k)) then shl_int(e + mBias(k), mM(k)) + (n - pow2(mM(k)))
-            else n;
-  min_int(mTop(k), raw)
-}
+function miniCode(k, e, n) = min_int(mTop(k), miniCodeRaw(k, e, n))
 
 /* magnitude code of |x| with rounding 0 nearest-even, 1 toward zero, 2 up; saturating */
-val miniEncR : (string, fv, int) -> int
-function miniEncR(k, a, rdm) = {
+val miniEncR : (string, fv, int, int, int) -> int
+function miniEncR(k, a, rdm, rb, nb) = {
   if fv_is_zero(a) then 0
   else {
     var e : int = 1 - mBias(k);
     while fv_cmp(a, FV_Fin(false, 1, e + 1)) >= 0 & e < 40 do e = e + 1;
-    miniCode(k, e, roundGrid(scaleP2(a, mM(k) - e), rdm))
+    miniCode(k, e, roundGridR(scaleP2(a, mM(k) - e), rdm, rb, nb))
   }
 }
 
 val miniSign : (string, fv) -> int
 function miniSign(k, x) = if fv_sign(x) & k != "ue5m3" then pow2(mBits(k) - 1) else 0
 
-val miniFromR : (string, fv, bool, int) -> int
-function miniFromR(k, x, rl, rdm) = {
+/* the rounding of a magnitude for a directed mode: .rp (2) rounds a negative value's magnitude down, .rm (4) rounds a
+   positive value's magnitude down and a negative one's up (cvt: ".rp rounding toward positive infinity", ".rm rounding
+   toward negative infinity", 9.7.9.21) */
+val magMode : (int, bool) -> int
+function magMode(rdm, neg) = if rdm == 2 then (if neg then 1 else 2) else if rdm == 4 then (if neg then 2 else 1) else rdm
+
+val miniFromRS : (string, fv, bool, int, int, int) -> int
+function miniFromRS(k, x, rl, rdm, rb, nb) = {
   if fv_is_nan(x) then (if k == "e4m3" | k == "e5m2" then 127 else if k == "ue5m3" then 255 else mTop(k))
   else if (rl | k == "ue5m3") & fv_sign(x) then 0
   else if fv_is_inf(x) then lor_int(miniSign(k, x), mTop(k))
-  else lor_int(miniSign(k, x), miniEncR(k, fv_abs(x), rdm))
+  else lor_int(miniSign(k, x), miniEncR(k, fv_abs(x), magMode(rdm, fv_sign(x)), rb, nb))
 }
+val miniFromR : (string, fv, bool, int) -> int
+function miniFromR(k, x, rl, rdm) = miniFromRS(k, x, rl, rdm, 0, 0)
 
 val isMiniX2 : ty -> bool
 function isMiniX2(t) = has([|"e4m3x2", "e5m2x2", "e2m3x2", "e3m2x2", "e2m1x2", "ue5m3x2"|], t.k)
@@ -107,13 +120,26 @@ val scMul : (fv, int) -> fv
 function scMul(x, s) = if s == 255 then FV_NaN() else scaleP2(x, s - 127)
 val flushIn : (bool, fv, int) -> fv
 function flushIn(b, x, mn) =
-  if b & not_bool(fv_is_nan(x)) & not_bool(fv_is_inf(x)) & fv_cmp(fv_abs(x), FV_Fin(false, 1, mn)) < 0 then FV_Fin(false, 0, 0) else x
+  if b & not_bool(fv_is_nan(x)) & not_bool(fv_is_inf(x)) & not_bool(fv_is_zero(x)) & fv_cmp(fv_abs(x), FV_Fin(false, 1, mn)) < 0
+  then FV_Fin(false, 0, 0) else x
+/* the smallest normal exponent of a .f16x2 / .bf16x2 source lane: .scaled::n1::ue8m0 "subnormal values for inputs a
+   and b are flushed to zero before conversion" (PTX ISA 9.4 9.7.10.24) at the source's own subnormal range */
+val halfMin : ty -> int
+function halfMin(st) = if st.k == "bf16x2" then -126 else -14
 val mrnd : list(string) -> int
-function mrnd(m) = if has(m, "rz") then 1 else if has(m, "rp") then 2 else 0
+function mrnd(m) = if has(m, "rz") then 1 else if has(m, "rp") then 2 else if has(m, "rm") then 4 else 0
 val pzoFix : (bool, string, int) -> int
 function pzoFix(p, k, c) = if p & k != "ue5m3" & c == pow2(mBits(k) - 1) then 0 else c
 val miniCvt : (list(string), string, fv, int) -> int
-function miniCvt(m, k, x, s) = pzoFix(has(m, "pzo"), k, miniFromR(k, scDiv(x, s), has(m, "relu"), mrnd(m)))
+function miniCvt(m, k, x, s) = {
+  let y = scDiv(x, s);
+  /* .satfinite: "If the absolute value of input (ignoring sign) is greater than MAX_NORM ... a positive MAX_NORM in
+     .ue8m0x2 and .ue5m3x2 for which the destination sign is not supported" (PTX ISA 9.4 9.7.10.24): also for a negative
+     input beyond MAX_NORM (without .relu, which makes it 0 first) */
+  if k == "ue5m3" & has(m, "satfinite") & not_bool(has(m, "relu")) & fv_sign(y) & not_bool(fv_is_nan(y))
+     & fv_cmp(fv_abs(y), miniMag(k, mTop(k))) > 0 then mTop(k)
+  else pzoFix(has(m, "pzo"), k, miniFromR(k, y, has(m, "relu"), mrnd(m)))
+}
 val scHi : (list(string), int) -> int
 function scHi(m, s) = if has(m, "scaled::n2::ue8m0") then land_int(asr_int(s, 8), 255) else land_int(s, 255)
 val scLo : (list(string), int) -> int
@@ -129,9 +155,6 @@ function miniDecF(k, b) = {
   else signedF(if k == "ue5m3" then 0 else asr_int(b, mBits(k) - 1), miniMag(k, land_int(b, mask(if k == "ue5m3" then 8 else mBits(k) - 1))))
 }
 
-val miniTo16 : (string, int, int) -> int
-function miniTo16(k, b, f) = if f == 16 then miniToF16(k, b) else encodeF(decodeF(miniToF16(k, b), 16), f)
-
 /* s2f6 */
 val isS2F6 : ty -> bool
 function isS2F6(t) = t.k == "s2f6x2"
@@ -140,8 +163,8 @@ function s2f6Code(m, x) = {
   if fv_is_nan(x) then 127
   else if has(m, "relu") & fv_sign(x) then 0
   else if fv_is_inf(x) then (if fv_sign(x) then 128 else 127)
-  else if fv_sign(x) then land_int(0 - min_int(128, roundGrid(scaleP2(fv_abs(x), 6), mrnd(m))), 255)
-  else min_int(127, roundGrid(scaleP2(x, 6), mrnd(m)))
+  else if fv_sign(x) then land_int(0 - min_int(128, roundGrid(scaleP2(fv_abs(x), 6), magMode(mrnd(m), true))), 255)
+  else min_int(127, roundGrid(scaleP2(x, 6), magMode(mrnd(m), false)))
 }
 val s2f6Enc : (list(string), fv, int) -> int
 function s2f6Enc(m, x, s) = s2f6Code(m, scDiv(x, s))
@@ -151,9 +174,11 @@ function s2f6Val(b) = scaleP2(fv_of_int(sext(land_int(b, 255), 8)), -6)
 /* ue8m0 */
 val isUe : ty -> bool
 function isUe(t) = t.k == "ue8m0x2"
-val ueEnc : (fv, bool) -> int
-function ueEnc(x, up) = {
+val ueEnc : (fv, int, bool) -> int
+function ueEnc(x, md, satf) = {
   if fv_is_nan(x) then 255
+  /* .satfinite: |x| > MAX_NORM gives the positive MAX_NORM 0xfe, also for a negative x (ISA 9.7.9.22, .satfinite) */
+  else if satf & (fv_is_inf(x) | fv_cmp(fv_abs(x), FV_Fin(false, 1, 127)) > 0) then 254
   else if fv_sign(x) | fv_is_zero(x) then 0
   else if fv_is_inf(x) then 254
   else {
@@ -161,16 +186,47 @@ function ueEnc(x, up) = {
     var r : int = -1000;
     while r == -1000 do {
       if e >= 130 then r = e
-      else if fv_cmp(x, FV_Fin(false, 1, e + 1)) < 0 then r = (if up & fv_cmp(x, FV_Fin(false, 1, e)) > 0 then e + 1 else e)
+      else if fv_cmp(x, FV_Fin(false, 1, e + 1)) < 0 then r = (
+        if md == 1 then (if fv_cmp(x, FV_Fin(false, 1, e)) > 0 then e + 1 else e)
+        /* .rn (outside the frnd3 syntax, reported under .isacheck): nearest power of two, ties (1.5 * 2^e) to the even
+           code */
+        else if md == 2 then (let h = fv_cmp(x, FV_Fin(false, 3, e - 1)) in
+                              if h > 0 | (h == 0 & fmod_int(e + 127, 2) != 0) then e + 1 else e)
+        else e)
       else e = e + 1
     };
     max_int(0, min_int(254, r + 127))
   }
 }
+val ueMode : list(string) -> int
+function ueMode(m) = if has(m, "rp") then 1 else if has(m, "rn") then 2 else 0
+
 val ueDec : int -> int
 function ueDec(c) = if c == 255 then 32767 else if c == 0 then 64 else shl_int(c, 7)
 
 let B16 : ty = struct { k = "b", w = 16 }
+
+/* an up-converted (and scaled) value at f16 / bf16 with .relu (negative -> 0, NaN canonical) and .satfinite
+ * (|x| > MAX_NORM -> sign-preserved MAX_NORM) of the instruction (ISA 9.7.9.22, Floating Point Notes) */
+val upF : (list(string), fv, int) -> int
+function upF(m, x, w) = fin({ fmods_of(m) with rm = RN }, w, x, false)
+
+/* the random bits of operand i (a, b, e, f) of cvt.rs to a x4 type: .e2m1x4 (Figure 40) rbits[31:24], [15:8] for
+ * a, b and [23:16], [7:0] for e, f; the 8-bit types (Figure 41) rbits[31:16] for a and b, rbits[15:0] for e and f */
+val rsBits : (string, int, int) -> int
+function rsBits(k, r, i) =
+  if k == "e2m1" then land_int(asr_int(r, if i == 0 then 24 else if i == 1 then 8 else if i == 2 then 16 else 0), 255)
+  else land_int(asr_int(r, if i < 2 then 16 else 0), 65535)
+
+val rsPack : (list(string), string, list(int), int, int) -> int
+function rsPack(m, k, vs, r, i) = match vs {
+  [||] => 0,
+  v :: rest => {
+    let sw = if mBits(k) <= 4 then 4 else 8;
+    let c = pzoFix(has(m, "pzo"), k, miniFromRS(k, fv(v, F32), has(m, "relu"), 3, rsBits(k, r, i), if k == "e2m1" then 8 else 16));
+    lor_int(shl_int(c, sw * (3 - i)), rsPack(m, k, rest, r, i + 1))
+  }
+}
 
 val exec_mini : (opcode, list(xop)) -> bool
 function exec_mini(o, ops) = {
@@ -180,6 +236,13 @@ function exec_mini(o, ops) = {
     let dt = ty_nth(o.tys, 0);
     let st = ty_nth(o.tys, 1);
     match ops {
+      [|d, XV(vs), x|] => {
+        /* cvt.rs{.relu}.satfinite.{e4m3x4,e5m2x4,e2m3x4,e3m2x4,e2m1x4}.f32 d, {a, b, e, f}, rbits: a in the most
+         * significant element of d */
+        if has(m, "rs") & sop_count(vs) == 4 & ty_eq(st, F32) & has([|"e4m3x4", "e5m2x4", "e2m3x4", "e3m2x4", "e2m1x4"|], dt.k) then {
+          wr(d, rsPack(m, stake(dt.k, 4), rdList(vs, F32), rd(x, U32), 0)); true
+        } else false
+      },
       [|d, a, b|] => {
         if isMiniX2(dt) & isF(st) then {
           wr(d, miniPack(dt, miniCvt(m, miniKind(dt), flushIn(isN1(m), fv(rd(a, st), st), -126), 127),
@@ -187,17 +250,17 @@ function exec_mini(o, ops) = {
         } else if isS2F6(dt) & isF(st) then {
           wr(d, lor_int(shl_int(s2f6Enc(m, fv(rd(a, st), st), 127), 8), s2f6Enc(m, fv(rd(b, st), st), 127))); true
         } else if isUe(dt) & isF(st) then {
-          wr(d, lor_int(shl_int(ueEnc(fv(rd(a, st), st), has(m, "rp")), 8), ueEnc(fv(rd(b, st), st), has(m, "rp")))); true
+          wr(d, lor_int(shl_int(ueEnc(fv(rd(a, st), st), ueMode(m), has(m, "satfinite")), 8), ueEnc(fv(rd(b, st), st), ueMode(m), has(m, "satfinite")))); true
         } else if isMiniX2(dt) & isHalfPair(st) then {
           let s = rd(b, B16);
           let v = rd(a, st);
-          wr(d, miniPack(dt, miniCvt(m, miniKind(dt), flushIn(isN1(m), decodeF(lane16(v, 1), fw(laneTyH(st))), -14), scHi(m, s)),
-                             miniCvt(m, miniKind(dt), flushIn(isN1(m), decodeF(lane16(v, 0), fw(laneTyH(st))), -14), scLo(m, s)))); true
+          wr(d, miniPack(dt, miniCvt(m, miniKind(dt), flushIn(isN1(m), decodeF(lane16(v, 1), fw(laneTyH(st))), halfMin(st)), scHi(m, s)),
+                             miniCvt(m, miniKind(dt), flushIn(isN1(m), decodeF(lane16(v, 0), fw(laneTyH(st))), halfMin(st)), scLo(m, s)))); true
         } else if isHalfPair(dt) & isMiniX2(st) then {
           let s = rd(b, B16);
           let v = rd(a, st);
-          wr(d, pack16(encodeF(scMul(miniDecF(miniKind(st), miniElem(st, v, 0)), scLo(m, s)), fw(laneTyH(dt))),
-                       encodeF(scMul(miniDecF(miniKind(st), miniElem(st, v, 1)), scHi(m, s)), fw(laneTyH(dt))))); true
+          wr(d, pack16(upF(m, scMul(miniDecF(miniKind(st), miniElem(st, v, 0)), scLo(m, s)), fw(laneTyH(dt))),
+                       upF(m, scMul(miniDecF(miniKind(st), miniElem(st, v, 1)), scHi(m, s)), fw(laneTyH(dt))))); true
         } else if isS2F6(dt) & isHalfPair(st) then {
           let s = rd(b, B16);
           let v = rd(a, st);
@@ -205,7 +268,7 @@ function exec_mini(o, ops) = {
         } else if isHalfPair(dt) & isS2F6(st) then {
           let s = rd(b, B16);
           let v = rd(a, st);
-          wr(d, pack16(encodeF(scMul(s2f6Val(v), scLo(m, s)), fw(laneTyH(dt))), encodeF(scMul(s2f6Val(asr_int(v, 8)), scHi(m, s)), fw(laneTyH(dt))))); true
+          wr(d, pack16(upF(m, scMul(s2f6Val(v), scLo(m, s)), fw(laneTyH(dt))), upF(m, scMul(s2f6Val(asr_int(v, 8)), scHi(m, s)), fw(laneTyH(dt))))); true
         } else false
       },
       [|d, a, b, sc|] => {
@@ -224,24 +287,105 @@ function exec_mini(o, ops) = {
           wr(d, pack16(encodeF(miniDecF("ue5m3", miniElem(st, v, 0)), fw(laneTyH(dt))), encodeF(miniDecF("ue5m3", miniElem(st, v, 1)), fw(laneTyH(dt))))); true
         } else if isMiniX2(dt) & isHalfPair(st) then {
           let v = rd(a, st);
-          wr(d, miniPack(dt, miniCvt(m, miniKind(dt), flushIn(isN1(m), decodeF(lane16(v, 1), fw(laneTyH(st))), -14), 127),
-                             miniCvt(m, miniKind(dt), flushIn(isN1(m), decodeF(lane16(v, 0), fw(laneTyH(st))), -14), 127))); true
+          wr(d, miniPack(dt, miniCvt(m, miniKind(dt), flushIn(isN1(m), decodeF(lane16(v, 1), fw(laneTyH(st))), halfMin(st)), 127),
+                             miniCvt(m, miniKind(dt), flushIn(isN1(m), decodeF(lane16(v, 0), fw(laneTyH(st))), halfMin(st)), 127))); true
         } else if isS2F6(dt) & isHalfPair(st) then {
           let v = rd(a, st);
           wr(d, lor_int(shl_int(s2f6Enc(m, decodeF(lane16(v, 1), fw(laneTyH(st))), 127), 8), s2f6Enc(m, decodeF(lane16(v, 0), fw(laneTyH(st))), 127))); true
         } else if isHalfPair(dt) & isS2F6(st) then {
           let v = rd(a, st);
-          wr(d, pack16(encodeF(s2f6Val(v), fw(laneTyH(dt))), encodeF(s2f6Val(asr_int(v, 8)), fw(laneTyH(dt))))); true
+          wr(d, pack16(upF(m, s2f6Val(v), fw(laneTyH(dt))), upF(m, s2f6Val(asr_int(v, 8)), fw(laneTyH(dt))))); true
         } else if isHalfPair(dt) & isMiniX2(st) then {
           let v = rd(a, st);
-          wr(d, pack16(miniTo16(miniKind(st), miniElem(st, v, 0), fw(laneTyH(dt))), miniTo16(miniKind(st), miniElem(st, v, 1), fw(laneTyH(dt))))); true
+          wr(d, pack16(upF(m, miniDecF(miniKind(st), miniElem(st, v, 0)), fw(laneTyH(dt))), upF(m, miniDecF(miniKind(st), miniElem(st, v, 1)), fw(laneTyH(dt))))); true
         } else if isUe(dt) & isHalfPair(st) then {
           let v = rd(a, st);
-          wr(d, lor_int(shl_int(ueEnc(decodeF(lane16(v, 1), 116), has(m, "rp")), 8), ueEnc(decodeF(lane16(v, 0), 116), has(m, "rp")))); true
+          wr(d, lor_int(shl_int(ueEnc(decodeF(lane16(v, 1), 116), ueMode(m), has(m, "satfinite")), 8), ueEnc(decodeF(lane16(v, 0), 116), ueMode(m), has(m, "satfinite")))); true
         } else if isHalfPair(dt) & isUe(st) then {
           let v = rd(a, st);
           wr(d, pack16(ueDec(land_int(v, 255)), ueDec(land_int(asr_int(v, 8), 255)))); true
         } else false
+      },
+      _ => false
+    }
+  }
+}
+
+/* ---------------------------------------------------------------- alternate floating point x4 (PTX ISA 9.4 9.7.6)
+ * add / sub{.rn}{.satfinite}.cdtype.atype d, a, c; mul{.rn}{.satfinite}.dtype.atype.ctype d, a, c;
+ * fma{.rn}{.satfinite}.cdtype.atype.btype d, a, b, c.  d (and c of add / sub / fma) is .e5m2x4 / .e4m3x4; the sources
+ * are .e5m2x4 .e4m3x4 .e3m2x4 .e2m3x4 .e2m1x4 .e2m1p4x4 .ue8m0x4.  Element i is a[8i .. 8i+7] (f8, ue8m0), a[8i .. 8i+5]
+ * (f6), a[8i .. 8i+3] (.e2m1p4x4) or a[4i .. 4i+3] (.e2m1x4, a .b16 operand).  The operation is exact ("with an infinite
+ * precision") and rounded to nearest even; .satfinite: |result| > MAX_NORM gives the sign-preserved MAX_NORM; without
+ * it an .e4m3 result beyond the largest representable value is NaN, an .e5m2 one infinity.  A NaN result is the
+ * canonical 0x7f (the ISA does not give its bits). */
+val isAlt4 : string -> bool
+function isAlt4(k) = has([|"e5m2x4", "e4m3x4", "e3m2x4", "e2m3x4", "e2m1x4", "e2m1p4x4", "ue8m0x4"|], k)
+
+val alt4Elem : (string, int, int) -> fv
+function alt4Elem(k, v, i) =
+  if k == "ue8m0x4" then {
+    let c = land_int(asr_int(v, 8 * i), 255);
+    if c == 255 then FV_NaN() else FV_Fin(false, 1, c - 127)
+  }
+  else if k == "e2m1x4" then miniDecF("e2m1", land_int(asr_int(v, 4 * i), 15))
+  else if k == "e2m1p4x4" then miniDecF("e2m1", land_int(asr_int(v, 8 * i), 15))
+  else miniDecF(stake(k, 4), land_int(asr_int(v, 8 * i), mask(mBits(stake(k, 4)))))
+
+val alt4Enc : (string, fv, bool) -> int
+function alt4Enc(k, x, satf) = {
+  let sg = if fv_sign(x) then 128 else 0;
+  let over = if satf then sg + mTop(k) else if k == "e5m2" then sg + 124 else 127;
+  if fv_is_nan(x) then 127
+  else if fv_is_inf(x) then over
+  else if fv_is_zero(x) then sg
+  else {
+    let a = fv_abs(x);
+    var e : int = 1 - mBias(k);
+    while fv_cmp(a, FV_Fin(false, 1, e + 1)) >= 0 & e < 40 do e = e + 1;
+    let raw = miniCodeRaw(k, e, roundGrid(scaleP2(a, mM(k) - e), 0));
+    if raw <= mTop(k) then sg + raw else over
+  }
+}
+
+val exec_altfp : (opcode, list(xop)) -> bool
+function exec_altfp(o, ops) = {
+  let b = o.base;
+  let n = ntys(o);
+  if not_bool(has([|"add", "sub", "mul", "fma"|], b)) | n < 2 | not_bool(isAlt4(ty_nth(o.tys, 1).k))
+     | not_bool(has([|"e5m2x4", "e4m3x4"|], ty_nth(o.tys, 0).k))
+     | n != (if b == "mul" | b == "fma" then 3 else 2) then false
+  else {
+    let dk = stake(ty_nth(o.tys, 0).k, 4);
+    let aty = ty_nth(o.tys, 1);
+    let satf = has(o.mods, "satfinite");
+    match ops {
+      [|d, a, c|] if b != "fma" => {
+        let ct = if b == "mul" then ty_nth(o.tys, 2) else ty_nth(o.tys, 0);
+        let va = rd(a, aty);
+        let vc = rd(c, ct);
+        var r : int = 0;
+        foreach (i from 0 to 3) {
+          let x = alt4Elem(aty.k, va, i);
+          let y = alt4Elem(ct.k, vc, i);
+          let z = if b == "add" then fv_add_exact(x, y, RN) else if b == "sub" then fv_add_exact(x, fv_neg(y), RN)
+                  else fv_mul_exact(x, y);
+          r = lor_int(r, shl_int(alt4Enc(dk, z, satf), 8 * i))
+        };
+        wr(d, r); true
+      },
+      [|d, a, bo, c|] if b == "fma" => {
+        let bt = ty_nth(o.tys, 2);
+        let ct = ty_nth(o.tys, 0);
+        let va = rd(a, aty);
+        let vb = rd(bo, bt);
+        let vc = rd(c, ct);
+        var r : int = 0;
+        foreach (i from 0 to 3) {
+          let z = fv_add_exact(fv_mul_exact(alt4Elem(aty.k, va, i), alt4Elem(bt.k, vb, i)), alt4Elem(ct.k, vc, i), RN);
+          r = lor_int(r, shl_int(alt4Enc(dk, z, satf), 8 * i))
+        };
+        wr(d, r); true
       },
       _ => false
     }

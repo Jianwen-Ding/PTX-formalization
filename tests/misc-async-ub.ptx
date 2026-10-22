@@ -1,0 +1,60 @@
+// tests/misc-async.ptx under .ub strict: the st.async / red.async (9.7.9.12, 9.7.14.7) and st.bulk (9.7.9.14) conditions hold
+// st.async / red.async towards a remote mbarrier, st.bulk, clusterlaunchcontrol.try_cancel, no-op hints.
+.version 8.8
+.target sm_100a
+.address_size 64
+.ub strict ;
+
+.visible .entry k(.param .u64 po) .reqnctapercluster 2, 1, 1
+{
+    .reg .b64 %o, %mb, %st; .reg .b32 %r<8>, %a32, %b32, %rem, %rbar, %rank, %v; .reg .pred %p, %is0, %is1, %w, %canceled;
+    .shared .align 8 .b64 bar;
+    .shared .align 16 .b32 buf[16];
+    .shared .align 16 .b8 resp[16];
+    .shared .align 8 .b64 bar2;
+    ld.param.u64 %o, [po];
+    mov.u32 %rank, %cluster_ctarank;
+    setp.eq.u32 %is0, %rank, 0;
+    setp.eq.u32 %is1, %rank, 1;
+    mov.u64 %mb, bar;
+    mov.u32 %b32, bar;
+    mov.u32 %a32, buf;
+    griddepcontrol.launch_dependents;
+    setmaxnreg.dec.sync.aligned.u32 40;
+    @%is0 mbarrier.init.shared.b64 [%mb], 1;
+    mov.u32 %v, 10;
+    @%is0 st.shared.b32 [buf+4], %v;
+    @%is0 mbarrier.arrive.expect_tx.shared.b64 %st, [%mb], 8;
+    barrier.cluster.arrive.release.aligned;
+    barrier.cluster.wait.acquire.aligned;
+    mapa.shared::cluster.u32 %rem, %a32, 0;
+    mapa.shared::cluster.u32 %rbar, %b32, 0;
+    mov.u32 %r0, 7;
+    mov.u32 %r1, 3;
+    @%is1 st.async.shared::cluster.mbarrier::complete_tx::bytes.u32 [%rem], %r0, [%rbar];
+    @%is1 red.async.relaxed.cluster.shared::cluster.mbarrier::complete_tx::bytes.add.u32 [%rem+4], %r1, [%rbar];
+    @%is0 mbarrier.try_wait.parity.shared.b64 %w, [%mb], 0;
+    @%is0 ld.shared.b32 %r2, [buf];
+    @%is0 ld.shared.b32 %r3, [buf+4];
+    // st.bulk zero-fills; clusterlaunchcontrol never cancels
+    mov.u32 %v, 99;
+    @%is0 st.shared.b32 [buf+8], %v;
+    @%is0 st.bulk.weak.shared::cta [%a32+8], 16, 0;
+    @%is0 ld.shared.b32 %r4, [buf+8];
+    @%is0 ld.shared.b32 %r5, [buf+20];
+    @%is0 mbarrier.init.shared.b64 [bar2], 1;
+    @%is0 mbarrier.arrive.expect_tx.shared.b64 %st, [bar2], 16;
+    @%is0 clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.b128 [resp], [bar2];
+    @%is0 mbarrier.try_wait.parity.shared.b64 %w, [bar2], 0;
+    @%is0 clusterlaunchcontrol.query_cancel.is_canceled.pred.b128 %canceled, [resp];
+    selp.u32 %r6, 1, 0, %canceled;
+    @%is0 st.global.b32 [%o], %r2;
+    @%is0 st.global.b32 [%o+4], %r3;
+    @%is0 st.global.b32 [%o+8], %r4;
+    @%is0 st.global.b32 [%o+12], %r5;
+    @%is0 st.global.b32 [%o+16], %r6;
+    ret;
+}
+.buffer O .u32 [8];
+.launch k <<< 2, 1 >>> (O);
+.expect O .u32 = { 7, 13, 0, 0, 0, 0, 0, 0 };

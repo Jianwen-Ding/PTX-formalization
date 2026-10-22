@@ -1,0 +1,21 @@
+// mad.f32 on .target sm_1x (9.7.3.5): the double-precision product's mantissa is truncated to 23 bits before c is
+// added; with c = +/-0 it equals mul then add.  a = b = 1 + 2^-23: a*b = 1 + 2^-22 + 2^-46
+.version 1.4
+.target sm_13
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .f32 %f<4>; .reg .b64 %o;
+    ld.param.u64 %o, [po];
+    mov.b32 %f1, 0x3F800001;
+    mad.f32 %f0, %f1, %f1, 0fBF800002;
+    st.global.b32 [%o], %f0;
+    mad.f32 %f0, %f1, %f1, 0f00000000;
+    st.global.b32 [%o+4], %f0;
+    mad.rn.f32 %f0, %f1, %f1, 0fBF800002;
+    st.global.b32 [%o+8], %f0;
+    ret;
+}
+.buffer O .u32 [3];
+.launch k <<< 1, 1 >>> (O);
+.expect O .u32 = { 0, 0x3F800002, 0x28800000 };

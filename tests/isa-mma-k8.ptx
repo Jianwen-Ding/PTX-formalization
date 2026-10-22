@@ -1,0 +1,16 @@
+// mma .f16 .m16n8k8 needs PTX 6.5 / sm_75 (9.7.15.5.14 L26974, L27019)
+.version 7.0
+.target sm_80
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %rd<4>; .reg .b32 %r<16>; .reg .f32 %f<8>; .reg .b16 %h<4>; .reg .pred %p; .shared .b64 mb;
+    ld.param.u64 %o, [po];
+    mov.u32 %r0, 7;
+    mma.sync.aligned.m16n8k8.row.col.f16.f16.f16.f16 {%r1,%r2}, {%r3,%r4}, {%r5}, {%r6,%r7};
+    st.global.u32 [%o], %r0;
+}
+
+.buffer OUT .u32 [4];
+.launch k <<< 1, 32 >>> (OUT);

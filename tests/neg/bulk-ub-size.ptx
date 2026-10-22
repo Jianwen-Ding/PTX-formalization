@@ -1,0 +1,19 @@
+// expect: cp.async.bulk: size is not a multiple of 16
+// cp.async.bulk (9.7.9.26.4.1): "size must be a multiple of 16", reported under .ub strict
+.version 8.0
+.target sm_90
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 pi)
+{
+    .reg .b64 %i, %st;
+    .shared .align 16 .b8 buf[64];
+    .shared .align 8 .b64 bar;
+    ld.param.u64 %i, [pi];
+    mbarrier.init.shared.b64 [bar], 1;
+    mbarrier.arrive.expect_tx.shared.b64 %st, [bar], 64;
+    cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [buf], [%i], 24, [bar];
+    ret;
+}
+.buffer I .u32 [32];
+.launch k <<< 1, 1 >>> (I);

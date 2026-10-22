@@ -1,0 +1,13 @@
+// expect: ld.v8 takes only .b32 / .s32 / .u32 / .f32
+// 9.7.9.8: .v8 is supported only with 32-bit types; reported under .isacheck
+.version 8.8
+.target sm_100
+.address_size 64
+.isacheck ;
+.visible .entry k()
+{
+    .reg .b32 %r<8>; .shared .align 32 .b32 s[8];
+    .reg .b16 %h<8>; .reg .b64 %a; mov.u64 %a, 0; ld.global.v8.u16 {%h0, %h1, %h2, %h3, %h4, %h5, %h6, %h7}, [%a];
+    ret;
+}
+.launch k <<< 1, 1 >>> ();

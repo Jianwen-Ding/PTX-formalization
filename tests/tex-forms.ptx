@@ -1,0 +1,60 @@
+// tex / txq forms against PTX ISA 9.3:
+// * tex.level: "The type of lod follows .ctype (either .s32 or .f32)" (~18911): .s32 lod 1 selects level 1 (100.0);
+// * .dtype .f16 and .f16x2 (~18731, 18768 "The instruction returns a two-element vector for destination type .f16x2"):
+//   texel (1, 2) = 9.0 -> f16 0x4880, alpha 1.0 -> 0x3c00; .f16x2: {r, g} and {b, a}, the first element in the low half;
+//   linear filtering of 2049.0 and 2050.0 at x = 0.8333333 (weight 85/256) gives 2049.33..., rounded to the nearest f16
+//   2050.0 = 0x6801 (alpha 0x3c00);
+// * force_unnormalized_coords (section 5.3.2 ~2528-2531): "when False, the texture header setting is used": TA has
+//   unnormalized coordinates, so (1.5, 2.5) with the normalized sampler SMN (force_unnormalized_coords 0) reads texel (1, 2)
+//   = 9.0; TN (normalized) with SMU (force_unnormalized_coords 1) also reads 9.0;
+// * txq.addr_mode_0: "Integer from enum { wrap, mirror, clamp_ogl, clamp_to_edge, clamp_to_border }" (~19254): the harness
+//   modes wrap, mirror, clamp, border give 0, 1, 3, 4 (texture and sampler).
+.version 8.6
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 pA, .param .u64 pM, .param .u64 pN, .param .u64 pR, .param .u64 pD, .param .u64 pW,
+                  .param .u64 pL, .param .u64 pSN, .param .u64 pSU, .param .u64 po)
+{
+  .reg .b64 %tA, %tM, %tN, %tR, %tD, %tW, %tL, %sN, %sU, %o; .reg .f32 %a, %b, %c, %d, %x, %y; .reg .s32 %i, %j, %l;
+  .reg .b16 %h0, %h1, %h2, %h3; .reg .b32 %u, %v0, %v1;
+  ld.param.u64 %tA, [pA]; ld.param.u64 %tM, [pM]; ld.param.u64 %tN, [pN]; ld.param.u64 %tR, [pR]; ld.param.u64 %tD, [pD];
+  ld.param.u64 %tW, [pW]; ld.param.u64 %tL, [pL]; ld.param.u64 %sN, [pSN]; ld.param.u64 %sU, [pSU]; ld.param.u64 %o, [po];
+  mov.s32 %i, 0; mov.s32 %j, 0; mov.s32 %l, 1;
+  tex.level.2d.v4.f32.s32 {%a, %b, %c, %d}, [%tM, {%i, %j}], %l;
+  st.global.f32 [%o+0], %a;
+  mov.f32 %x, 0f3FC00000; mov.f32 %y, 0f40200000;
+  tex.2d.v4.f16.f32 {%h0, %h1, %h2, %h3}, [%tA, {%x, %y}];
+  st.global.b16 [%o+4], %h0; st.global.b16 [%o+6], %h3;
+  tex.2d.v2.f16x2.f32 {%v0, %v1}, [%tA, {%x, %y}];
+  st.global.b32 [%o+8], %v0; st.global.b32 [%o+12], %v1;
+  mov.f32 %x, 0f3F555555;
+  tex.1d.v4.f16.f32 {%h0, %h1, %h2, %h3}, [%tL, {%x}];
+  st.global.b16 [%o+16], %h0; st.global.b16 [%o+18], %h3;
+  mov.f32 %x, 0f3FC00000; mov.f32 %y, 0f40200000;
+  tex.2d.v4.f32.f32 {%a, %b, %c, %d}, [%tA, %sN, {%x, %y}];
+  st.global.f32 [%o+20], %a;
+  tex.2d.v4.f32.f32 {%a, %b, %c, %d}, [%tN, %sU, {%x, %y}];
+  st.global.f32 [%o+24], %a;
+  txq.addr_mode_0.b32 %u, [%tW]; st.global.b32 [%o+28], %u;
+  txq.addr_mode_0.b32 %u, [%tR]; st.global.b32 [%o+32], %u;
+  txq.addr_mode_0.b32 %u, [%tA]; st.global.b32 [%o+36], %u;
+  txq.addr_mode_0.b32 %u, [%tD]; st.global.b32 [%o+40], %u;
+  txq.addr_mode_1.b32 %u, [%sN]; st.global.b32 [%o+44], %u;
+  txq.addr_mode_2.b32 %u, [%sU]; st.global.b32 [%o+48], %u;
+  ret;
+}
+.buffer TB .u32 = { 0, 1065353216, 1073741824, 1077936128, 1082130432, 1084227584, 1086324736, 1088421888, 1090519040, 1091567616, 1092616192, 1093664768 };
+.buffer MB .u32 = { 0, 1065353216, 1073741824, 1077936128, 1082130432, 1084227584, 1086324736, 1088421888, 1090519040, 1091567616, 1092616192, 1093664768, 1094713344, 1095761920, 1096810496, 1097859072, 1120403456, 1120534528, 1120665600, 1120796672, 1128792064 };
+.buffer LB .u32 = { 1157632000, 1157636096, 1157636096, 1157636096 };
+.texture TA .f32 TB .dims { 4, 3, 1 } .attrs { 1, 0, 1, 0, 0, 1 } ;
+.texture TM .f32 MB .dims { 4, 4, 1 } .attrs { 1, 0, 1, 0, 0, 1, 3, 0, 0 } ;
+.texture TN .f32 TB .dims { 4, 3, 1 } .attrs { 1, 0, 1, 1, 0, 1 } ;
+.texture TR .f32 TB .dims { 4, 3, 1 } .attrs { 1, 0, 3, 1, 0, 1 } ;
+.texture TD .f32 TB .dims { 4, 3, 1 } .attrs { 1, 0, 2, 0, 0, 1 } ;
+.texture TW .f32 TB .dims { 4, 3, 1 } .attrs { 1, 0, 0, 1, 0, 1 } ;
+.texture TL .f32 LB .dims { 4, 1, 1 } .attrs { 1, 1, 1, 0, 0, 1 } ;
+.sampler SMN .attrs { 0, 2, 1 } ;
+.sampler SMU .attrs { 0, 3, 0 } ;
+.buffer O .u32 [13];
+.launch k <<< 1, 1 >>> (TA, TM, TN, TR, TD, TW, TL, SMN, SMU, O);
+.expect O .u32 = { 1120403456, 1006651520, 18560, 1006632960, 1006659585, 1091567616, 1091567616, 0, 1, 3, 4, 4, 1 };

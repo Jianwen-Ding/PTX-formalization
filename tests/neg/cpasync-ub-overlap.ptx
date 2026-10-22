@@ -1,0 +1,18 @@
+// expect: cp.async: two cp.async of one cp.async-group copy to the same location
+// two cp.async in one cp.async-group copying to the same location (9.7.9.26.3.1), reported under .ub strict
+.version 8.0
+.target sm_90
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 pi)
+{
+    .reg .b64 %i, %g, %s; .reg .b32 %r;
+    .shared .align 16 .b8 buf[64];
+    ld.param.u64 %i, [pi];
+    cp.async.ca.shared.global [buf], [%i], 8;
+    cp.async.ca.shared.global [buf+4], [%i], 8;
+    cp.async.commit_group;
+    ret;
+}
+.buffer I .u32 [16];
+.launch k <<< 1, 1 >>> (I);

@@ -1,0 +1,14 @@
+// expect: a transposed matrix must be E4M3 or E5M2
+// .kind::mxf8f6f4 dense K = 64 with a transposed E2M3 A in shared memory (PTX ISA 9.4 9.7.18.10.1 Table 64, 9.7.18.10.10.1), under .isacheck
+.version 9.4
+.target sm_107f
+.address_size 64
+.isacheck ;
+.visible .entry k()
+{
+    .reg .b32 %r<6>; .reg .b64 %dA, %dB;
+    mov.u32 %r1, 0; mov.u32 %r2, 256; mov.u32 %r3, 2290254208; mov.u32 %r4, 300; mov.u32 %r5, 310; mov.b64 %dA, 0; mov.b64 %dB, 0;
+    tcgen05.mma.cta_group::1.kind::mxf8f6f4.block_scale.block32 [%r1], %dA, %dB, %r3, [%r4], [%r5], 1;
+    ret;
+}
+.launch k <<< 1, 1 >>> ();

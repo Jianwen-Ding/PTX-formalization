@@ -83,10 +83,13 @@ module PTX-EXEC-BITS
   // ---------------------------------------------------------------- bmsk
   // bmsk.mode.b32 d, a, b : b ones starting at bit a
   syntax Int ::= bmsk(Bool, Int, Int) [function, total]            // clamp?, a, b
-  rule bmsk(true, A, B)  => bmskAux(minInt(A &Int 255, 32), minInt(B &Int 255, 32))
-  rule bmsk(false, A, B) => bmskAux(A &Int 31, B &Int 31)
-  syntax Int ::= bmskAux(Int, Int) [function, total]
-  rule bmskAux(P, L) => (mask(L) <<Int P) &Int 4294967295
+  // the Semantics pseudo-code of bmsk (PTX ISA 9.7.1) on the 32-bit operands
+  rule bmsk(CL, A, B) => bmskAux(CL, A &Int 4294967295, B &Int 4294967295)
+  syntax Int ::= bmskAux(Bool, Int, Int) [function, total]
+  rule bmskAux(CL, A, B) =>
+       (#if CL andBool A >=Int 32 #then 0 #else (4294967295 <<Int (A &Int 31)) &Int 4294967295 #fi)
+       &Int ~Int (#if (A &Int 31) +Int (B &Int 31) >=Int 32 orBool (CL andBool (A >=Int 32 orBool B >=Int 32)) #then 0
+                  #else #if B &Int 31 ==Int 0 #then 4294967295 #else (4294967295 <<Int ((A &Int 31) +Int (B &Int 31))) &Int 4294967295 #fi #fi)
 
   rule <tk> exec(opc("bmsk", M, _), ops(D, A, B, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, bmsk("clamp" in M, rd(A, ty("u", 32), C), rd(B, ty("u", 32), C))) </regs>

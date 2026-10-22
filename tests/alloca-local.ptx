@@ -1,0 +1,36 @@
+// alloca returns a pointer to local memory, usable with ld.local / st.local (PTX ISA 9.7.18.3); its generic
+// address comes from cvta.local.  The stack grows down and alloca's result is the new stack pointer, so a
+// stacksave right after alloca returns the same value; stackrestore frees the allocation (9.7.18.1-2).
+.version 8.6
+.target sm_90
+.address_size 64
+.ub strict;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %p, %q, %g, %s0, %s1; .reg .b32 %r<8>; .reg .pred %c;
+    ld.param.u64 %o, [po];
+    stacksave.u64 %s0;
+    alloca.u64 %p, 16, 8;
+    stacksave.u64 %s1;
+    setp.eq.u64 %c, %p, %s1;
+    selp.u32 %r1, 1, 0, %c;
+    setp.lt.u64 %c, %p, %s0;
+    selp.u32 %r2, 1, 0, %c;
+    st.local.u32 [%p], 42;
+    st.local.u32 [%p+12], 43;
+    cvta.local.u64 %g, %p;
+    ld.u32 %r3, [%g+12];
+    isspacep.local %c, %g;
+    selp.u32 %r4, 1, 0, %c;
+    ld.local.u32 %r5, [%p];
+    stackrestore.u64 %s0;
+    alloca.u64 %q, 16, 8;
+    setp.eq.u64 %c, %p, %q;
+    selp.u32 %r6, 1, 0, %c;
+    st.global.v2.u32 [%o], {%r1, %r2};
+    st.global.v2.u32 [%o+8], {%r3, %r4}; st.global.v2.u32 [%o+16], {%r5, %r6};
+    ret;
+}
+.buffer OUT .u32 [6];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 1, 1, 43, 1, 42, 1 };

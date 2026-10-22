@@ -1,0 +1,14 @@
+// expect: the 128-lane scale factor A layout (idesc bit 26) requires sm_107f
+// idesc bit 26 (Matrix A Scale Factor Layout: 128 Lane) on sm_100a: "valid for sm_107f or higher in the same family" (PTX ISA 9.4 9.7.18.4.2.1), under .isacheck
+.version 9.4
+.target sm_100a
+.address_size 64
+.isacheck ;
+.visible .entry k()
+{
+    .reg .b32 %r<6>; .reg .b64 %dA, %dB;
+    mov.u32 %r1, 0; mov.u32 %r2, 256; mov.u32 %r3, 209846272; mov.u32 %r4, 300; mov.u32 %r5, 310; mov.b64 %dA, 0; mov.b64 %dB, 0;
+    tcgen05.mma.cta_group::1.kind::mxf8f6f4.block_scale.block32 [%r1], %dA, %dB, %r3, [%r4], [%r5], 1;
+    ret;
+}
+.launch k <<< 1, 1 >>> ();

@@ -1,0 +1,43 @@
+// activemask (PTX ISA 9.3): "An active thread will contribute 1 for its entry in the result and exited or inactive or
+// predicated-off thread will contribute 0".  The model reports the lanes that execute the same activemask together (see
+// actGroup in sail/ptx/ptx_coll.sail): after a divergent branch each path's activemask has the lanes of that path, and the
+// lanes whose guard is false do not appear.  Second launch: lane 31 has exited.
+.version 8.0
+.target sm_80
+.address_size 64
+.visible .entry k(.param .u64 po, .param .u64 pq, .param .u32 px)
+{
+    .reg .b32 %r<10>; .reg .pred %p<4>; .reg .b64 %rd<8>;
+    ld.param.u64 %rd2, [po];
+    ld.param.u64 %rd6, [pq];
+    ld.param.u32 %r9, [px];
+    mov.u32 %r1, %tid.x;
+    setp.eq.u32 %p3, %r1, %r9;
+    @%p3 exit;
+    setp.lt.u32 %p1, %r1, 16;
+    @%p1 bra A;
+    activemask.b32 %r2;
+    bra J;
+A:
+    activemask.b32 %r2;
+J:
+    mul.wide.u32 %rd3, %r1, 4;
+    add.s64 %rd5, %rd2, %rd3;
+    st.global.u32 [%rd5], %r2;
+    mov.u32 %r3, 0;
+    setp.lt.u32 %p2, %r1, 4;
+    @%p2 activemask.b32 %r3;
+    add.s64 %rd5, %rd6, %rd3;
+    st.global.u32 [%rd5], %r3;
+    ret;
+}
+.buffer O .u32 [32];
+.buffer Q .u32 [32];
+.buffer O2 .u32 [32];
+.buffer Q2 .u32 [32];
+.launch k <<< 1, 32 >>> (O, Q, 99);
+.launch k <<< 1, 32 >>> (O2, Q2, 31);
+.expect O .u32 = { 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 4294901760, 4294901760, 4294901760, 4294901760, 4294901760, 4294901760, 4294901760, 4294901760, 4294901760, 4294901760, 4294901760, 4294901760, 4294901760, 4294901760, 4294901760, 4294901760 };
+.expect Q .u32 = { 15, 15, 15, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+.expect O2 .u32 = { 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 2147418112, 2147418112, 2147418112, 2147418112, 2147418112, 2147418112, 2147418112, 2147418112, 2147418112, 2147418112, 2147418112, 2147418112, 2147418112, 2147418112, 2147418112, 0 };
+.expect Q2 .u32 = { 15, 15, 15, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };

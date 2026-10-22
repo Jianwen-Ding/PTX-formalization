@@ -1,0 +1,43 @@
+// Taking the address of a device-function parameter with mov copies the parameter onto the stack frame,
+// and the address is in the .local state space (PTX ISA 5.1 table note 3, the buffer example of 5.1.6.2, mov).
+// The input b is read through ld.local; the return parameter rv is written through st.local and the caller
+// sees the value; ld.param / st.param on the parameter name see the same bytes.
+.version 8.6
+.target sm_90
+.address_size 64
+.func (.param .b32 rv) f(.param .b32 a, .param .b32 b[2])
+{
+    .reg .b32 %x, %y, %z; .reg .b64 %p, %q;
+    mov.u64 %p, b;
+    ld.local.b32 %x, [%p+4];
+    st.param.b32 [b], 100;
+    ld.local.b32 %y, [%p];
+    ld.param.b32 %z, [a];
+    add.u32 %x, %x, %y;
+    add.u32 %x, %x, %z;
+    mov.u64 %q, rv;
+    st.local.b32 [%q], %x;
+    ret;
+}
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r1;
+    .local .align 4 .b32 junk[4];
+    ld.param.u64 %o, [po];
+    st.local.u32 [junk], 111; st.local.u32 [junk+4], 222; st.local.u32 [junk+8], 333;
+    {
+    .param .b32 p0;
+    .param .b32 p1[2];
+    .param .b32 r0;
+    st.param.b32 [p0], 5;
+    st.param.b32 [p1], 6;
+    st.param.b32 [p1+4], 7;
+    call (r0), f, (p0, p1);
+    ld.param.b32 %r1, [r0];
+    }
+    st.global.u32 [%o], %r1;
+    ret;
+}
+.buffer OUT .u32 [1];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 112 };

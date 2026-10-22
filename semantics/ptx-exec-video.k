@@ -78,8 +78,8 @@ module PTX-EXEC-VIDEO
   // vshl / vshr : shift amount from b's low bits, clamped to 32 or wrapped mod 32
   syntax Int ::= vshift(Bool, Bool, Int, Int) [function, total]              // left?, clamp?, a, b
   rule vshift(Left, Clamp, A, B) =>
-       #if Left #then A <<Int #if Clamp #then minInt(B &Int 255, 32) #else B &Int 31 #fi
-       #else A >>Int #if Clamp #then minInt(B &Int 255, 32) #else B &Int 31 #fi #fi
+       #if Left #then A <<Int #if Clamp #then minInt(B &Int 4294967295, 32) #else B &Int 31 #fi
+       #else A >>Int #if Clamp #then minInt(B &Int 4294967295, 32) #else B &Int 31 #fi #fi
   rule <tk> #gx(opc(OP, M, ListItem(DT) ListItem(AT) ListItem(BT)), ops(D, A, B, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, vfinish(M, DT, vshift(OP ==String "vshl", notBool "wrap" in M, vrd(A, AT, C), vrd(B, BT, C)), 0)) </regs>
     requires OP in (SetItem("vshl") SetItem("vshr"))
@@ -92,6 +92,12 @@ module PTX-EXEC-VIDEO
        <regs> R => wr(R, D, vsetRes(M, vrd(A, AT, C), vrd(B, BT, C), 0)) </regs>
   rule <tk> exec(opc("vset", M, ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
        <regs> R => wr(R, D, vsetRes(M, vrd(A, AT, C), vrd(B, BT, C), rd(X, ty("u", 32), C))) </regs>
+    requires selSfx(opName(D)) ==String ""
+  // ISA vset: d = optMerge(dsel, tmp, c) when d carries a selector
+  rule <tk> exec(opc("vset", M, ListItem(AT) ListItem(BT)), ops(D, A, B, X, .Operands), C) => .K ... </tk>
+       <regs> R => R[baseStr(opName(D)) <- vmerge(ty("u", 32), false, selSfx(opName(D)), cmpV(cmpOp(M), vrd(A, AT, C), vrd(B, BT, C)),
+                                                   rd(X, ty("u", 32), C))] </regs>
+    requires selSfx(opName(D)) =/=String ""
   syntax Int ::= vsetRes(Set, Int, Int, Int) [function, total]
   rule vsetRes(M, A, B, C) => trunc(secApply(secOp(M), ty("u", 32), cmpV(cmpOp(M), A, B), C), 32)
   syntax Int ::= cmpV(String, Int, Int) [function, total]

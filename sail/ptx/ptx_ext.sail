@@ -12,9 +12,9 @@ function coll_compute_ext(k, d, arr) = match coll_mma(k, d, arr) {
   None() => if k == "wgmma" then Some(wg_compute(d, arr)) else coll_ldm(k, d, arr)
 }
 function coll_post_ext(p, vs) = match p {
-  P_tcalloc(_, _) => post_tc(p, vs),
-  P_tcdealloc(_, _) => post_tc(p, vs),
+  P_tcalloc(_, _, _) => post_tc(p, vs),
+  P_tcdealloc(_, _, _) => post_tc(p, vs),
   _ => post_ldm(p, vs)
 }
-function ext_wait_ready2() = false
+function ext_wait_ready2() = match t_cont[tchk(cur)] { K_wait("tcalloc", _) => tcAllocRetry(), _ => false }
 function harness_ext(d) = harness_tma(d) | harness_tex(d) | harness_mm(d)

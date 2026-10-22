@@ -1,0 +1,60 @@
+// Operation / type combinations outside the PTX ISA 9.3 tables (reported only under `.isacheck ;`, see tests/neg/isa-tbl-*)
+// run with the natural meaning of the operation on the type:
+// * sured (9.7.12.3): .b.and.u32 is the bitwise and (15 & 6 = 6); .b.add.s64 the 64-bit add (1 + 5); .p.add.b64 the add
+//   at the sample offset scaled by 8 with the format's signedness (2 + 7);
+// * cp.reduce.async.bulk (9.7.9.26.4.2): .min.f32 the float minimum; .add.f16 without .noftz as with it, keeping subnormal
+//   inputs and results (0x0001 + 0x0001 = 0x0002);
+// * cp.reduce.async.bulk.tensor (9.7.9.26.5.3) on an .f32 tensor: .max the float maximum, .and the bitwise and of the bits
+//   (3.0 & 1.0 = 0x40400000 & 0x3f800000 = 0);
+// * multimem.ld_reduce (9.7.9.15): .min.f32 the float minimum; .add.s64 the 64-bit add; .and.u32 the bitwise and;
+//   .add.acc::f16.f16x2 accumulates in f16 (the f16x2 lanes 0x3f80 = 1.875 and 0x4000 = 2.0 give 3.875 = 0x43c0).
+.version 8.6
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 pS, .param .u64 pg, .param .u64 ph, .param .u64 ptm, .param .u64 pmm, .param .u64 po)
+{
+  .reg .b64 %S, %g, %h, %tm, %mm, %o, %d, %sa, %q; .reg .b32 %r, %x, %buf32; .reg .s32 %i; .reg .b16 %one;
+  .shared .align 128 .b8 buf[64];
+  .shared .align 128 .b8 hbuf[16];
+  ld.param.u64 %S, [pS]; ld.param.u64 %g, [pg]; ld.param.u64 %h, [ph]; ld.param.u64 %tm, [ptm];
+  ld.param.u64 %mm, [pmm]; ld.param.u64 %o, [po];
+  mov.s32 %i, 0; mov.b32 %r, 6;
+  sured.b.and.1d.u32.trap [%S, {%i}], %r;
+  mov.s32 %i, 8; mov.b64 %d, 5;
+  sured.b.add.1d.s64.trap [%S, {%i}], %d;
+  mov.s32 %i, 2; mov.b64 %d, 7;
+  sured.p.add.1d.b64.trap [%S, {%i}], %d;
+  mov.u64 %sa, buf; mov.u32 %buf32, buf;
+  mov.b32 %x, 0f3F800000; st.shared.b32 [%sa], %x; st.shared.b32 [%sa+4], %x; st.shared.b32 [%sa+8], %x; st.shared.b32 [%sa+12], %x;
+  mov.u64 %sa, hbuf; mov.b16 %one, 1;
+  st.shared.b16 [%sa], %one; st.shared.b16 [%sa+2], %one; st.shared.b16 [%sa+4], %one; st.shared.b16 [%sa+6], %one;
+  st.shared.b16 [%sa+8], %one; st.shared.b16 [%sa+10], %one; st.shared.b16 [%sa+12], %one; st.shared.b16 [%sa+14], %one;
+  fence.proxy.async.shared::cta;
+  cp.reduce.async.bulk.global.shared::cta.bulk_group.min.f32 [%g], [%buf32], 16;
+  mov.u32 %buf32, hbuf;
+  cp.reduce.async.bulk.global.shared::cta.bulk_group.add.f16 [%h], [%buf32], 16;
+  mov.u32 %buf32, buf;
+  cp.reduce.async.bulk.tensor.1d.global.shared::cta.max.tile.bulk_group [%tm, {4}], [%buf32];
+  cp.reduce.async.bulk.tensor.1d.global.shared::cta.and.tile.bulk_group [%tm, {8}], [%buf32];
+  cp.async.bulk.commit_group;
+  cp.async.bulk.wait_group 0;
+  multimem.ld_reduce.min.f32 %r, [%mm+0];  st.global.b32 [%o+0], %r;
+  multimem.ld_reduce.and.u32 %r, [%mm+0];  st.global.b32 [%o+4], %r;
+  multimem.ld_reduce.add.s64 %q, [%mm+8];  st.global.b64 [%o+8], %q;
+  multimem.ld_reduce.add.acc::f16.f16x2 %r, [%mm+0];  st.global.b32 [%o+16], %r;
+  ret;
+}
+.buffer SB .u32 = { 15, 0, 1, 0, 2, 0, 0, 0 };
+.surface S .u32 SB .dims { 8, 1, 1 } .attrs { 1, 9, 1, 0, 0, 1, 0 } ;
+.buffer G .f32 = { 5.0, 0.5, 2.0, -1.0, 5.0, 0.5, 2.0, -1.0, 3.0, 3.0, 3.0, 3.0 };
+.buffer H .u16 = { 1, 1, 1, 1, 1, 1, 1, 1 };
+.tensormap TM .f32 G .dims { 12 } .strides { } .box { 4 } .swizzle 0 ;
+.buffer D0 .u32 = { 1065353216, 0, 5, 0 };
+.buffer D1 .u32 = { 1073741824, 0, 7, 0 };
+.multimem MM .size 16 { D0, D1 } ;
+.buffer O .u32 [5];
+.launch k <<< 1, 1 >>> (S, G, H, TM, MM, O);
+.expect SB .u32 = { 6, 0, 6, 0, 9, 0, 0, 0 };
+.expect G .f32 = { 1.0, 0.5, 1.0, -1.0, 5.0, 1.0, 2.0, 1.0, 0.0, 0.0, 0.0, 0.0 };
+.expect H .u16 = { 2, 2, 2, 2, 2, 2, 2, 2 };
+.expect O .u32 = { 1065353216, 0, 12, 0, 1136656384 };

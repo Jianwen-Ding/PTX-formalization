@@ -5,7 +5,7 @@
 
 .visible .entry k0(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 8; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b64 %rd4, [%rd2];
     cvt.rn.satfinite.f32.f64 %r5, %rd4;
@@ -15,7 +15,7 @@
 
 .visible .entry k1(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 8; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b64 %rd4, [%rd2];
     cvt.rn.bf16.f64 %h5, %rd4;
@@ -25,7 +25,7 @@
 
 .visible .entry k2(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 4; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b32 %r4, [%rd2];
     cvt.rn.satfinite.f16.f32 %h5, %r4;
@@ -35,7 +35,7 @@
 
 .visible .entry k3(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 2; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b16 %h4, [%rd2];
     cvt.rn.bf16.f16 %h5, %h4;
@@ -45,7 +45,7 @@
 
 .visible .entry k4(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 2; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b16 %h4, [%rd2];
     cvt.f32.f16 %r5, %h4;
@@ -55,7 +55,7 @@
 
 .visible .entry k5(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 2; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b16 %h4, [%rd2];
     cvt.relu.f64.f16 %rd5, %h4;
@@ -65,7 +65,7 @@
 
 .visible .entry k6(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 2; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b16 %h4, [%rd2];
     cvt.rm.f16.bf16 %h5, %h4;
@@ -75,7 +75,7 @@
 
 .visible .entry k7(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 1; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.s8 %r4, [%rd2];
     cvt.rm.f32.s8 %r5, %r4;
@@ -85,7 +85,7 @@
 
 .visible .entry k8(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 1; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.u8 %r4, [%rd2];
     cvt.rm.f32.u8 %r5, %r4;
@@ -95,7 +95,7 @@
 
 .visible .entry k9(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 2; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.s16 %r4, [%rd2];
     cvt.rm.f32.s16 %r5, %r4;
@@ -105,7 +105,7 @@
 
 .visible .entry k10(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 2; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.u16 %r4, [%rd2];
     cvt.rm.f32.u16 %r5, %r4;
@@ -115,7 +115,7 @@
 
 .visible .entry k11(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 4; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.s32 %r4, [%rd2];
     cvt.rm.f32.s32 %r5, %r4;
@@ -125,7 +125,7 @@
 
 .visible .entry k12(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 4; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.u32 %r4, [%rd2];
     cvt.rm.bf16.u32 %h5, %r4;
@@ -135,7 +135,7 @@
 
 .visible .entry k13(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 8; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.s64 %rd4, [%rd2];
     cvt.rm.f16.s64 %h5, %rd4;
@@ -145,7 +145,7 @@
 
 .visible .entry k14(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 8; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.s64 %rd4, [%rd2];
     cvt.rm.f64.s64 %rd5, %rd4;
@@ -155,7 +155,7 @@
 
 .visible .entry k15(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 8; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.u64 %rd4, [%rd2];
     cvt.rm.f32.u64 %r5, %rd4;
@@ -165,7 +165,7 @@
 
 .visible .entry k16(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 2; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b16 %h4, [%rd2];
     cvt.rmi.u8.f16 %r5, %h4;
@@ -175,7 +175,7 @@
 
 .visible .entry k17(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 2; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b16 %h4, [%rd2];
     cvt.rmi.s32.f16 %r5, %h4;
@@ -185,7 +185,7 @@
 
 .visible .entry k18(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 2; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b16 %h4, [%rd2];
     cvt.rmi.u64.f16 %rd5, %h4;
@@ -195,7 +195,7 @@
 
 .visible .entry k19(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 2; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b16 %h4, [%rd2];
     cvt.rmi.s16.bf16 %r5, %h4;
@@ -205,7 +205,7 @@
 
 .visible .entry k20(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 2; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b16 %h4, [%rd2];
     cvt.rmi.u32.bf16 %r5, %h4;
@@ -215,7 +215,7 @@
 
 .visible .entry k21(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 4; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b32 %r4, [%rd2];
     cvt.rmi.s8.f32 %r5, %r4;
@@ -225,7 +225,7 @@
 
 .visible .entry k22(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 4; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b32 %r4, [%rd2];
     cvt.rmi.u16.f32 %r5, %r4;
@@ -235,7 +235,7 @@
 
 .visible .entry k23(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 4; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b32 %r4, [%rd2];
     cvt.rmi.s64.f32 %rd5, %r4;
@@ -245,7 +245,7 @@
 
 .visible .entry k24(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 8; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b64 %rd4, [%rd2];
     cvt.rmi.u8.f64 %r5, %rd4;
@@ -255,7 +255,7 @@
 
 .visible .entry k25(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 8; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b64 %rd4, [%rd2];
     cvt.rmi.s32.f64 %r5, %rd4;
@@ -265,7 +265,7 @@
 
 .visible .entry k26(.param .u64 pi, .param .u64 po)
 {
-    .reg .b16 %h<4>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
+    .reg .b16 %h<8>; .reg .b32 %r<8>; .reg .b64 %rd<8>;
     mov.u32 %r0, %tid.x;
     mul.wide.u32 %rd1, %r0, 8; ld.param.u64 %rd2, [pi]; add.s64 %rd2, %rd2, %rd1; ld.global.b64 %rd4, [%rd2];
     cvt.rmi.u64.f64 %rd5, %rd4;
@@ -368,7 +368,7 @@
 .buffer I23 .u32 = { 3078607477, 3210868417, 3180307522, 917968466, 3147213889, 1041636719, 981761129, 907192889, 3192836089, 933224888, 2287652172, 2147483647, 3385411758, 3206189762, 1225351478, 3111751745 };
 .buffer O23 .u64 [16];
 .launch k23 <<< 1, 16 >>> (I23, O23);
-.expect O23 .u64 = { 18446744073709551615, 18446744073709551615, 18446744073709551615, 0, 18446744073709551615, 0, 0, 0, 18446744073709551615, 0, 18446744073709551615, 0, 18446744073707902698, 18446744073709551615, 562707, 18446744073709551615 };
+.expect O23 .u64 = { 18446744073709551615, 18446744073709551615, 18446744073709551615, 0, 18446744073709551615, 0, 0, 0, 18446744073709551615, 0, 18446744073709551615, 9223372036854775808, 18446744073707902698, 18446744073709551615, 562707, 18446744073709551615 };
 .buffer I24 .u64 = { 13902293308277280962, 18442240474082181120, 16168689113020675607, 3284079382547031571, 13731755177310240520, 4608749059867937939, 13822444574410248451, 4664049942229705063, 4515648354765817172, 4668487770926019636, 4541321867059159629, 13782212995457932759, 13768431136507416991, 15558105335774326396, 13905657076783996115, 13844328428371639870 };
 .buffer O24 .u8 [16];
 .launch k24 <<< 1, 16 >>> (I24, O24);

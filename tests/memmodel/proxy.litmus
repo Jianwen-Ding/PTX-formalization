@@ -37,3 +37,112 @@ thread T1 cta=0 cluster=0 gpu=0
   r0 = ld.weak x @proxy=async
 exists r0==0
 expect forbidden
+
+test CoWR-surface-alias
+alias a b
+desc same proxy, different virtual addresses: not proxy-preserved (8.9.5 case 2 needs the same address)
+init a=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak a 1 @proxy=surface
+  r0 = ld.weak b @proxy=surface
+exists r0==0
+expect allowed
+
+test CoWR-surface-alias-fenced
+alias a b
+desc surface -> generic (fence.proxy.surface), generic alias (fence.proxy.alias), generic -> surface
+init a=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak a 1 @proxy=surface
+  fence.proxy.surface
+  fence.proxy.alias
+  fence.proxy.surface
+  r0 = ld.weak b @proxy=surface
+exists r0==0
+expect forbidden
+
+test CoWR-surface-alias-wrong-order
+alias a b
+desc the alias fence must come after the surface -> generic fence
+init a=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak a 1 @proxy=surface
+  fence.proxy.alias
+  fence.proxy.surface
+  r0 = ld.weak b @proxy=surface
+exists r0==0
+expect allowed
+
+test CoWR-surface-texture
+desc surface -> texture needs surface -> generic then generic -> texture
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1 @proxy=surface
+  fence.proxy.surface
+  fence.proxy.texture
+  r0 = ld.weak x @proxy=texture
+exists r0==0
+expect forbidden
+
+test CoWR-surface-texture-wrong-order
+desc ... in that order
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1 @proxy=surface
+  fence.proxy.texture
+  fence.proxy.surface
+  r0 = ld.weak x @proxy=texture
+exists r0==0
+expect allowed
+
+test MP-surface-fence-other-cta
+desc a proxy fence orders the accesses of its own CTA: the generic -> surface fence is not in the reader's CTA
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.proxy.surface
+  st.release.gpu f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.acquire.gpu f
+  r1 = ld.weak x @proxy=surface
+exists r0==1 && r1==0
+expect allowed
+
+test MP-surface-fence-reader-cta
+desc ... in the reader's CTA it does
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.gpu f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.acquire.gpu f
+  fence.proxy.surface
+  r1 = ld.weak x @proxy=surface
+exists r0==1 && r1==0
+expect forbidden
+
+test MP-async-fence-other-cta
+desc the same for the async proxy (not in mixedproxy): fence.proxy.async in the writer's CTA, async read in another
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.proxy.async
+  st.release.gpu f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.acquire.gpu f
+  r1 = ld.weak x @proxy=async
+exists r0==1 && r1==0
+expect allowed
+
+test MP-async-fence-same-cta
+desc fence.proxy.async by the writing thread, async read by another thread of the CTA after bar.sync (TMA store pattern)
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.proxy.async
+  bar.sync 0
+thread T2 cta=0 cluster=0 gpu=0
+  bar.sync 0
+  r0 = ld.weak x @proxy=async
+exists r0==0
+expect forbidden

@@ -1,4 +1,5 @@
-// expect: needs PTX ISA 8.6
+// expect: target sm_100a needs PTX ISA 8.6
+// (cvt.rn.satfinite.e2m1x2.f32 also needs 8.6, 9.7.9.22 L15298; every target that has it appears in 8.6 or later)
 .version 8.5
 .target sm_100a
 .address_size 64

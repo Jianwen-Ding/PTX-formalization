@@ -1,0 +1,34 @@
+// expect: tensormap.replace: the only valid values for ord are [0..4]
+// "The only valid values for ord are [0..4]" (9.7.9.27), reported under .isacheck
+.version 8.8
+.target sm_100a
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 ptm, .param .u64 po)
+{
+  .reg .b64 %tm, %o, %mb, %st, %sa, %oo, %t; .reg .b32 %buf32, %bar32, %x, %i; .reg .pred %w;
+  .shared .align 1024 .b8 buf[128];
+  .shared .align 8 .b64 bar;
+  ld.param.u64 %tm, [ptm]; ld.param.u64 %o, [po];
+  mov.u64 %mb, bar; mov.u32 %bar32, bar; mov.u32 %buf32, buf;
+  mov.u32 %i, 0;
+F: mul.wide.u32 %t, %i, 4; mov.u64 %sa, buf; add.u64 %sa, %sa, %t; st.shared.b32 [%sa], 0xdeadbeef;
+  add.u32 %i, %i, 1; setp.lt.u32 %w, %i, 32; @%w bra F;
+  mbarrier.init.shared.b64 [%mb], 1;
+  tensormap.replace.tile.element_stride.global.b1024.b32 [%tm], 5, 3;
+  fence.proxy.tensormap::generic.release.gpu;
+  fence.proxy.async.shared::cta;
+  mbarrier.arrive.expect_tx.shared.b64 %st, [%mb], 64;
+  cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes [%buf32], [%tm, {0, 1}], [%bar32];
+W: mbarrier.try_wait.parity.shared.b64 %w, [%mb], 0;
+  @!%w bra W;
+  mov.u32 %i, 0;
+L: mul.wide.u32 %t, %i, 4; mov.u64 %sa, buf; add.u64 %sa, %sa, %t; add.u64 %oo, %o, %t;
+  ld.shared.b32 %x, [%sa]; st.global.b32 [%oo], %x; add.u32 %i, %i, 1; setp.lt.u32 %w, %i, 32; @%w bra L;
+  ret;
+}
+.buffer G .u32 = { 0, 1065353216, 1073741824, 1077936128, 1082130432, 1084227584, 1086324736, 1088421888, 1120403456, 1120534528, 1120665600, 1120796672, 1120927744, 1121058816, 1121189888, 1121320960, 1128792064, 1128857600, 1128923136, 1128988672, 1129054208, 1129119744, 1129185280, 1129250816, 1133903872, 1133936640, 1133969408, 1134002176, 1134034944, 1134067712, 1134100480, 1134133248, 1137180672, 1137213440, 1137246208, 1137278976, 1137311744, 1137344512, 1137377280, 1137410048, 1140457472, 1140490240, 1140523008, 1140555776, 1140588544, 1140621312, 1140654080, 1140686848, 1142292480, 1142308864, 1142325248, 1142341632, 1142358016, 1142374400, 1142390784, 1142407168, 1143930880, 1143947264, 1143963648, 1143980032, 1143996416, 1144012800, 1144029184, 1144045568 };
+.tensormap TM .f32 G .dims { 8, 8 } .strides { 32 } .box { 8, 4 } .swizzle 0 ;
+.buffer O .u32 [32];
+.launch k <<< 1, 1 >>> (TM, O);
+.expect O .u32 = { 1120403456, 1120534528, 1120665600, 1120796672, 1120927744, 1121058816, 1121189888, 1121320960, 1137180672, 1137213440, 1137246208, 1137278976, 1137311744, 1137344512, 1137377280, 1137410048, 3735928559, 3735928559, 3735928559, 3735928559, 3735928559, 3735928559, 3735928559, 3735928559, 3735928559, 3735928559, 3735928559, 3735928559, 3735928559, 3735928559, 3735928559, 3735928559 };

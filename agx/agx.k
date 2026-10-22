@@ -1,3 +1,4 @@
+// OBSOLETE: this K semantics is no longer maintained; the maintained AGX model is sail/agx (see sail/README.md).
 // =============================================================================
 // AGX: an executable K semantics of a subset of the Apple G13 (M1) GPU ISA.
 //

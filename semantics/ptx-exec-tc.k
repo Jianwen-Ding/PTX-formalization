@@ -536,15 +536,15 @@ module PTX-EXEC-TC
   syntax Float ::= tcScaleF(Int, Int) [function, total]                       // scale type code, byte
   rule tcScaleF(1, X) => scaleP2(Int2Float(1, 64, WEXP), X -Int 127) requires X =/=Int 255
   rule tcScaleF(1, 255) => Int2Float(0, 64, WEXP) /Float Int2Float(0, 64, WEXP)   // ue8m0: 0xFF is NaN
-  rule tcScaleF(0, X) => tcUE(X, 3, 7)
-  rule tcScaleF(2, X) => tcUE(X, 3, 15)
-  rule tcScaleF(_, X) => tcUE(X, 3, 7) [owise]
+  // idesc bit 23: UE8M0 = 1, UE4M3 = 0 (MSB padded, NaN 0x7f)
+  rule tcScaleF(0, X) => tcUE(X &Int 127, 3, 7) requires X &Int 127 =/=Int 127
+  rule tcScaleF(0, X) => Int2Float(0, 64, WEXP) /Float Int2Float(0, 64, WEXP) requires X &Int 127 ==Int 127
   syntax Float ::= tcUE(Int, Int, Int) [function, total]                      // unsigned float with Mn mantissa bits and bias Bi
   rule tcUE(X, Mn, Bi) =>
        #if (X >>Int Mn) ==Int 0 #then scaleP2(Int2Float(X &Int mask(Mn), 64, WEXP), 1 -Int Bi -Int Mn)
        #else scaleP2(Int2Float((X &Int mask(Mn)) +Int (1 <<Int Mn), 64, WEXP), (X >>Int Mn) -Int Bi -Int Mn) #fi
   syntax Int ::= tcScaleTy(Set, Int) [function, total]
-  rule tcScaleTy(M, ID) => (ID >>Int 23) &Int 3 requires "kind::mxf4nvf4" in M
+  rule tcScaleTy(M, ID) => (ID >>Int 23) &Int 1 requires "kind::mxf4nvf4" in M
   rule tcScaleTy(M, ID) => 1 requires notBool "kind::mxf4nvf4" in M
   syntax Map ::= tcScalesA(Map, Int, Int, Int, Int, Int, Int, Map) [function, total]           // tmem, column, SFA_ID, rows, blocks, r, blk, acc
   rule tcScalesA(TM, Cl, Id, M, NB, R, J, Acc) =>

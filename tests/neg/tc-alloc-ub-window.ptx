@@ -1,0 +1,16 @@
+// expect: tcgen05.alloc: dst outside the address window of its state space
+// tcgen05.alloc without a state space: "If the address specified by dst does not fall within the address window of
+// .shared::cta state space then the behavior is undefined" (9.7.17.7.1); a global address, under .ub strict
+.version 8.8
+.target sm_100a
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o;
+    ld.param.u64 %o, [po];
+    tcgen05.alloc.cta_group::1.sync.aligned.b32 [%o], 32;
+    ret;
+}
+.buffer O .u32 [4];
+.launch k <<< 1, 32 >>> (O);

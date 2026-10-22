@@ -1,0 +1,16 @@
+// expect: wmma.load: address or stride not aligned to the fragment size
+// "The starting address of each instance of the leading dimension ... must be aligned with the size of the
+// corresponding fragment in bytes" (9.7.15.4.2): p = A + 16, fragment 32 bytes, under .ub strict
+.version 8.0
+.target sm_90
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 pa)
+{
+    .reg .b64 %pa; .reg .b32 %A<8>;
+    ld.param.u64 %pa, [pa];
+    wmma.load.a.sync.aligned.row.m16n16k16.global.f16 {%A0, %A1, %A2, %A3, %A4, %A5, %A6, %A7}, [%pa+16], 16;
+    ret;
+}
+.buffer A .u16 [512];
+.launch k <<< 1, 32 >>> (A);

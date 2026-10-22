@@ -38,6 +38,7 @@ union addr = {
   AI : int,
   ARO : (string, int),
   ANO : (string, int),
+  ANR : (string, string, int),   /* array[reg + off] (6.4.2): the array's address plus the register plus off */
 }
 
 /* an operand inside [ ... ] after the addresses: simple or a vector { ... } */
@@ -86,6 +87,7 @@ union initval = {
   IVND : (string, string),
   IVG : string,
   IVGO : (string, int),
+  IVM : (int, int, string, int),     /* mask(expr): mask, 0 integer / 1 symbol / 2 generic(symbol), symbol, offset */
 }
 
 struct sdecl = {

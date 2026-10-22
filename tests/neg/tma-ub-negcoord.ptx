@@ -1,0 +1,75 @@
+// expect: cp.async.bulk.tensor: the starting coordinates of a .global.shared::cta copy must be non-negative
+// "Starting co-ordinates for Bounding Box (tensorCoords) must be non-negative" for .global.shared::cta (9.7.9.26.5.1), under .ub strict
+// TMA: tensor-map tile loads (plain, 128B-swizzled, out-of-bounds zero fill), tile store with clipping, tile reduce-add.
+.version 8.6
+.target sm_90
+.address_size 64
+.ub strict ;
+
+.visible .entry k(.param .u64 ptmA, .param .u64 ptmB, .param .u64 ptmW, .param .u64 ptmR, .param .u64 po)
+{
+    .reg .b64 %tA, %tB, %tW, %tR, %o, %mb, %st, %t, %sa, %oo; .reg .b32 %tid, %buf32, %buf2, %buf3, %bar32, %x; .reg .pred %q, %w;
+    .shared .align 1024 .b8 bufA[1024];
+    .shared .align 1024 .b8 bufB[1024];
+    .shared .align 1024 .b8 bufC[1024];
+    .shared .align 8 .b64 bar;
+    ld.param.u64 %tA, [ptmA]; ld.param.u64 %tB, [ptmB]; ld.param.u64 %tW, [ptmW]; ld.param.u64 %tR, [ptmR]; ld.param.u64 %o, [po];
+    mov.u32 %tid, %tid.x;
+    setp.eq.u32 %q, %tid, 0;
+    mov.u64 %mb, bar;
+    mov.u32 %bar32, bar;
+    mov.u32 %buf32, bufA; mov.u32 %buf2, bufB; mov.u32 %buf3, bufC;
+    @%q mbarrier.init.shared.b64 [%mb], 1;
+    bar.sync 0;
+    @%q mbarrier.arrive.expect_tx.shared.b64 %st, [%mb], 384;                         // 3 loads x 128 bytes
+    @%q cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes [%buf32], [%tA, {4, 2}], [%bar32];
+    @%q cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes [%buf2], [%tB, {4, 2}], [%bar32];
+    @%q cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes [%buf3], [%tA, {12, 6}], [%bar32];
+    @%q mbarrier.try_wait.parity.shared.b64 %w, [%mb], 0;
+    bar.sync 0;
+    // dump the three images
+    mul.wide.u32 %t, %tid, 4;
+    mov.u64 %sa, bufA; add.u64 %sa, %sa, %t;
+    add.u64 %oo, %o, %t;
+    mov.u32 %x, 0;
+    mov.u64 %sa, bufA; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+0]; st.global.b32 [%oo+0], %x;
+    mov.u64 %sa, bufA; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+128]; st.global.b32 [%oo+128], %x;
+    mov.u64 %sa, bufA; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+256]; st.global.b32 [%oo+256], %x;
+    mov.u64 %sa, bufA; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+384]; st.global.b32 [%oo+384], %x;
+    mov.u64 %sa, bufA; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+512]; st.global.b32 [%oo+512], %x;
+    mov.u64 %sa, bufA; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+640]; st.global.b32 [%oo+640], %x;
+    mov.u64 %sa, bufA; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+768]; st.global.b32 [%oo+768], %x;
+    mov.u64 %sa, bufA; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+896]; st.global.b32 [%oo+896], %x;
+    mov.u64 %sa, bufB; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+0]; st.global.b32 [%oo+1024], %x;
+    mov.u64 %sa, bufB; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+128]; st.global.b32 [%oo+1152], %x;
+    mov.u64 %sa, bufB; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+256]; st.global.b32 [%oo+1280], %x;
+    mov.u64 %sa, bufB; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+384]; st.global.b32 [%oo+1408], %x;
+    mov.u64 %sa, bufB; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+512]; st.global.b32 [%oo+1536], %x;
+    mov.u64 %sa, bufB; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+640]; st.global.b32 [%oo+1664], %x;
+    mov.u64 %sa, bufB; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+768]; st.global.b32 [%oo+1792], %x;
+    mov.u64 %sa, bufB; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+896]; st.global.b32 [%oo+1920], %x;
+    mov.u64 %sa, bufC; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+0]; st.global.b32 [%oo+2048], %x;
+    mov.u64 %sa, bufC; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+128]; st.global.b32 [%oo+2176], %x;
+    mov.u64 %sa, bufC; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+256]; st.global.b32 [%oo+2304], %x;
+    mov.u64 %sa, bufC; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+384]; st.global.b32 [%oo+2432], %x;
+    mov.u64 %sa, bufC; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+512]; st.global.b32 [%oo+2560], %x;
+    mov.u64 %sa, bufC; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+640]; st.global.b32 [%oo+2688], %x;
+    mov.u64 %sa, bufC; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+768]; st.global.b32 [%oo+2816], %x;
+    mov.u64 %sa, bufC; add.u64 %sa, %sa, %t; ld.shared.b32 %x, [%sa+896]; st.global.b32 [%oo+2944], %x;
+    // stores from image A: plain tile store to W at (2,1), then reduce-add into R at (14,5)
+    bar.sync 0;
+    @%q cp.async.bulk.tensor.2d.global.shared::cta.tile.bulk_group [%tW, {-2, 1}], [%buf32];
+    @%q cp.reduce.async.bulk.tensor.2d.global.shared::cta.add.tile.bulk_group [%tR, {14, 5}], [%buf32];
+    @%q cp.async.bulk.commit_group;
+    @%q cp.async.bulk.wait_group 0;
+    ret;
+}
+.buffer SRC .u32 = { 1065353216, 1082130432, 1088421888, 1092616192, 1095761920, 1098907648, 1100480512, 1102053376, 1103626240, 1105199104, 1106771968, 1107820544, 1108606976, 1109393408, 1110179840, 1110966272, 1111752704, 1112539136, 1113325568, 1114112000, 1114898432, 1115684864, 1116078080, 1116471296, 1116864512, 1117257728, 1117650944, 1118044160, 1118437376, 1118830592, 1119223808, 1119617024, 1120010240, 1120403456, 1120796672, 1121189888, 1121583104, 1121976320, 1122369536, 1122762752, 1123155968, 1123549184, 1123942400, 1124204544, 1124401152, 1124597760, 1124794368, 1124990976, 1125187584, 1125384192, 1125580800, 1125777408, 1125974016, 1126170624, 1126367232, 1126563840, 1126760448, 1126957056, 1127153664, 1127350272, 1127546880, 1127743488, 1127940096, 1128136704, 1128333312, 1128529920, 1128726528, 1128923136, 1129119744, 1129316352, 1129512960, 1129709568, 1129906176, 1130102784, 1130299392, 1130496000, 1130692608, 1130889216, 1131085824, 1131282432, 1131479040, 1131675648, 1131872256, 1132068864, 1132265472, 1132462080, 1132560384, 1132658688, 1132756992, 1132855296, 1132953600, 1133051904, 1133150208, 1133248512, 1133346816, 1133445120, 1133543424, 1133641728, 1133740032, 1133838336, 1133936640, 1134034944, 1134133248, 1134231552, 1134329856, 1134428160, 1134526464, 1134624768, 1134723072, 1134821376, 1134919680, 1135017984, 1135116288, 1135214592, 1135312896, 1135411200, 1135509504, 1135607808, 1135706112, 1135804416, 1135902720, 1136001024, 1136099328, 1136197632, 1136295936, 1136394240, 1136492544, 1136590848 };
+.buffer WD .u32 [128];
+.buffer RD .u32 = { 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216 };
+.tensormap TMA .f32 SRC .dims { 16, 8 } .strides { 64 } .box { 8, 4 } .swizzle 0 ;
+.tensormap TMB .f32 SRC .dims { 16, 8 } .strides { 64 } .box { 8, 4 } .swizzle 3 ;
+.tensormap TMW .f32 WD .dims { 16, 8 } .strides { 64 } .box { 8, 4 } .swizzle 0 ;
+.tensormap TMR .f32 RD .dims { 16, 8 } .strides { 64 } .box { 8, 4 } .swizzle 0 ;
+.buffer O .u32 [768];
+.launch k <<< 1, 32 >>> (TMA, TMB, TMW, TMR, O);

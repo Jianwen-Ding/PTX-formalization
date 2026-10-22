@@ -1,5 +1,11 @@
 # PTX-formalization
 
+> **Obsolete: the K semantics.** The K definitions in this repository (`semantics/*.k`, `agx/agx.k`) and the K tooling
+> (`make build`/`test`/`fuzz`/`examples`, `scripts/run-*.sh`, `krun`-based scripts) are obsolete for now and no longer
+> maintained. The maintained models are the Sail models in [`sail/`](sail/README.md); `sail/ptx` follows the PTX ISA
+> 9.4 text and differs from the K rules in many places (see `docs/review-checklist.md`). `tests/*.out` are no longer K
+> output. The description below is of the K semantics.
+
 An executable formal semantics of **NVIDIA PTX** (Parallel Thread Execution,
 the virtual ISA that CUDA compiles to), written in the
 [K Framework](https://kframework.org).
@@ -225,5 +231,5 @@ make fuzz SEEDS="1 2 3" FUZZ_N=512
 make examples
 ```
 
-CI (`.github/workflows/ci.yml`) installs K from the official release and runs
-all three.
+CI (`.github/workflows/ci.yml`) builds the Sail models (Sail 0.20.3 from opam) and runs `make -C sail test`
+and `make -C sail test-ptx-extra`; the K semantics is no longer built in CI.

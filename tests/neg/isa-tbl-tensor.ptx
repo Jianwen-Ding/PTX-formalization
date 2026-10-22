@@ -1,0 +1,20 @@
+// expect: cp.reduce.async.bulk.tensor: .max is not a valid combination with the tensor-map element type
+// PTX ISA 9.3 9.7.9.26.5.3 table: .min, .max take .u32 .s32 .u64 .s64 .f16 .bf16 (not .f32); the element type comes
+// from the tensor map, so the check happens when the instruction runs under .isacheck
+.version 8.6
+.target sm_90
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 ptm)
+{
+  .reg .b64 %tm; .reg .b32 %buf32;
+  .shared .align 128 .b8 buf[64];
+  ld.param.u64 %tm, [ptm]; mov.u32 %buf32, buf;
+  cp.reduce.async.bulk.tensor.1d.global.shared::cta.max.tile.bulk_group [%tm, {0}], [%buf32];
+  cp.async.bulk.commit_group;
+  cp.async.bulk.wait_group 0;
+  ret;
+}
+.buffer G .f32 = { 5.0, 0.5, 2.0, -1.0 };
+.tensormap TM .f32 G .dims { 4 } .strides { } .box { 4 } .swizzle 0 ;
+.launch k <<< 1, 1 >>> (TM);

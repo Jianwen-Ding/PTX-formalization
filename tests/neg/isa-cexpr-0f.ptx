@@ -1,0 +1,17 @@
+// expect: a 0f single-precision literal may not be used in a constant expression
+// 0f values may not be used in constant expressions (PTX ISA 9.4 4.5.2) (reported under .isacheck; runs in the default mode)
+.version 9.4
+.target sm_90
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %a; .reg .b32 %r; .reg .f32 %f;
+    ld.param.u64 %o, [po];
+    mov.f32 %f, 0f3f800000 + 1.0;
+    cvt.rzi.u32.f32 %r, %f;
+    st.global.u32 [%o], %r;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

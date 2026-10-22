@@ -1,0 +1,15 @@
+// expect: operand %c of type .u8 does not agree with the instruction type .u16
+// an operand whose declared type does not agree with the instruction type (9.4, Table 27), reported under .isacheck
+.version 8.0
+.target sm_80
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .f32 %f; .reg .u32 %u; .reg .u8 %c; .reg .b64 %o;
+    ld.param.u64 %o, [po];
+    cvt.rn.f32.u16 %f, %c;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

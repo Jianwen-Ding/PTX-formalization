@@ -1,0 +1,13 @@
+// expect: K Dimension value 3 of .kind::mxf4
+// .kind::mxf4 with the 2-bit K field (bits 3 / 31) = 3, which Table 55 does not define (PTX ISA 9.4 9.7.18.4.2): an error
+.version 9.4
+.target sm_107a
+.address_size 64
+.visible .entry k()
+{
+    .reg .b32 %r<6>; .reg .b64 %dA, %dB;
+    mov.u32 %r1, 0; mov.u32 %r2, 256; mov.u32 %r3, 2290222216; mov.u32 %r4, 300; mov.u32 %r5, 310; mov.b64 %dA, 0; mov.b64 %dB, 0;
+    tcgen05.mma.cta_group::1.kind::mxf4.block_scale.block32 [%r1], %dA, %dB, %r3, [%r4], [%r5], 1;
+    ret;
+}
+.launch k <<< 1, 1 >>> ();

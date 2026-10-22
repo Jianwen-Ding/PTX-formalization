@@ -1,0 +1,30 @@
+// PTX ISA 9.3 rules: vshl/vshr .clamp clamp the full shift amount (tb > 32 -> 32); vset d.dsel merges
+// (d = optMerge(dsel, tmp, c)); lop3 d|p accepts the sink _ for d with .BoolOp; .ftz applies only to .f32
+// comparisons (setp / set on .f64 keep subnormals)
+.version 8.0
+.target sm_80
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %r<12>; .reg .b64 %o, %d<2>; .reg .pred %p<4>;
+    ld.param.u64 %o, [po];
+    vshl.u32.u32.u32.clamp %r1, 1, 256;
+    vshr.s32.s32.u32.clamp %r2, 0x80000000, 256;
+    mov.u32 %r3, 0x11223344;
+    vset.u32.u32.lt %r3.b1, 3, 5, %r3;
+    setp.eq.u32 %p0, 0, 0;
+    lop3.and.b32 _|%p1, 0xF0, 0x3C, 0xFF, 0xE8, %p0;
+    selp.u32 %r4, 1, 0, %p1;
+    mov.b64 %d0, 0x0000000000000001;
+    mov.b64 %d1, 0;
+    setp.gt.ftz.f64 %p2, %d0, %d1;
+    selp.u32 %r5, 1, 0, %p2;
+    set.gt.ftz.u32.f64 %r6, %d0, %d1;
+    st.global.v4.u32 [%o], {%r1, %r2, %r3, %r4};
+    st.global.v2.u32 [%o+16], {%r5, %r6};
+    ret;
+}
+.buffer OUT .u32 [8];
+.launch k <<< 1, 1 >>> (OUT);
+// lop3 0xE8 (majority) of 0xF0, 0x3C, 0xFF is 0xFC != 0, .and with %p0 = true: p = true
+.expect OUT .u32 = { 0, 0xFFFFFFFF, 0x11220144, 1, 1, 0xFFFFFFFF, 0, 0 };

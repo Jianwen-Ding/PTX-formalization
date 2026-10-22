@@ -1,0 +1,19 @@
+// %reserved_smem_offset_cap is the "Total size of the reserved shared memory region" (10.29): end - begin
+.version 8.0
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r<4>;
+    ld.param.u64 %o, [po];
+    mov.u32 %r1, %reserved_smem_offset_begin;
+    mov.u32 %r2, %reserved_smem_offset_end;
+    mov.u32 %r3, %reserved_smem_offset_cap;
+    sub.u32 %r2, %r2, %r1;
+    sub.u32 %r3, %r3, %r2;
+    st.global.u32 [%o], %r3;
+    ret;
+}
+.buffer OUT .u32 [1];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 0 };

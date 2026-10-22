@@ -55,7 +55,7 @@ X = [rf() for _ in range(N)]
 def cls(b):
     e = (b >> 23) & 0xFF; m = b & 0x7FFFFF
     return {'finite': e != 255, 'infinite': e == 255 and m == 0, 'number': not (e == 255 and m != 0),
-            'notanumber': e == 255 and m != 0, 'normal': 0 < e < 255, 'subnormal': e == 0 and m != 0}
+            'notanumber': e == 255 and m != 0, 'normal': (0 < e < 255) or (e == 0 and m == 0), 'subnormal': e == 0 and m != 0}
 for op in ('finite', 'infinite', 'number', 'notanumber', 'normal', 'subnormal'):
     mk(f'testp.{op}.f32', [X], lambda a, op=op: 1 if cls(a)[op] else 0)
 

@@ -1,0 +1,44 @@
+// constant expressions (PTX ISA 9.3 4.5.4 - 4.5.6): C precedence; 64-bit .s64 / .u64 evaluation (literals signed unless
+// U or too large; usual arithmetic conversions; % on .u64 operands; shifts keep the first operand's type, arithmetic
+// for signed; division truncates); in operands, address offsets, initializers and array sizes
+.version 8.0
+.target sm_80
+.address_size 64
+.global .u32 g[2 * 2] = { 1 + 1, 3 * 3, (1 << 4) - 1, WARP_SZ / 4 };
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %d<16>; .reg .b32 %r<4>; .reg .f32 %f1;
+    ld.param.u64 %o, [po];
+    mov.u64 %d0, 1 + 2 * 3;                      // 7
+    mov.u64 %d1, (1 << 4);                       // 16
+    mov.u64 %d2, - 5;                            // -5
+    mov.u64 %d3, -0x10;                          // -16
+    mov.u64 %d4, -7 % 3;                         // (2^64 - 7) % 3 = 0
+    mov.u64 %d5, -1 >> 1;                        // signed: -1
+    mov.u64 %d6, -1U >> 1;                       // unsigned: 0x7fffffffffffffff
+    mov.u64 %d7, 10 / -3;                        // -3
+    mov.u64 %d8, 1 < 2 ? 5 : 6;                  // 5
+    mov.u64 %d9, ~0 + !0;                        // ~0 is .u64 all ones; + 1 = 0
+    mov.u64 %d10, (.u64) -1 >> 60;               // 15
+    mov.u64 %d11, 0x8000000000000000 >> 63;      // unsigned by magnitude: 1
+    mov.u64 %d12, WARP_SZ * 2 - (3 > 2) * 4;     // 60
+    mov.u64 %d13, (5 & 3) | (8 ^ 2) && 0;        // 0
+    mov.f32 %f1, 1.5 * 2.0;                      // 3.0
+    st.global.v2.u64 [%o], {%d0, %d1};
+    st.global.v2.u64 [%o + 16], {%d2, %d3};
+    st.global.v2.u64 [%o+32], {%d4, %d5};
+    st.global.v2.u64 [%o + (6 * 8)], {%d6, %d7};
+    st.global.v2.u64 [%o + 72 - 8], {%d8, %d9};
+    st.global.v2.u64 [%o+80], {%d10, %d11};
+    st.global.v2.u64 [%o+96], {%d12, %d13};
+    st.global.f32 [%o+112], %f1;
+    ld.global.u32 %r1, [g + 8];
+    ld.global.u32 %r2, [g+12];
+    st.global.u32 [%o+116], %r1; st.global.u32 [%o+120], %r2;
+    ret;
+}
+.buffer OUT .u64 [16];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u64 = { 7, 16, 0xFFFFFFFFFFFFFFFB, 0xFFFFFFFFFFFFFFF0, 0, 0xFFFFFFFFFFFFFFFF, 0x7FFFFFFFFFFFFFFF,
+                     0xFFFFFFFFFFFFFFFD, 5, 0, 15, 1, 60, 0, 0x0000000F40400000, 8 };
+.expect g .u32 = { 2, 9, 15, 8 };

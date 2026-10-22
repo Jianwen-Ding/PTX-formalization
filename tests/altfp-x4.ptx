@@ -1,0 +1,39 @@
+// alternate floating point x4 add / sub / mul / fma (PTX ISA 9.4 9.7.6): exact operation on four extracted elements,
+// rounded to nearest even into .e4m3x4 / .e5m2x4; .satfinite gives the sign-preserved MAX_NORM, without it an
+// .e4m3 overflow is NaN (0x7f) and an .e5m2 overflow infinity (0x7c)
+.version 9.4
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %a, %b, %c, %r<8>; .reg .b16 %h;
+    ld.param.u64 %o, [po];
+    // 1.5 + 1.0 = 2.5 (0x42) in every lane
+    mov.b32 %a, 0x3c3c3c3c; mov.b32 %c, 0x38383838;
+    add.rn.e4m3x4.e4m3x4 %r0, %a, %c;
+    // lanes: -448 + -448, 1.5 + -2.0, 448 + 1 (rounds to 448), 448 + 448
+    mov.b32 %a, 0x7e7e3cfe; mov.b32 %c, 0x7e38c0fe;
+    add.rn.e4m3x4.e4m3x4 %r1, %a, %c;                 // 0x7f7eb07f
+    add.rn.satfinite.e4m3x4.e4m3x4 %r2, %a, %c;       // 0x7e7eb0fe
+    // e2m1x4 in a .b16 (0.5, 1.5, 3, 6) + 1.0 into e5m2: 1.5, 2.5, 4, 7
+    mov.b16 %h, 0x7531; mov.b32 %c, 0x3c3c3c3c;
+    add.rn.e5m2x4.e2m1x4 %r3, %h, %c;                 // 0x4744413e
+    // ue8m0 (2^16, 2^16, 1, NaN) * e5m2 57344: inf, inf, 57344, NaN
+    mov.b32 %a, 0xff7f8f8f; mov.b32 %c, 0x7b7b7b7b;
+    mul.rn.e5m2x4.ue8m0x4.e5m2x4 %r4, %a, %c;         // 0x7f7b7c7c
+    // e2m1p4x4 (0.5, 1, -4, -6) - 1.0: -0.5, +0, -5, -7
+    mov.b32 %a, 0x0f0e0201; mov.b32 %c, 0x38383838;
+    sub.rn.e4m3x4.e2m1p4x4 %r5, %a, %c;               // 0xceca00b0
+    // e3m2 a * e2m3 b + e4m3 c: 1*1.5+1, 2*0.125+1, 1*1.5-1, 2*0.125+0 (0.125 an e2m3 subnormal)
+    mov.b32 %a, 0x100c100c; mov.b32 %b, 0x010c010c; mov.b32 %c, 0x00b83838;
+    fma.rn.e4m3x4.e3m2x4.e2m3x4 %r6, %a, %b, %c;      // 0x28303a42
+    // ties to even: 1 + 2^-4 -> 1.0, 1.125 + 2^-4 -> 1.25
+    mov.b32 %a, 0x00003938; mov.b32 %c, 0x00001818;
+    add.e4m3x4.e4m3x4 %r7, %a, %c;                    // 0x00003a38
+    st.global.v4.u32 [%o], {%r0, %r1, %r2, %r3};
+    st.global.v4.u32 [%o+16], {%r4, %r5, %r6, %r7};
+    ret;
+}
+.buffer OUT .u32 [8];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 0x42424242, 0x7f7eb07f, 0x7e7eb0fe, 0x4744413e, 0x7f7b7c7c, 0xceca00b0, 0x28303a42, 0x00003a38 };

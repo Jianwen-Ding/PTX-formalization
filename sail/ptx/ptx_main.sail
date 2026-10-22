@@ -30,6 +30,7 @@ function tk_addr() = match tok_str() {
   "AN" => AN(tok_str()),
   "AI" => AI(tok_int()),
   "ARO" => { let n = tok_str(); let i = tok_int(); ARO(n, i) },
+  "ANR" => { let n = tok_str(); let r = tok_str(); let i = tok_int(); ANR(n, r, i) },
   _ => { let n = tok_str(); let i = tok_int(); ANO(n, i) }
 }
 
@@ -92,6 +93,7 @@ function tk_initval() = match tok_str() {
   "NI" => { let n = tok_str(); let i = tok_int(); IVNI(n, i) },
   "ND" => { let a = tok_str(); let b = tok_str(); IVND(a, b) },
   "G" => IVG(tok_str()),
+  "M" => { let m = tok_int(); let k = tok_int(); let n = tok_str(); let o = tok_int(); IVM(m, k, n, o) },
   _ => { let n = tok_str(); let i = tok_int(); IVGO(n, i) }
 }
 
@@ -119,6 +121,10 @@ function symRaw(n) = if smap_has(SP_SYMS, n) then sym_addr(smap_get(SP_SYMS, n))
 val symGen : string -> int
 function symGen(n) = if smap_has(SP_SYMS, n) then winBase(sym_space(smap_get(SP_SYMS, n))) + sym_addr(smap_get(SP_SYMS, n)) else 0
 
+/* the number of trailing zero bits of a positive integer */
+val ctz : int -> int
+function ctz(m) = { var n : int = 0; while m > 0 & land_int(asr_int(m, n), 1) == 0 do n = n + 1; n }
+
 /* resolveV(S, V) then initBits(V, T); unresolvable initializers are stuck */
 val initBits : (initval, ty) -> int
 function initBits(v, t) = match v {
@@ -129,7 +135,9 @@ function initBits(v, t) = match v {
   IVNI(n, i) => intLit(symRaw(n) + i, t),
   IVND(a, b) => intLit(symRaw(a) - symRaw(b), t),
   IVG(n) => intLit(symGen(n), t),
-  IVGO(_, _) => { fault("initializer generic(sym)+offset is not resolved", 0); 0 }
+  IVGO(n, i) => intLit(symGen(n) + i, t),
+  /* mask(expr) (PTX ISA 5.4.4): the bits of the mask, moved to the lowest position */
+  IVM(m, k, n, o) => intLit(asr_int(land_int(if k == 0 then o else if k == 1 then symRaw(n) + o else symGen(n) + o, m), ctz(m)), t)
 }
 
 /* initBits without symbol resolution (buffer and .expect values) */
@@ -160,22 +168,67 @@ function lkAct(n, k) = {
   else 1
 }
 
-val do_static : list(sdecl) -> unit
-function do_static(l) = match l {
+/* static variables: module-scope ones are bound in SP_SYMS, function-scope ones in the function's own space (tg)
+   (externs always in SP_SYMS: they are linked, and `.extern .shared` arrays are placed at each launch) */
+val do_static_in : (list(sdecl), int) -> unit
+function do_static_in(l, tg) = match l {
   [||] => (),
   d :: rest => {
     if d.sspace == "shared" & d.sextern then { smap_set(SP_SYMS, d.sname, mksym("dynshared", 0)); dyn_names = d.sname :: dyn_names }
     else if d.sspace == "shared" then {
       let a = alignUp(stop, d.salign);
-      smap_set(SP_SYMS, d.sname, mksym("shared", a));
+      smap_set(tg, d.sname, mksym("shared", a));
       stop = a + d.ssize
     } else if (d.sspace == "global" | d.sspace == "const") & not_bool(d.sextern) then {
       let a = alignUp(gtop, d.salign);
       gtop = a + max_int(d.ssize, 1);
       initMem(a, d.sty, d.sinit, true);
-      smap_set(SP_SYMS, d.sname, mksym(d.sspace, a))
+      smap_set(tg, d.sname, mksym(d.sspace, a))
     };
-    do_static(rest)
+    do_static_in(rest, tg)
+  }
+}
+
+val do_static : list(sdecl) -> unit
+function do_static(l) = do_static_in(l, SP_SYMS)
+
+/* A kernel's own .shared variables belong to its CTAs only (PTX ISA 5.1.5: .shared variables are per CTA, function-scope
+   names are visible in the function): they are laid out per kernel after the module-scope / device-function .shared data
+   (kernels never share a CTA) and bound in the kernel's environment, so equal names in two kernels do not clash. */
+register kstat : list((string, list(sdecl))) = [||]
+register kfixed : bool = false
+register scommon : int = 0
+
+val kernel_statics : list(sdecl) -> (list(sdecl), list(sdecl))
+function kernel_statics(l) = {
+  var own : list(sdecl) = [||];
+  var rest : list(sdecl) = [||];
+  var x = l;
+  while is_cons(x) do {
+    match x { d :: r => { if d.sspace == "shared" & not_bool(d.sextern) then own = d :: own else rest = d :: rest; x = r }, [||] => () }
+  };
+  (reverse_list(own), reverse_list(rest))
+}
+
+/* at a launch of kernel k: its .shared variables from the end of the common .shared data, bound in SP_KENV; stop = its end */
+val bind_kernel_statics : string -> unit
+function bind_kernel_statics(k) = {
+  if not_bool(kfixed) then { scommon = stop; kfixed = true };
+  stop = scommon;
+  var x = kstat;
+  while is_cons(x) do {
+    match x {
+      (n, sh) :: r => {
+        if n == k then {
+          var y = sh;
+          while is_cons(y) do {
+            match y { d :: yr => { let a = alignUp(stop, d.salign); smap_set(SP_KENV, d.sname, mksym("shared", a)); stop = a + d.ssize; y = yr }, [||] => () }
+          }
+        };
+        x = r
+      },
+      [||] => ()
+    }
   }
 }
 
@@ -203,7 +256,6 @@ function do_link(attrs, l) = {
 }
 
 /* ---------------------------------------------------------------- functions */
-val perf_of : string -> list((string, list(int)))
 function perf_of(k) = {
   var x = perfd;
   var r : list((string, list(int))) = [||];
@@ -260,7 +312,10 @@ function read_func() = {
       let f = fchk(nfuncs);
       nfuncs = nfuncs + 1;
       f_name[f] = name; f_kind[f] = kind; f_rets[f] = rets; f_params[f] = params;
+      f_noret[f] = hasPerfN(pd, "noreturn");
       f_base[f] = base; f_len[f] = nc; f_rw[f] = rw; f_lab[f] = lab;
+      let fs = new_space();
+      f_syms[f] = fs;
       var x = tl;
       while is_cons(x) do { match x { (n, ts) :: rest => { tgts = (f, n, ts) :: tgts; x = rest }, [||] => () } };
       smap_set(SP_FUNCS, name, f + 1);
@@ -275,7 +330,12 @@ function read_func() = {
         let fa = sym_addr(smap_get(SP_SYMS, name));
         if smap_has(SP_FADDRS, dec_str(fa)) then smap_set(SP_FADDRS, dec_str(fa), f + 1)
       };
-      do_static(sh)
+      /* function-scope names are visible in their function only (ISA 5.1, 7.1) */
+      if kind == "entry" then {
+        let (own, rest) = kernel_statics(sh);
+        kstat = (name, own) :: kstat;
+        do_static_in(rest, fs)
+      } else do_static_in(sh, fs)
     }
   }
 }
@@ -317,11 +377,12 @@ function lcHw(b, g) = {
   else ""
 }
 
+/* .maxntid bounds the total number of threads, the product of the extents (PTX ISA 11.4.2), not each dimension */
 val dimLe : (dim3, list(int)) -> bool
 function dimLe(d, l) = match l {
-  [|a, b, c|] => d.x <= a & d.y <= b & d.z <= c,
-  [|a, b|] => d.x <= a & d.y <= b & d.z == 1,
-  [|a|] => d.x <= a & d.y == 1 & d.z == 1,
+  [|a, b, c|] => d.x * d.y * d.z <= a * b * c,
+  [|a, b|] => d.x * d.y * d.z <= a * b,
+  [|a|] => d.x * d.y * d.z <= a,
   _ => true
 }
 val dimEq : (dim3, list(int)) -> bool
@@ -354,8 +415,15 @@ function argVal(a, t) = match a {
 }
 
 
-val do_launch : (string, dim3, dim3, list(sop)) -> unit
-function do_launch(k, g, b, args) = {
+/* the first argument of directive d, -1 without it */
+val perfVal : (list((string, list(int))), string) -> int
+function perfVal(p, d) = match p { [||] => -1, (n, xs) :: rest => if n == d then nthD(xs, 0, 0) else perfVal(rest, d) }
+
+val hasPerf : (list((string, list(int))), string) -> bool
+function hasPerf(p, d) = match p { [||] => false, (n, _) :: rest => n == d | hasPerf(rest, d) }
+
+val do_launch : (string, dim3, dim3, int, list(sop)) -> unit
+function do_launch(k, g, b, dyn, args) = {
   isa_check();
   if stuck then ()
   else match lookup_func(k) {
@@ -368,7 +436,18 @@ function do_launch(k, g, b, args) = {
         let hw = lcHw(b, g);
         if hw != "" then fault(concat_str("cannot launch ", concat_str(k, concat_str(": ", hw))), 0)
         else {
-          let le = lcErr(perf_of(k), b, cd);
+          /* the harness has no launch-time cluster dimensions: only .reqnctapercluster specifies them (PTX ISA 11.7.2) */
+          let pf = perf_of(k);
+          /* "The .reqntid directive cannot be used in conjunction with the .maxntid directive" (11.4.3); "The
+             .maxclusterrank directive cannot be used in conjunction with the .reqnctapercluster directive" (11.7.3):
+             reported under .isacheck */
+          let le = if isachk & hasPerf(pf, "reqntid") & hasPerf(pf, "maxntid")
+                   then "kernel declares both .reqntid and .maxntid [PTX ISA 9.4 11.4.3]"
+                   else if isachk & hasPerf(pf, "maxclusterrank") & hasPerf(pf, "reqnctapercluster")
+                   then "kernel declares both .maxclusterrank and .reqnctapercluster [PTX ISA 9.4 11.7.3]"
+                   else if hasPerf(perf_of(k), "explicitcluster") & not_bool(hasPerf(perf_of(k), "reqnctapercluster"))
+                   then "a kernel with .explicitcluster launched without cluster dimensions"
+                   else lcErr(perf_of(k), b, cd);
           if le != "" then fault(concat_str("cannot launch: ", le), 0)
           else {
             /* kernel parameter image and environment */
@@ -391,12 +470,24 @@ function do_launch(k, g, b, args) = {
             if o > 32764 then fault(concat_str("kernel parameters of ", concat_str(dec_str(o), " bytes exceed the 32764-byte limit")), o)
             else {
               kptop = o;
-              /* fixDyn: `.extern .shared` arrays start after the static shared data */
+              bind_kernel_statics(k);
+              smap_copy(SP_KENV, f_syms[fchk(f)]);
+              /* fixDyn: `.extern .shared` arrays start after the kernel's static shared data */
               var dn = dyn_names;
               while is_cons(dn) do {
-                match dn { n :: rest => { if smap_get(SP_SYMS, n) == mksym("dynshared", 0) then smap_set(SP_SYMS, n, mksym("shared", alignUp(stop, DYNSHARED))); dn = rest }, [||] => () }
+                match dn { n :: rest => { smap_set(SP_SYMS, n, mksym("shared", alignUp(stop, DYNSHARED))); dn = rest }, [||] => () }
               };
               kernel = k; kfid = f; gridDim = g; blockDim = b; clusterDim = cd;
+              dynsmem = dyn; explcl = hasPerf(perf_of(k), "reqnctapercluster");
+              /* .minperctamemory size: "the minimum number of bytes of per-CTA global memory that must be available
+                 when this kernel is launched" (PTX ISA 9.4 11.4.10); the size is "a multiple of 1024 bytes" and at
+                 least the directive's (10.35): one zero-initialised slice per CTA of the grid, 1024-aligned */
+              let pcm = perfVal(perf_of(k), "minperctamemory");
+              if pcm >= 0 then {
+                pcmSize = max_int(alignUp(pcm, 1024), 1024);
+                pcmBase = alignUp(gtop, 1024);
+                gtop = pcmBase + pcmSize * vol(g)
+              } else { pcmSize = 0; pcmBase = 0 };
               nextcta = 0; resident = 0; nthreads = 0; ncta_slots = 0;
               colls = [||];
               let lim = if occ > 0 & occ < vol(g) then occ else vol(g);
@@ -460,9 +551,14 @@ function do_expect(n, t, vs, off) = {
 
 /* ---------------------------------------------------------------- the module */
 val targetSm : list(string) -> int
+/* 11.1.2: "Targets of the form compute_xx are also accepted as synonyms for sm_xx targets" */
+val targetName : string -> string
+function targetName(t) = if string_length(t) > 8 & stake(t, 8) == "compute_" then concat_str("sm_", sdrop(t, 8)) else t
+
 function targetSm(l) = match l {
   [||] => 0,
-  s :: rest => {
+  t :: rest => {
+    let s = targetName(t);
     if string_length(s) >= 5 & stake(s, 3) == "sm_" then {
       var i : int = 3;
       var v : int = 0;
@@ -476,7 +572,8 @@ function targetSm(l) = match l {
 val targetArch : list(string) -> string
 function targetArch(l) = match l {
   [||] => "",
-  s :: rest => {
+  t :: rest => {
+    let s = targetName(t);
     if string_length(s) >= 5 & stake(s, 3) == "sm_" then {
       var i : int = 3;
       while i < string_length(s) & is_dec_digit(stake(sdrop(s, i), 1)) do i = i + 1;
@@ -497,7 +594,7 @@ function main() = {
         isaver = f2int(rndInt(fv_add_exact(fv_mul_exact(f64v(f), FV_Fin(false, 10, 0)), FV_Fin(false, 1, -1), RN), "rmi"))
       },
       "TARGET" => { let ns = tk_strs(tok_int()); isasm = targetSm(ns); isaarch = targetArch(ns) },
-      "ASZ" => { let n = tok_int(); if n == 32 then { asz32 = true; smap_set(SP_SYMS, "%%asz", mksym("asz", 32)) } },
+      "ASZ" => { let n = tok_int(); asz32 = n == 32; if asz32 then smap_set(SP_SYMS, "%%asz", mksym("asz", 32)) },
       "ISACHECK" => isachk = true,
       "ALIAS" => {
         let a = tok_str(); let b = tok_str();
@@ -510,19 +607,19 @@ function main() = {
         let k = tok_str();
         let g = mkdim(tok_int(), tok_int(), tok_int());
         let b = mkdim(tok_int(), tok_int(), tok_int());
-        let _ = tok_int();
+        let dyn = tok_int();
         let args = tk_sops(tok_int());
-        do_launch(k, g, b, args)
+        do_launch(k, g, b, dyn, args)
       },
       "COOPLAUNCH" => {
         let k = tok_str();
         let g = mkdim(tok_int(), tok_int(), tok_int());
         let b = mkdim(tok_int(), tok_int(), tok_int());
-        let _ = tok_int();
+        let dyn = tok_int();
         let args = tk_sops(tok_int());
         if occ > 0 & vol(g) > occ then
           fault(concat_str("cooperative launch of ", concat_str(dec_str(vol(g)), " CTAs exceeds the resident-CTA limit")), 0)
-        else do_launch(k, g, b, args)
+        else do_launch(k, g, b, dyn, args)
       },
       "PRINT" => { let n = tok_str(); let t = tk_ty(); let c = tok_int(); do_print(n, t, c) },
       "EXPECT" => { let n = tok_str(); let t = tk_ty(); let off = tok_int(); let vs = tk_initvals(tok_int()); do_expect(n, t, vs, off) },

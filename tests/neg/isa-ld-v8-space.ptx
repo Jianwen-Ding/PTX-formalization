@@ -1,0 +1,13 @@
+// expect: ld: .v8, and .v4 with a 64-bit type, need the .global state space
+// 9.7.9.8: .v8 is supported only with .global or generic addressing to .global; reported under .isacheck
+.version 8.8
+.target sm_100
+.address_size 64
+.isacheck ;
+.visible .entry k()
+{
+    .reg .b32 %r<8>; .shared .align 32 .b32 s[8];
+    ld.shared.v8.u32 {%r0, %r1, %r2, %r3, %r4, %r5, %r6, %r7}, [s];
+    ret;
+}
+.launch k <<< 1, 1 >>> ();

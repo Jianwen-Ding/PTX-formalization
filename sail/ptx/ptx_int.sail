@@ -18,11 +18,13 @@ function ccOp(op, m, t, cin, a, b, c) = {
   let s : int = match op {
     "add" => trunc(a, w) + trunc(b, w) + cin,
     "addc" => trunc(a, w) + trunc(b, w) + cin,
-    "sub" => trunc(a, w) + trunc(lnot_int(b), w) + 1,
-    "subc" => trunc(a, w) + trunc(lnot_int(b), w) + cin,
+    /* sub.cc: "borrow-out written to CC.CF"; subc: "d = a - (b + CC.CF)" with borrow-in / borrow-out (PTX ISA 9.3
+       9.7.2.3, 9.7.2.4).  The flag is 1 when the subtraction borrows. */
+    "sub" => trunc(a, w) - trunc(b, w),
+    "subc" => trunc(a, w) - trunc(b, w) - cin,
     _ => madHalf(m, t, a, b) + trunc(c, w) + cin
   };
-  (trunc(s, w), asr_int(s, w))
+  (trunc(s, w), if s < 0 then 1 else asr_int(s, w))
 }
 
 val isCCOp : (string, list(string)) -> bool
@@ -107,9 +109,15 @@ function fns(m, b, o) = {
 
 val bmsk : (bool, int, int) -> int
 function bmsk(clampm, a, b) = {
-  let p = if clampm then min_int(land_int(a, 255), 32) else land_int(a, 31);
-  let l = if clampm then min_int(land_int(b, 255), 32) else land_int(b, 31);
-  land_int(shl_int(mask(l), p), 4294967295)
+  /* the Semantics pseudo-code of bmsk (PTX ISA 9.7.1) on the 32-bit operands */
+  let a = land_int(a, 4294967295);
+  let b = land_int(b, 4294967295);
+  let a1 = land_int(a, 31);
+  let b1 = land_int(b, 31);
+  let mask0 = if clampm & a >= 32 then 0 else land_int(shl_int(4294967295, a1), 4294967295);
+  let ovf = a1 + b1 >= 32 | (clampm & (a >= 32 | b >= 32));
+  let mask1 = if ovf then 0 else if b1 == 0 then 4294967295 else land_int(shl_int(4294967295, a1 + b1), 4294967295);
+  land_int(mask0, lnot_int(mask1))
 }
 
 val szext : (bool, ty, int, int) -> int
@@ -194,15 +202,16 @@ function exec_bits(o, ops) = {
       None() => { wr(d, lop3(rd(a, B32), rd(b, B32), rd(c, B32), rd(l, B32))); true },
       Some(_) => false
     },
-    ("lop3", [|dp, a, b, c, l, q|]) => match dp {
-      XS(SPIPE(true, dd, true, pp)) => {
+    /* d|p, where the ISA allows the sink _ for d when .BoolOp is given */
+    ("lop3", [|dp, a, b, c, l, q|]) => match dual_regs(dp) {
+      Some((dd, pp)) => {
         let v = lop3(rd(a, B32), rd(b, B32), rd(c, B32), rd(l, B32));
         let qv = rd(q, PRED);
-        wr_sop(SR(dd), v);
-        wr_sop(SR(pp), bopB(v != 0, m, qv));
+        wr_sop(dd, v);
+        wr_sop(pp, bopB(v != 0, m, qv));
         true
       },
-      _ => false
+      None() => false
     },
     ("shf", [|d, a, b, c|]) => { wr(d, shf(has(m, "l"), has(m, "clamp"), rd(a, B32), rd(b, B32), rd(c, U32))); true },
     _ => false
@@ -325,7 +334,7 @@ function gx_intx(o, ops) = {
 
 /* ---------------------------------------------------------------- PTX-EXEC-PRED */
 val ftzSrc : (list(string), ty, int) -> int
-function ftzSrc(m, t, v) = if has(m, "ftz") & isF(t) then flushB(v, fw(t)) else v
+function ftzSrc(m, t, v) = if has(m, "ftz") & isF(t) & fw(t) != 64 then flushB(v, fw(t)) else v   /* .ftz: not .f64 */
 
 val setRes : (bool, ty) -> int
 function setRes(b, t) = if b then (if isF(t) then encodeF(fv_one(), fw(t)) else mask(wid(t))) else 0
@@ -349,17 +358,24 @@ function testp(op, v, w) = match op {
   "infinite" => expField(v, w) == mask(ebits(w)) & manField(v, w) == 0,
   "number" => not_bool(expField(v, w) == mask(ebits(w)) & manField(v, w) != 0),
   "notanumber" => expField(v, w) == mask(ebits(w)) & manField(v, w) != 0,
-  "normal" => expField(v, w) != 0 & expField(v, w) != mask(ebits(w)),
+  /* "As a special case, positive and negative zero are considered normal numbers" (9.7.3.1) */
+  "normal" => (expField(v, w) != 0 | manField(v, w) == 0) & expField(v, w) != mask(ebits(w)),
   "subnormal" => expField(v, w) == 0 & manField(v, w) != 0,
   _ => false
 }
 
 val inSpace : (list(string), int, int) -> bool
-function inSpace(m, a, own) =
-  ((has(m, "global") | has(m, "const") | has(m, "param")) & a < SHBASE)
-  | ((has(m, "shared") | has(m, "shared::cta")) & ((a >= SHBASE & a < LOCBASE) | (a >= CLBASE & asr_int(a - CLBASE, 24) == own)))
-  | (has(m, "shared::cluster") & ((a >= SHBASE & a < LOCBASE) | a >= CLBASE))
-  | (has(m, "local") & a >= LOCBASE & a < CLBASE)
+function inSpace(m, a, own) = {
+  /* the .param window is contained in the .global window (PTX ISA 6.4.1.1, isspacep) */
+  let w = genWin(a);
+  (has(m, "global") & (w == "global" | w == "param"))
+  | (has(m, "const") & w == "const")
+  | ((has(m, "param") | has(m, "param::entry")) & w == "param")
+  | ((has(m, "shared") | has(m, "shared::cta")) & (w == "shared" | (w == "cluster" & asr_int(a - winBase("cluster"), 24) == own)))
+  /* shared::cluster: shared memory accessible to the threads in the cluster (the ranks of the executing cluster) */
+  | (has(m, "shared::cluster") & (w == "shared" | (w == "cluster" & asr_int(a - winBase("cluster"), 24) < rreg("%cluster_nctarank"))))
+  | (has(m, "local") & w == "local")
+}
 
 val exec_pred : (opcode, list(xop)) -> bool
 function exec_pred(o, ops) = {
@@ -410,7 +426,27 @@ function exec_pred(o, ops) = {
 
 /* ---------------------------------------------------------------- PTX-EXEC-MISC */
 val gx_misc : (opcode, list(xop)) -> bool
-function gx_misc(o, ops) = o.base == "griddepcontrol" | o.base == "setmaxnreg"
+function gx_misc(o, ops) =
+  if o.base == "setmaxnreg" then {
+    /* a hint without a modelled effect; "When qualifier .dec is specified, the maximum number of per-thread registers
+       owned by the warp prior to the execution of setmaxnreg instruction should be greater than or equal to the
+       imm-reg-count. Otherwise, the behaviour is undefined" (and .inc: less than or equal) (9.7.20.5).  The warp's count
+       is known after its first setmaxnreg; later ones are checked under .ub strict */
+    match ops {
+      [|n|] => {
+        let v = rdu32(n);
+        let mp = c_misc[cchk(cur_cta())];
+        let key = concat_str("nreg:", dec_str(tdiv_int(t_tid[tchk(cur)], 32)));
+        if ub & smap_has(mp, key) & has(o.mods, "dec") & smap_get(mp, key) < v then
+          fault("setmaxnreg.dec above the warp's current register count", v)
+        else if ub & smap_has(mp, key) & has(o.mods, "inc") & smap_get(mp, key) > v then
+          fault("setmaxnreg.inc below the warp's current register count", v)
+        else smap_set(mp, key, v)
+      },
+      _ => ()
+    };
+    true
+  } else o.base == "griddepcontrol"
 
 val isClockReg : string -> bool
 function isClockReg(s) = has([|"%clock", "%clock64", "%globaltimer", "%globaltimer_lo", "%globaltimer_hi"|], s)
@@ -457,16 +493,18 @@ val exec_misc : (opcode, list(xop)) -> bool
 function exec_misc(o, ops) = {
   let t = tchk(cur);
   match (o.base, ops) {
+    /* the stack grows down; the stack pointer and the pointer returned by alloca are .local addresses
+       (PTX ISA 9.7.18: ptr can be used with ld.local / st.local; alloca's result is the new stack pointer) */
     ("alloca", d :: sz :: rest) => {
       let ty = ty1(o);
       let al = allocaAlign(rest);
-      let a = alignUp(t_ltop[t], al);
-      wr(d, trunc(a + (if wid(ty) == 64 then LOCBASE else 0), wid(ty)));
-      t_ltop[t] = a + rd(sz, U32);
+      let a = fdiv_int(t_lsp[t] - rd(sz, ty), al) * al;
+      t_lsp[t] = a;
+      wr(d, trunc(a, wid(ty)));
       true
     },
-    ("stacksave", [|d|]) => { let ty = ty1(o); wr(d, trunc(t_ltop[t] + (if wid(ty) == 64 then LOCBASE else 0), wid(ty))); true },
-    ("stackrestore", [|a|]) => { let ty = ty1(o); t_ltop[t] = rd(a, ty) - (if wid(ty) == 64 then LOCBASE else 0); true },
+    ("stacksave", [|d|]) => { let ty = ty1(o); wr(d, trunc(t_lsp[t], wid(ty))); true },
+    ("stackrestore", [|a|]) => { let ty = ty1(o); t_lsp[t] = rd(a, ty); true },
     _ => false
   }
 }

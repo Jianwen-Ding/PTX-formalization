@@ -1,0 +1,28 @@
+// directed rounding to the small float formats is toward +/- infinity on the signed value (9.7.9.21: ".rp rounding
+// toward positive infinity", ".rm rounding toward negative infinity"); the ISA lists only .rn for these targets, so
+// the forms run in the default mode and .isacheck reports them
+.version 9.0
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b16 %h<4>; .reg .b32 %r<4>; .reg .f32 %f<4>; .reg .b64 %o; .reg .b8 %c;
+    ld.param.u64 %o, [po];
+    mov.f32 %f1, 0fBFF33333;
+    cvt.rp.satfinite.e4m3x2.f32 %h0, %f1, %f1;
+    cvt.u32.u16 %r0, %h0; st.global.u32 [%o], %r0;
+    cvt.rm.satfinite.e4m3x2.f32 %h0, %f1, %f1;
+    cvt.u32.u16 %r0, %h0; st.global.u32 [%o+4], %r0;
+    cvt.rp.satfinite.e2m1x2.f32 %c, %f1, %f1;
+    cvt.u32.u8 %r0, %c; st.global.u32 [%o+8], %r0;
+    mov.f32 %f2, 0fBC23D70A;
+    cvt.rp.satfinite.s2f6x2.f32 %h0, %f2, %f2;
+    cvt.u32.u16 %r0, %h0; st.global.u32 [%o+12], %r0;
+    mov.f32 %f3, 0f3FF33333;
+    cvt.rp.satfinite.e4m3x2.f32 %h0, %f3, %f3;
+    cvt.u32.u16 %r0, %h0; st.global.u32 [%o+16], %r0;
+    ret;
+}
+.buffer O .u32 [5];
+.launch k <<< 1, 1 >>> (O);
+.expect O .u32 = { 0xbfbf, 0xc0c0, 0xbb, 0, 0x4040 };

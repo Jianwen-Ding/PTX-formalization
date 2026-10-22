@@ -1,0 +1,16 @@
+// expect: misaligned global vector access of 16 bytes
+// "the access size of ld.v4.b32 is 16 bytes ... The address must be naturally aligned to a multiple of the access size"
+// (6.4.1): a .v4.u32 store at an 8-byte offset, under .ub strict
+.version 8.0
+.target sm_80
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o;
+    ld.param.u64 %o, [po];
+    st.global.v4.u32 [%o+8], {1, 2, 3, 4};
+    ret;
+}
+.buffer O .u32 [8];
+.launch k <<< 1, 1 >>> (O);

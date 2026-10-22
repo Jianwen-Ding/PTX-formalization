@@ -77,9 +77,11 @@ emit(["%q0", "%q1", "%q2"], [W, H, 1])
 body.append("    mov.s32 %ix, 8; mov.s32 %iy, 1;")
 body.append("    suld.b.2d.v1.b32.trap {%s0}, [%sf, {%ix, %iy}];")
 emit(["%s0"], [S0[1 * 4 + 2]])
-body.append("    mov.s32 %ix, 4; mov.s32 %iy, 2;")
+# "the address given by the coordinate vector must be naturally aligned to a multiple of the access size" (9.7.12.1):
+# an 8-byte .v2.b32 access at byte x = 8
+body.append("    mov.s32 %ix, 8; mov.s32 %iy, 2;")
 body.append("    suld.b.2d.v2.b32.trap {%s0, %s1}, [%sf, {%ix, %iy}];")
-emit(["%s0", "%s1"], [S0[2 * 4 + 1], S0[2 * 4 + 2]])
+emit(["%s0", "%s1"], [S0[2 * 4 + 2], S0[2 * 4 + 3]])
 body.append("    mov.s32 %ix, 100; mov.s32 %iy, 100;")
 body.append("    suld.b.2d.v1.b32.zero {%s0}, [%sf, {%ix, %iy}];")
 emit(["%s0"], [0])

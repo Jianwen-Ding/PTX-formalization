@@ -97,6 +97,20 @@ function sincos_series(r, g, issin) = {
   (s, n)
 }
 
+/* exp(x) for a finite x with |x| <= 20000 at working precision p: (t, err, sh) with e^x in [t - err, t + err] * 2^sh */
+val exp_fx : (fv, int) -> (int, int, int)
+function exp_fx(x, p) = {
+  let b = 16;
+  let g = p + b + 8;
+  let xf = fixed(x, g);
+  let l = ln2_fixed(g);
+  let k = fdiv_int(2 * xf + l, 2 * l);
+  let rr = xf - k * l;
+  let rg = asr_int(rr, b + 8);
+  let (t, n) = exp_series(rg, p);
+  (t, n + 8 + 4 * abs_int(tdiv_int(abs_int(k) * 2, pow2(b + 8)) + 1), k - p)
+}
+
 /* correctly rounded exp(x) at format w */
 val exp_r : (fv, int) -> fv
 function exp_r(x, w) = match x {
@@ -110,16 +124,8 @@ function exp_r(x, w) = match x {
       var p : int = fmt_p(w) + 64;
       var r : option(fv) = None();
       while is_none(r) do {
-        let b = 16;
-        let g = p + b + 8;
-        let xf = fixed(x, g);
-        let l = ln2_fixed(g);
-        let k = fdiv_int(2 * xf + l, 2 * l);
-        let rr = xf - k * l;
-        let rg = asr_int(rr, b + 8);
-        let (t, n) = exp_series(rg, p);
-        let err = n + 8 + 4 * abs_int(tdiv_int(abs_int(k) * 2, pow2(b + 8)) + 1);
-        r = round_iv(t, err, k - p, w);
+        let (t, err, sh) = exp_fx(x, p);
+        r = round_iv(t, err, sh, w);
         p = p + 64
       };
       match r { Some(v) => v, None() => FV_NaN() }
@@ -304,6 +310,33 @@ function addsub_r(a, b, w) = match fv_add_exact(a, b, RN) {
   v => v
 }
 
+/* correctly rounded tanh(x) at format w for finite x != 0: tanh|x| = (E - 1) / (E + 1), E = e^(2|x|), increasing in E,
+ * so the bounds of E bound tanh|x|; both ends rounded until they agree */
+val tanh_r : (fv, int) -> fv
+function tanh_r(x, w) = match x {
+  FV_Fin(s, m, e) => {
+    if fv_cmp(fv_abs(x), FV_Fin(false, 20, 0)) >= 0 then FV_Fin(s, 1, 0)
+    else {
+      var p : int = fmt_p(w) + 64;
+      var r : option(fv) = None();
+      while is_none(r) do {
+        let (t, err, sh) = exp_fx(FV_Fin(false, m, e + 1), p);
+        let a = if sh >= 0 then (t - err) * pow2(sh) else t - err;
+        let b = if sh >= 0 then (t + err) * pow2(sh) else t + err;
+        let one = if sh >= 0 then 1 else pow2(negate(sh));
+        if a > one then {
+          let lo = div_r(FV_Fin(s, a - one, 0), FV_Fin(false, a + one, 0), w);
+          let hi = div_r(FV_Fin(s, b - one, 0), FV_Fin(false, b + one, 0), w);
+          if fv_same(lo, hi, w) then r = Some(lo)
+        };
+        p = p + 64
+      };
+      match r { Some(v) => v, None() => FV_NaN() }
+    }
+  },
+  _ => x
+}
+
 /* the transcendental instructions on the (ftz'd) source bits a at format w */
 function transcendental(op, w, a, raw) = {
   let x = decodeF(a, w);
@@ -316,6 +349,9 @@ function transcendental(op, w, a, raw) = {
     "tanh" => {
       /* tanh(NaN) = NaN; below 2^-12 tanh(x) = x within 2^-24 (the difference of exponentials cancels) */
       if fv_is_nan(x) then FV_NaN()
+      /* tanh.approx.{f16,bf16} (ISA 9.7.4.9): maximum absolute error 2^-10.987 / 2^-8; the correctly rounded tanh */
+      else if (w == 16 | w == 116) & fv_is_inf(x) then FV_Fin(fv_sign(x), 1, 0)
+      else if (w == 16 | w == 116) & not_bool(fv_is_zero(x)) then tanh_r(x, w)
       else if fv_cmp(fv_abs(x), FV_Fin(false, 1, -12)) < 0 then x
       else if fv_cmp(fv_abs(x), FV_Fin(false, 20, 0)) < 0 then {
         let e1 = exp_r(x, w);
