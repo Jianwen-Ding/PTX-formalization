@@ -31,6 +31,9 @@
     tcgen05.wait::ld.sync.aligned;
     tcgen05.fence::before_thread_sync;
     tcgen05.fence::after_thread_sync;
+    // "All of the Tensor Memory that was allocated ... must be explicitly deallocated ... before the kernel exits"
+    tcgen05.dealloc.cta_group::1.sync.aligned.b32 %r0, 64;
+    tcgen05.dealloc.cta_group::1.sync.aligned.b32 %r1, 64;
     ret;
 }
 .buffer O .u32 = { 7, 7, 7 };

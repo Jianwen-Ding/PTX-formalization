@@ -90,7 +90,8 @@ out('%md'); [out(f'%c{i}') for i in range(4)]; out('%rv')
 L.append("    tcgen05.dealloc.cta_group::1.sync.aligned.b32 %tw, 32;\n    ret;\n}\n")
 assert k == NO, (k, NO)
 code = "\n".join(L) + "\n" + buf('DIN', 'u32', [x for r in V for x in r]) + f"\n.buffer O .u32 [{T * NO}];\n.launch k <<< 1, {T} >>> (DIN, O);\n" + expect('O', 'u32', [x for r in exp for x in r]) + "\n"
-open('tests/tc-red.ptx', 'w').write(code)
+# tcgen05.ld.red needs sm_101a / sm_103f or higher in the family (9.7.17.8.3), not sm_100a
+open('tests/tc-red.ptx', 'w').write(code.replace(".target sm_100a", ".target sm_103a", 1))
 
 # ------------------------------------------------------------------ cp decompression
 R = 128; W = 4
