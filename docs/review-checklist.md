@@ -811,3 +811,46 @@ the OOB NaN of the tensor section); the `.f32x2` spelling of `b` in `fma.f32x2.{
 `tcgen05` arithmetic and texture filtering; the exact random-bit layout of the x4 `.rs` conversions and of `.rs` to a
 subnormal f16 (only the two neighbours are checked: the layouts are in Figures 39-42, which the text extraction
 loses).  Berkeley SoftFloat was not used as a second opinion (the MPFR and rational paths cross-check each other).
+
+## Differential testing against GPGPU-Sim
+
+Setup (`scripts/difftest_gpgpusim/`, see its README): GPGPU-Sim's PTX parser and functional simulator (pinned commit
+`c3eeb6d1`, `src/cuda-sim/*.cc`, `ptx.y/.l`, `ptxinfo.y/.l`, `abstract_hardware_model.cc`, `option_parser.cc`) built
+without any NVIDIA software: clean-room stub headers for the CUDA types, a clean-room replacement of the CUDA-derived
+`cuda-math.h`, link stubs for the timing model / stream manager / runtime front end, one upstream fix (double free of
+`.param` call arguments, `patches/0001`), and a driver that loads a PTX file, allocates buffers, launches kernels and
+dumps memory.  `libcuda/cuda_runtime_api.cc` and `cuda-math.h` (CUDA-derived per GPGPU-Sim's COPYRIGHT) are not
+compiled.  Both simulators start from the Sail model's initial byte image of each `.buffer`; final buffers are compared.
+
+- [x] Corpus (`run_compare.py tests/*.ptx tests/zluda/*.ptx`, 593 programs): 136 MATCH, 34 DIFF, all analysed and all
+      GPGPU-Sim deviations (`known_deviations.json`); 253 rejected by GPGPU-Sim's parser (Hopper/Blackwell features,
+      mma/wmma shapes, f16/bf16/fp8 forms, `testp`, `copysign`, by-value `.param` arrays, ...), 27 abort in GPGPU-Sim
+      (`red`, `addc`, `setp` with a boolean operator, f16 `min`/`set`, calls), 143 skipped (`.patch`/`.append`,
+      tensormaps, textures, `.ub`/`.memmodel`, dynamic shared memory).
+- [x] Random programs (`gen_random.py`, int / float / cvt / mem / ctrl / warp, 1-2 CTAs of 32-64 threads, 12-40
+      statements, every register and the scratch / shared memory compared, `.isacheck` on): about 3,600 programs
+      (final generator: 1,000 mixed + 300 warp/ctrl/mem + 300 zero-sign-sensitive float/cvt + 380 int/cvt; earlier
+      versions: 300 each of int, float, cvt and ~400 smaller runs, some with `--raw`).  About 170 differing programs were
+      minimised (greedy statement deletion) and checked against the ISA 9.4 text.  **No Sail model bug confirmed**; every
+      difference was a GPGPU-Sim deviation, an unspecified result, or a generator mistake (fixed).
+- [x] Spec-ambiguous, not counted as bugs: `.sat` of -0.0 (`cvt.rzi.sat.f32.f32`, `cvt.ftz.sat.f64.f32`, ...) keeps
+      -0.0 in the model, GPGPU-Sim gives +0.0 ("clamps the result to [0.0, 1.0]", 9.7.3 / 9.7.10.24, does not say);
+      `min/max.f64` of two NaNs gives the canonical NaN while other `.f64` operations propagate the first NaN's payload
+      ("NaN payloads are supported for double-precision instructions", 9.7.3, names no payload for min/max);
+      `activemask` after a reconverging branch reports only the lanes of one path (the lanes that execute the instance
+      together under the round-robin schedule, as `tests/activemask-div.ptx` documents; the ISA fixes no reconvergence
+      point).  Doc inconsistency: `docs/prior-work.md` ("Independent thread scheduling") still says the default mode's
+      `activemask` "returns every lane of the warp that has not exited, i.e. it assumes a converged warp".
+- [x] Model permissiveness without `.isacheck` (by design): `cvt.rn.f64.s64 %fd, %r32` (source narrower than the type,
+      Table 27 "inv") is accepted and executed; with `.isacheck` it is rejected.
+- [x] GPGPU-Sim deviations (each checked against the ISA): `add/sub.sat.s32` no saturation; `bfe` pos/len not masked
+      to 8 bits / clamped; `bfi.b64`, `brev.b64` 32-bit only; `shf` with n = 0 / 32; `shr.s64` by >= 64; `selp` with an
+      immediate predicate; `vote.sync.uni` inverted; `vote.sync.all` counts exited lanes; `activemask` ignores
+      divergence; `atom` reads a source register that is also its destination after writing it; `ld.s8/.s16` and
+      narrow `cvt` destinations in 32-bit registers are not sign/zero-extended (Table 28); `.ftz` and most `.sat`
+      ignored; directed rounding ignored for `rcp`, `sqrt`, `cvt.f32.f64`, `cvt.f16.f32` (which also breaks ties away);
+      directed-rounding overflow gives inf/NaN; `neg`/`abs`/`min`/`max` get the sign of zero wrong; subnormals flushed in
+      `cvt` and ignored by global `atom.add.f32` (which the ISA flushes); float->int `cvt` through a 32-bit C cast (no
+      saturation, NaN not 0, 64-bit results truncated); `.sat` ignored on int->int `cvt`; `rcp/rsqrt.approx.f64` and
+      `div.approx.f32` exact; f16x2 `cvt`/`fma` one half only; nested register scopes and `.weak` linking; not
+      implemented: `red`, `addc/subc`, `rem.u16/.s16`, `setp` with a boolean operator, 64-bit `atom.and/or/xor/min/max`.
