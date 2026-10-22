@@ -1,0 +1,17 @@
+// expect: wmma.load: threads of the warp use different values of p
+// "The behavior of wmma.load is undefined if all threads do not use the same qualifiers and the same values of p and
+// stride" (9.7.15.4.3), under .ub strict
+.version 8.0
+.target sm_90
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 pa)
+{
+    .reg .b64 %pa, %o; .reg .b32 %A<8>, %l;
+    ld.param.u64 %pa, [pa];
+    mov.u32 %l, %laneid; shr.u32 %l, %l, 4; mul.wide.u32 %o, %l, 512; add.u64 %pa, %pa, %o;
+    wmma.load.a.sync.aligned.row.m16n16k16.global.f16 {%A0, %A1, %A2, %A3, %A4, %A5, %A6, %A7}, [%pa];
+    ret;
+}
+.buffer A .u16 [1024];
+.launch k <<< 1, 32 >>> (A);

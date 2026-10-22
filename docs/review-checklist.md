@@ -280,6 +280,8 @@ Open:
 - [x] tcgen05.ld / st "All the threads in the warp must specify the same value of taddr" (§9.7.17.8.3-4) under
       `.ub strict`: lanes of one instance (function, pc, per-thread visit count) compare their taddr
       (tests/neg/tcgen05-ub-taddr.ptx); the 35 tcgen05 ld / st tests pass under `.ub strict`
+- [x] wmma.load / wmma.store "the same values of p and stride" in every thread (§9.7.15.4.3-4) under `.ub strict`, with
+      one warp-uniform-operand helper (warpUniform, ptx_coll.sail) shared with tcgen05.ld / st (tests/neg/wmma-ub-uniform.ptx)
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

@@ -528,6 +528,9 @@ function wmDefStride(mat, s, col) = match mat {
 /* under .ub strict: "Specifying a value lower than the default value results in undefined behavior" (9.7.15.4.3 / .4);
    "The starting address of each instance of the leading dimension ... must be aligned with the size of the corresponding
    fragment in bytes", i.e. p and the stride in bytes are multiples of the fragment size (9.7.15.4.2) */
+val locOffW : loc -> int
+function locOffW(l) = match l { Loc(_, x) => x, _ => 0 }
+
 val wmUb : (string, string, string, ty, bool, int, loc) -> bool
 function wmUb(op, mat, s, t, col, st, base) =
   if not_bool(ub) then true
@@ -548,6 +551,7 @@ function wm_load(o, dv, a, st) = {
   let s = shapeOf(m);
   let base = ea(a, spaceOf(m));
   if not_bool(wmUb("wmma.load", mat, s, t, has(m, "col"), st, base)) then return ();
+  if not_bool(warpUniform("wmma.load", "p", locOffW(base)) & warpUniform("wmma.load", "stride", st)) then return ();
   let l = fmod_int(t_tid[tchk(cur)], 32);
   let n = wmNel(mat, s, t);
   var els : list(int) = [||];
@@ -580,6 +584,7 @@ function wm_store(o, a, vs, st) = {
   let s = shapeOf(m);
   let base = ea(a, spaceOf(m));
   if not_bool(wmUb("wmma.store", "c", s, t, has(m, "col"), st, base)) then return ();
+  if not_bool(warpUniform("wmma.store", "p", locOffW(base)) & warpUniform("wmma.store", "stride", st)) then return ();
   let l = fmod_int(t_tid[tchk(cur)], 32);
   let n = wmNel("c", s, t);
   let rs = vecRegs(vs, t);

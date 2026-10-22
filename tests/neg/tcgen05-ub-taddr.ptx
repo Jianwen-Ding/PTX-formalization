@@ -1,4 +1,4 @@
-// expect: tcgen05.st: threads of the warp use different taddr values
+// expect: tcgen05.st: threads of the warp use different values of taddr
 // "All the threads in the warp must specify the same value of taddr" (9.7.17.8.4), under .ub strict
 .version 8.6
 .target sm_100a

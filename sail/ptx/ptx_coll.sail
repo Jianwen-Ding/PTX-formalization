@@ -189,6 +189,26 @@ function sum_list(l) = match l { [||] => 0, h :: t => h + sum_list(t) }
 val seqKey : (string, int) -> string
 function seqKey(k, m) = concat_str(k, concat_str(":", dec_str(m)))
 
+/* warp-uniform operands of a per-thread warp-wide instruction (.ub strict): the first lane of the warp to execute an
+ * instance (function, pc, the thread's visit count, operand tag) records the value in the CTA's misc map, later lanes
+ * compare; false (after a fault) when they differ */
+val warpUniform : (string, string, int) -> bool
+function warpUniform(op, tag, v) =
+  if not_bool(ub) then true
+  else {
+    let t = tchk(cur);
+    let site = concat_str("wu@", concat_str(tag, concat_str("@", concat_str(f_name[fchk(t_fn[t])], concat_str(":", dec_str(t_pc[t]))))));
+    let cs = t_cseq[t];
+    let sk = seqKey(site, 0);
+    let n = if smap_has(cs, sk) then smap_get(cs, sk) else 0;
+    smap_set(cs, sk, n + 1);
+    let mp = c_misc[cchk(cur_cta())];
+    let key = concat_str(site, concat_str(":", concat_str(dec_str(tdiv_int(t_tid[t], 32)), concat_str(":", dec_str(n)))));
+    if smap_has(mp, key) & smap_get(mp, key) != v then {
+      fault(concat_str(op, concat_str(": threads of the warp use different values of ", tag)), v); false
+    } else { smap_set(mp, key, v); true }
+  }
+
 /* mkKey(T, K, M, CS): (warp, kind, mask, sequence number) within the CTA */
 val mkKey : (int, string, int, int) -> string
 function mkKey(t, k, m, sq) =
