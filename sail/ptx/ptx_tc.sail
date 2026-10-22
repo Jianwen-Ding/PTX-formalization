@@ -346,8 +346,19 @@ function tcNib(tm, t, r, mc, sel, c, kp) =
 
 let SP_MT : int = 26
 
+/* "The only meaningful values of the index are" (9.7.17.10.8): .kind::tf32 0b1110 0b0100; the 2:4 and pair-wise 4:8
+   kinds 0b0100 0b1000 0b1100 0b1001 0b1101 0b0110 0b1110 ("Rest of the values result in undefined behavior"); checked
+   under .ub strict */
+val tcNibOk : (ty, int) -> bool
+function tcNibOk(t, nib) =
+  if t.k == "tf" then nib == 14 | nib == 4 else has([|"4", "8", "12", "9", "13", "6", "14"|], dec_str(nib))
+
 val tcSpExp : (int, ty, int, int, int, int) -> unit
 function tcSpExp(tm, t, m, kp, mc, sel) = {
+  if ub then foreach (r from 0 to (m - 1)) foreach (c from 0 to (tdiv_int(kp, spNz(t)) - 1)) {
+    let nib = tcNib(tm, t, r, mc, sel, c, kp);
+    if not_bool(stuck) & not_bool(tcNibOk(t, nib)) then fault("tcgen05.mma.sp: metadata index value that is not meaningful", nib)
+  };
   smap_clear(SP_MT);
   smap_copy(SP_MT, SP_MA);
   smap_clear(SP_MA);
