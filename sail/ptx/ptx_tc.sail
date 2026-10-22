@@ -48,6 +48,12 @@ function tcFind(al, n) = {
 }
 val tcPow2 : int -> bool
 function tcPow2(n) = n >= 32 & n <= 512 & popc_int(n) == 1
+/* .exclusive (PTX ISA 9.4 9.7.18.7.1, Table 60): "nCols must be a multiple of 32, in the range [32, 512] on target
+   sm_100f, or the range [32, 576] on target sm_107f" (sm_100, sm_103, sm_110: 512; sm_107: 576) */
+val tcExMax : unit -> int
+function tcExMax() = if isasm == 107 then 576 else 512
+val tcExOk : int -> bool
+function tcExOk(n) = n >= 32 & n <= tcExMax() & tmod_int(n, 32) == 0
 
 val tcInst : string -> string
 function tcInst(k) = {
@@ -61,21 +67,36 @@ register t_tcal : vector(16384, loc) = vector_init(BadLoc(""))
 
 /* tcgen05.alloc (ISA 9.7.17.5): the warp's result is computed once per instance; when the columns are not available
    the instruction blocks until they become available (a thread waits in K_wait("tcalloc") and retries) */
-val tcAllocTry : (loc, int) -> bool
-function tcAllocTry(l, n) = {
+/* .exclusive: "An exclusive allocation operation blocks until there is no other live allocation. Until the sole live
+   allocation is deallocated, no other CTA may allocate, whether exclusively or nonexclusively" (9.4 9.7.18.7.1); the
+   model's tensor memory is per CTA, so the rule applies to the CTA's own allocations.  "tcex" in the CTA's misc map:
+   an exclusive allocation is live (it starts at column 0) */
+val tcAllocTry : (loc, int, bool) -> bool
+function tcAllocTry(l, n, ex) = {
   let c = cur_cta();
   let rs = tcSpace(c, "rs");
   let al = tcSpace(c, "al");
   let inst = tcInst("tcgen05.alloc");
+  let exLive = smap_has(c_misc[cchk(c)], "tcex");
   if smap_has(rs, inst) then { let _ = memop_do(l, WrOp(4, smap_get(rs, inst))); true }
-  else if not_bool(tcPow2(n)) then { fault("tcgen05.alloc: invalid size", n); true }
+  else if not_bool(if ex then tcExOk(n) else tcPow2(n)) then { fault("tcgen05.alloc: invalid size", n); true }
   /* "it is illegal for a CTA to perform tcgen05.alloc after any of its constituent threads execute
      tcgen05.relinquish_alloc_permit"; "The number of columns allocated should not increase between any two allocations
      in the execution order within the CTA" (9.7.17.7.1): reported under .ub strict */
   else if ub & smap_has(c_misc[cchk(c)], "tcrelinq") then { fault("tcgen05.alloc after tcgen05.relinquish_alloc_permit", n); true }
   else if ub & smap_has(c_misc[cchk(c)], "tclast") & n > smap_get(c_misc[cchk(c)], "tclast") then {
     fault("tcgen05.alloc: the number of columns increases between two allocations", n); true
-  } else if tcFind(al, n) >= 0 then {
+  } else if ex then {
+    if smap_size(al) > 0 then false
+    else {
+      let _ = memop_do(l, WrOp(4, 0));
+      smap_set(rs, inst, 0);
+      smap_set(al, "0", n);
+      smap_set(c_misc[cchk(c)], "tcex", 1);
+      smap_set(c_misc[cchk(c)], "tclast", n);
+      true
+    }
+  } else if not_bool(exLive) & tcFind(al, n) >= 0 then {
     let b = tcFind(al, n);
     let _ = memop_do(l, WrOp(4, b));
     smap_set(rs, inst, b);
@@ -89,7 +110,7 @@ function tcAllocTry(l, n) = {
 val tcAllocRetry : unit -> bool
 function tcAllocRetry() = {
   let t = tchk(cur);
-  if tcAllocTry(t_tcal[t], at(t_wd[t], 0)) then { t_cont[t] = K_none(); true } else false
+  if tcAllocTry(t_tcal[t], at(t_wd[t], 0), at(t_wd[t], 1) == 1) then { t_cont[t] = K_none(); true } else false
 }
 
 val post_tc : (cpost, list(int)) -> unit
@@ -98,18 +119,26 @@ function post_tc(p, vs) = {
   let rs = tcSpace(c, "rs");
   let al = tcSpace(c, "al");
   match p {
-    P_tcalloc(l, n) => {
-      if not_bool(tcAllocTry(l, n)) then {
+    P_tcalloc(l, n, ex) => {
+      if not_bool(tcAllocTry(l, n, ex)) then {
         let t = tchk(cur);
         t_tcal[t] = l;
-        t_wd[t] = [|n|];
+        t_wd[t] = [|n, b2i(ex)|];
         t_cont[t] = K_wait("tcalloc", 0)
       }
     },
-    P_tcdealloc(b, n) => {
+    P_tcdealloc(b, n, ex) => {
       let inst = tcInst("tcgen05.dealloc");
+      let exLive = smap_has(c_misc[cchk(c)], "tcex");
       if smap_has(rs, inst) then ()
-      else if smap_has(al, dec_str(b)) & smap_get(al, dec_str(b)) == n then { smap_set(rs, inst, 0); smap_del(al, dec_str(b)) }
+      /* "Memory must be deallocated with .exclusive if and only if it is allocated with .exclusive" (9.4 9.7.18.7.1):
+         under .ub strict; otherwise the allocation is freed */
+      else if ub & smap_has(al, dec_str(b)) & ex != exLive then
+        fault(if ex then "tcgen05.dealloc.exclusive of a non-exclusive allocation" else "tcgen05.dealloc of an exclusive allocation without .exclusive", b)
+      else if smap_has(al, dec_str(b)) & smap_get(al, dec_str(b)) == n then {
+        smap_set(rs, inst, 0); smap_del(al, dec_str(b));
+        if exLive then smap_del(c_misc[cchk(c)], "tcex")
+      }
       else fault("tcgen05.dealloc: not an allocation of that size", b)
     },
     _ => ()
@@ -789,14 +818,14 @@ function exec_tc(o, ops) = {
        behavior is undefined" (9.7.17.7.1) */
     [|XB([|d|], [||]), n|] if not_bool(winUb("tcgen05.alloc", "dst", ea(d, if has(m, "shared::cta") | has(m, "shared") then "shared" else "generic"), [|"shared"|])) => true,
     [|XB([|d|], [||]), n|] => {
-      t_post[t] = P_tcalloc(ea(d, if has(m, "shared::cta") | has(m, "shared") then "shared" else "generic"), rdu32(n));
+      t_post[t] = P_tcalloc(ea(d, if has(m, "shared::cta") | has(m, "shared") then "shared" else "generic"), rdu32(n), has(m, "exclusive"));
       do_coll("tcgen05.alloc", full, [||], [|0|], [||]);
       true
     },
     _ => false
   } else if has(m, "dealloc") then match ops {
     [|ta, n|] => {
-      t_post[t] = P_tcdealloc(tcCol(rd(ta, mkty("b", 32))), rdu32(n));
+      t_post[t] = P_tcdealloc(tcCol(rd(ta, mkty("b", 32))), rdu32(n), has(m, "exclusive"));
       do_coll("tcgen05.dealloc", full, [||], [|0|], [||]);
       true
     },

@@ -1,0 +1,18 @@
+// expect: tcgen05.dealloc of an exclusive allocation without .exclusive
+// "Memory must be deallocated with .exclusive if and only if it is allocated with .exclusive" (PTX ISA 9.4 9.7.18.7.1)
+.version 9.4
+.target sm_100a
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %ta; .reg .b64 %o;
+    .shared .align 16 .b32 slot[1];
+    ld.param.u64 %o, [po];
+    tcgen05.alloc.exclusive.cta_group::1.sync.aligned.shared::cta.b32 [slot], 96;
+    ld.shared.b32 %ta, [slot];
+    tcgen05.dealloc.cta_group::1.sync.aligned.b32 %ta, 96;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 32 >>> (O);

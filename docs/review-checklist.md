@@ -486,4 +486,9 @@ is recorded in the list under "Second review pass".  The legality table is gener
       ti16 integer forms have it) (tests/tc-94-0.ptx, tests/neg/tc-94-coll-ub-use.ptx,
       tests/neg/isa-tc-94-coll-ashift.ptx).  Gaps: the ISA does not say whose buffer it is (CTA, SM, issuing thread,
       CTA pair) or whether the filled matrix must be the one later used; the model checks per CTA and only the fill
-- [ ] tcgen05.alloc / dealloc `.exclusive` (9.4): not yet checked against the model
+- [x] tcgen05.alloc / dealloc `.exclusive` (9.4 §9.7.18.7.1, Table 60) was not modelled (the qualifier was ignored and
+      non-power-of-two sizes failed).  An exclusive allocation waits until the CTA has no live allocation, starts at
+      column 0, takes any multiple of 32 up to 512 (576 on sm_107), and blocks every other allocation until its
+      `dealloc.exclusive`; a dealloc whose `.exclusive` does not match the allocation is reported under `.ub strict`.
+      Model scope: tensor memory is per CTA in the model, so "no other CTA may allocate" has no counterpart; non-exclusive
+      allocations stay within 512 columns (tests/tc-alloc-exclusive.ptx, tests/neg/tc-ub-exclusive-dealloc.ptx)

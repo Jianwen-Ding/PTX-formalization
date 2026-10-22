@@ -335,8 +335,8 @@ union cpost = {
   P_ldm : (string, list(xop)),                    /* space, destinations */
   P_ldm2 : (string, int, int, int, list(xop)),    /* space, row bytes, kind, format, destinations */
   P_stm : (loc, int),                              /* row location, matrices */
-  P_tcalloc : (loc, int),                          /* #tcAlloc(L, N) */
-  P_tcdealloc : (int, int),                        /* #tcDealloc(B, N) */
+  P_tcalloc : (loc, int, bool),                    /* #tcAlloc(L, N), .exclusive */
+  P_tcdealloc : (int, int, bool),                  /* #tcDealloc(B, N), .exclusive */
 }
 register t_post : vector(16384, cpost) = vector_init(P_none())
 val coll_post_ext : (cpost, list(int)) -> unit
