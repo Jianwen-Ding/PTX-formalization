@@ -330,6 +330,32 @@ function tmUb(m, b, cs, store) =
     if e != "" then { fault(concat_str("cp.async.bulk.tensor: ", e), 0); false } else true
   }
 
+/* the .report_mechanism inspection of a tensor load (PTX ISA 9.4 9.7.10.28.1.3) over the source global memory that the
+ * copy reads (elements out of bounds are filled, not read): .per_element::ff matches a 0xff byte of a read element;
+ * .per_16bytes samples the first element of each aligned 16-byte global chunk containing a read element (the model's
+ * choice, as for cp.async.bulk).  The sub-byte types (.b4x16 ...) are not inspected. */
+val tmRepHit : (list(string), int, list(int), list(int), int, bool, bool) -> bool
+function tmRepHit(m, b, cs, inf, imd, i2c, g) = {
+  let (w, pat) = repPat(m);
+  if w == 0 | tmSub(b) then false
+  else {
+    let eb = tmEb(b);
+    let cnt = if i2c then tmPix(b, inf, imd) * tmBox(b, 0) else tmCount(b, g);
+    var hit : bool = false;
+    foreach (e from 0 to (cnt - 1)) {
+      let a = if i2c then tmAddrI(b, cs, inf, imd, e) else tmAddr(b, cs, e, g);
+      if a >= 0 & not_bool(hit) then {
+        if w == -1 then { foreach (j from 0 to (eb - 1)) if mem_rdn(SP_GMEM, a + j, 1) == 255 then hit = true }
+        else {
+          let c = a - tmod_int(a, 16);
+          if land_int(mem_rdn(SP_GMEM, c, max_int(1, tdiv_int(w, 8))), mask(w)) == pat then hit = true
+        }
+      }
+    };
+    hit
+  }
+}
+
 val tm_load : (list(string), addr, int, list(int), addr, list(xop)) -> unit
 function tm_load(m, d, b, cs, mb, rest) = {
   if not_bool(tmUb(m, b, cs, false)) then return ();
@@ -373,8 +399,9 @@ function tm_load(m, d, b, cs, mb, rest) = {
   };
   let n = if i2c then tmPix(b, inf, imd) * tmBox(b, 0) * eb else if sub then tmGroups(b) * tmSB(b)
           else tmCount(b, has(m, "tile::gather4")) * eb;
+  let rh = not_bool(stuck) & tmRepHit(m, b, cs, inf, imd, i2c, g);
   var ms = tmBarLocs(ea(mb, dsp), mk, isMc(m), has(m, "cta_group::2"), rreg("%cluster_ctarank"));
-  while is_cons(ms) & not_bool(stuck) do { match ms { l :: mr => { bulkTx(l, n); ms = mr }, [||] => () } }
+  while is_cons(ms) & not_bool(stuck) do { match ms { l :: mr => { if rh then mbReportOn(mbKey(l)); bulkTx(l, n); ms = mr }, [||] => () } }
 }
 
 /* ---------------------------------------------------------------- stores / reductions */

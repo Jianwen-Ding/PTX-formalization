@@ -403,6 +403,8 @@ function isaQual(o, ops) = {
     "setmaxnreg: imm-reg-count must be 24 .. 256 and a multiple of 8 [PTX ISA 9.4 9.7.21.5]"
   else if b == "pmevent" & not_bool(has(m, "mask")) & isaBadImm(ops, 1, 0, 0, 15, 1) then
     "pmevent: the event number must be 0 .. 15 [PTX ISA 9.4 9.7.21.3]"
+  else if b == "prefetch" & has(m, "L1::32B") & (not_bool(has(m, "valid_addr")) | has(m, "local")) then
+    "prefetch.L1::32B: .valid_addr must be specified and the state space, if specified, must be .global [PTX ISA 9.4 9.7.10.16]"
   else if b == "alloca" & isaBadAlign(ops) then
     "alloca: immAlign must be a power of 2 not above 2^23 [PTX ISA 9.4 9.7.19.3]"
   else ""

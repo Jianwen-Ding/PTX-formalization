@@ -483,3 +483,28 @@ function gx_video(o, ops) = {
     _ => false
   } else false
 }
+
+/* undefined behaviour of the PTX ISA 9.4 memory hints, under .ub strict:
+ * ld.proxy::readonly "may only be used with global state space or with generic addressing where the address points to
+ * global or const state space. If the generic address does not fall within the address window of the global or const
+ * memory, then the behavior is undefined" (9.7.10.8); prefetch .valid_addr "requires at-least 1B-wide memory location
+ * referred to by address a to be valid for this access. Otherwise, the behavior is undefined", and with .L1::32B "the
+ * generic address must fall within the global state-space" (9.7.10.16) */
+val hintUb : (opcode, list(xop)) -> unit
+function hintUb(o, ops) =
+  if ub then {
+    let m = o.mods;
+    if o.base == "ld" & has(m, "proxy::readonly") then match ops {
+      _ :: XB([|a|], _) :: _ => { let _ = winUb("ld.proxy::readonly", "address", ea(a, spaceOf(m)), [|"global", "const"|]); () },
+      _ => ()
+    } else if o.base == "prefetch" & has(m, "valid_addr") then match ops {
+      XB([|a|], _) :: _ => match ea(a, spaceOf(m)) {
+        Loc(s, x) =>
+          if has(m, "L1::32B") & s != "global" then fault("prefetch.L1::32B: the address is not in the global window", x)
+          else if s == "global" & (x < 4096 | x + 1 > gtop) then fault("prefetch.valid_addr: the address is not a valid location", x)
+          else if s != "global" & s != "local" then fault("prefetch.valid_addr: the address is not a valid location", x),
+        BadLoc(e) => fault(concat_str("prefetch.valid_addr: ", e), 0)
+      },
+      _ => ()
+    }
+  }

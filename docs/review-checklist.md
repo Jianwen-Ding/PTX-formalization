@@ -409,6 +409,24 @@ is recorded in the list under "Second review pass".  The legality table is gener
       syntax but `convert(b[0:15])` in the semantics; the model reads b as a pair of `.atype` (also accepted when
       spelled `.atype`).  `.ftz` on `add.rz.ftz.f16x2.f32x2.f32x2` is not described; the model flushes the f32 inputs
       and the f32 intermediate
-- [ ] the semantics of the remaining 9.4 additions (release notes, 9.4 L45798 ff.): ldmatrix .s8.s4 .m8n16, tcgen05
-      .kind::ti16 / UE5M3 scale / .decompress::lut::b / .exclusive, .report_mechanism, .override_attribute,
-      .level::eviction_priority on bulk prefetch
+- [x] `.layout::v1` payload report and conditional phase (9.4 §9.7.15.16.7, .8, .10) and the `.report_mechanism` of
+      cp.async.bulk / cp.async.bulk.tensor (§9.7.10.28.1.3, Table 33) were not modelled (the report was always zero
+      and `.phase_type::conditional` waited on the primary phase).  Now: a matching inspection issues a report-on before
+      the complete-tx (report predicate set, report value OR'ed with 0, so 0); on phase completion the conditional phase
+      advances only with a zero report, the report of the completed phase is kept for the waits, and the next phase's
+      report is zero; `.phase_type::primary` waits return the completed phase's report predicate; `.phase_type::conditional`
+      waits test the conditional phase's parity.  Model choices where Table 33 is open: `.per_16bytes` samples the first
+      element of each aligned 16-byte chunk (the "sampled element" is not specified; for tensor loads, of each aligned
+      global chunk holding a read element), `.per_element::ff` matches a 0xff byte (the table's 4-bit "0xF" column is
+      not read as a nibble match); sub-byte tensor types are not inspected.  A report mechanism on a `.layout::v0` object
+      is reported under `.ub strict` ("otherwise the behavior is undefined"); without it the object has no payload
+      report.  Fabric operations never fail in the model, so `.mbarrier::report::fabric` never reports
+      (tests/mbar-report-v1.ptx, tests/tma-report.ptx, tests/neg/mbar-ub-report-v0.ptx)
+- [x] 9.4 memory hints: `ld.proxy::readonly` outside the global / const window and `prefetch.valid_addr` on an invalid
+      location (or `.L1::32B` outside global) are reported under `.ub strict`; `.L1::32B` without `.valid_addr` or with
+      `.local` under `.isacheck` (§9.7.10.8, §9.7.10.16).  Not reported: a write, during the kernel, to a location read
+      by `ld.proxy::readonly` ("treated as read-only during the lifetime of the kernel")
+      (tests/hint94.ptx, tests/neg/ld-readonly-shared.ptx, prefetch-valid-null.ptx, isa-prefetch-l1-32b.ptx)
+- [x] already modelled before the migration: ldmatrix `.s8.s4` `.m8n16` (sign extension of the 4-bit elements),
+      `.override::global_address` / `.override_attribute` tensor operands, cvt `.pzo` / `.scaled::n1::ue8m0` /
+      `.ue5m3x2`, set with packed integers, spcompress / spdecompress

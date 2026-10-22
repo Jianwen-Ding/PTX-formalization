@@ -1,0 +1,26 @@
+// PTX ISA 9.4 memory hints without effect on the result: ld.proxy::readonly (9.7.10.8), prefetch .valid_addr / .L1::32B
+// / .level::eviction_priority (9.7.10.16), fence.proxy.alias with .acquire / .release and
+// fence.proxy.async::generic .sync_restrict::shared::cluster::read (9.7.15.4)
+.version 9.4
+.target sm_100a
+.address_size 64
+.isacheck ;
+.ub strict ;
+.visible .entry k(.param .u64 po, .param .u64 pg)
+{
+    .reg .b64 %o, %g; .reg .b32 %r0, %r1;
+    ld.param.u64 %o, [po]; ld.param.u64 %g, [pg];
+    prefetch.global.L1::32B.valid_addr [%g];
+    prefetch.global.L2::evict_last [%g];
+    ld.global.u32.proxy::readonly %r0, [%g];
+    ld.u32.proxy::readonly %r1, [%g+4];
+    fence.proxy.alias.acquire.cta;
+    fence.proxy.alias.release.gpu;
+    fence.proxy.async::generic.release.sync_restrict::shared::cluster::read.cluster;
+    st.global.v2.u32 [%o], {%r0, %r1};
+    ret;
+}
+.buffer O .u32 [2];
+.buffer G .u32 = { 11, 22 };
+.launch k <<< 1, 1 >>> (O, G);
+.expect O .u32 = { 11, 22 };

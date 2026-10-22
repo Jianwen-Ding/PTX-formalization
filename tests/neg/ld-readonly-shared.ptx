@@ -1,0 +1,18 @@
+// expect: ld.proxy::readonly: address outside the address window of its state space
+// ld.proxy::readonly with a generic address in shared memory (PTX ISA 9.4 9.7.10.8), under .ub strict
+.version 9.4
+.target sm_90
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %a; .reg .b32 %r;
+    .shared .align 4 .b32 s[4];
+    ld.param.u64 %o, [po];
+    cvta.shared.u64 %a, s;
+    ld.u32.proxy::readonly %r, [%a];
+    st.global.u32 [%o], %r;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

@@ -31,6 +31,7 @@ function exec_dispatch(o0, ops) = {
   let o = sm1xFtz(o0);
   wgCheck(o, ops);
   paramUb(o, ops);
+  hintUb(o, ops);
   if stuck then ()
   else if exec_prio(o, ops) then ()
   else if exec_specific(o, ops) then ()

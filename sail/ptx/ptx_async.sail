@@ -127,6 +127,19 @@ function mbPut(k, s) = {
   /* "w": a wait has returned True for the last completed phase (cleared when a phase completes) */
   if not_bool(smap_has(SP_MBARS, concat_str("p", ks))) | smap_get(SP_MBARS, concat_str("p", ks)) != p then
     smap_set(SP_MBARS, concat_str("w", ks), if p == 0 then 1 else 0);
+  /* the conditional phase "c" and the payload report "r" of the current primary phase (.layout::v1), with "rp" the
+     report of the last completed primary phase (PTX ISA 9.4 9.7.15.16.8, Phase transition): on completion "If the
+     payload report associated with the current primary phase of the mbarrier is zero, then the conditional phase
+     advances"; "The payload report corresponding to the next primary phase is reinitialized to zero"; mbarrier.init
+     initialises both phases and the report to zero (9.7.15.16.12) */
+  if not_bool(smap_has(SP_MBARS, concat_str("p", ks))) then {
+    smap_set(SP_MBARS, concat_str("c", ks), 0); smap_set(SP_MBARS, concat_str("r", ks), 0); smap_set(SP_MBARS, concat_str("rp", ks), 0)
+  } else if smap_get(SP_MBARS, concat_str("p", ks)) != p then {
+    let r = smap_get(SP_MBARS, concat_str("r", ks));
+    if r == 0 then smap_set(SP_MBARS, concat_str("c", ks), smap_get(SP_MBARS, concat_str("c", ks)) + 1);
+    smap_set(SP_MBARS, concat_str("rp", ks), r);
+    smap_set(SP_MBARS, concat_str("r", ks), 0)
+  };
   smap_set(SP_MBARS, concat_str("p", ks), p);
   smap_set(SP_MBARS, concat_str("q", ks), q);
   smap_set(SP_MBARS, concat_str("e", ks), e);
@@ -137,8 +150,22 @@ val mbDel : int -> unit
 function mbDel(k) = {
   let ks = dec_str(k);
   smap_del(SP_MBARS, concat_str("p", ks)); smap_del(SP_MBARS, concat_str("q", ks)); smap_del(SP_MBARS, concat_str("e", ks));
-  smap_del(SP_MBARS, concat_str("t", ks)); smap_del(SP_MBARS, concat_str("l", ks)); smap_del(SP_MBARS, concat_str("w", ks))
+  smap_del(SP_MBARS, concat_str("t", ks)); smap_del(SP_MBARS, concat_str("l", ks)); smap_del(SP_MBARS, concat_str("w", ks));
+  smap_del(SP_MBARS, concat_str("c", ks)); smap_del(SP_MBARS, concat_str("r", ks)); smap_del(SP_MBARS, concat_str("rp", ks))
 }
+
+/* report-on (PTX ISA 9.4 9.7.15.16.10) by an asynchronous copy whose data inspection matched: "the report predicate is
+ * modified to non-zero value; whereas report value is altered in an idempotent way (atomically OR'ed with 0)"
+ * (9.7.10.28.1.3), so the model keeps the predicate only (the value stays 0).  "when the .report_mechanism is specified
+ * for data inspection, the associated mbarrier operand must have been initialized with the layout .layout::v1,
+ * otherwise the behavior is undefined": under .ub strict; without it a .layout::v0 object, which has no payload
+ * report, is unchanged */
+val mbReportOn : int -> unit
+function mbReportOn(k) =
+  if mbHas(k) then {
+    if mbF(k, "l") == 1 then smap_set(SP_MBARS, concat_str("r", dec_str(k)), 1)
+    else if ub then fault("report mechanism on an mbarrier object that is not .layout::v1", 0)
+  }
 
 /* "Performing any mbarrier operation except mbarrier.init on a memory location that does not contain a valid mbarrier
  * object, results in undefined behaviour"; an address outside the .shared::cta (or cluster shared) window is undefined
@@ -191,9 +218,12 @@ function mbState(s) = { let (p, q, _, _, _) = s; lor_int(p, shl_int(q, 32)) }
 val mbPhase : int -> int
 function mbPhase(k) = { let (p, _, _, _, _) = mbGet(k); p }
 
+/* .phase_type::conditional "requires .parity qualifier and checks for completion of the conditional phase"
+   (9.4 9.7.15.16.19) */
 val mbDone : (int, list(string), int) -> bool
 function mbDone(k, m, v) =
-  if has(m, "parity") then tmod_int(mbPhase(k), 2) != land_int(v, 1) else mbPhase(k) > land_int(v, 4294967295)
+  if has(m, "phase_type::conditional") then tmod_int(mbF(k, "c"), 2) != land_int(v, 1)
+  else if has(m, "parity") then tmod_int(mbPhase(k), 2) != land_int(v, 1) else mbPhase(k) > land_int(v, 4294967295)
 
 val mbMcKeys : (int, int) -> list(int)
 function mbMcKeys(off, mk) = {
@@ -221,12 +251,21 @@ val wrFirst : (list(xop), int) -> unit
 function wrFirst(ds, v) = match ds { d :: _ => wr(d, v), [||] => () }
 
 /* test_wait / try_wait: waitComplete, then the payload report of .phase_type::primary (reportPredicate, reportValue).
- * "For .layout::v0, reportPredicate and reportValue are always zero" (PTX ISA 9.3, mbarrier.test_wait); for
- * .layout::v1 the report is zero unless a tracked operation reported a failure, which no operation of the model does. */
+ * "For .layout::v0, reportPredicate and reportValue are always zero" (PTX ISA 9.4 9.7.15.16.19); for .layout::v1 they
+ * are the report of the completed phase (9.7.15.16.7); "the reportPredicate and reportValue operands are undefined when
+ * waitComplete is False": the model writes 0.  reportValue is only ever OR'ed with 0 by the model's operations. */
 val wrZeros : list(xop) -> unit
 function wrZeros(ds) = match ds { d :: rest => { wr(d, 0); wrZeros(rest) }, [||] => () }
+val wrWaitR : (list(xop), int, int) -> unit
+function wrWaitR(ds, v, rp) = match ds {
+  d :: p :: rest => { wr(d, v); wr(p, if v == 1 then rp else 0); wrZeros(rest) },
+  [|d|] => wr(d, v),
+  [||] => ()
+}
 val wrWait : (list(xop), int) -> unit
-function wrWait(ds, v) = match ds { d :: rest => { wr(d, v); wrZeros(rest) }, [||] => () }
+function wrWait(ds, v) = wrWaitR(ds, v, 0)
+val mbRp : int -> int
+function mbRp(k) = if mbHas(k) then b2i(mbF(k, "rp") != 0) else 0
 
 val mbWaitOp : (list(string), string, list(xop), addr, xop) -> unit
 function mbWaitOp(m, sp, ds, a, s) = {
@@ -235,7 +274,7 @@ function mbWaitOp(m, sp, ds, a, s) = {
   let t = tchk(cur);
   if has(m, "try_wait") & not_bool(mbOk("try_wait", k)) then ()
   else if has(m, "try_wait") then {
-    t_wd[t] = [|k, b2i(has(m, "parity")), v|];
+    t_wd[t] = [|k, b2i(has(m, "parity")), v, b2i(has(m, "phase_type::conditional"))|];
     t_wx[t] = ds;
     t_cont[t] = K_wait("mbtry", 0);
     yielded = true
@@ -244,7 +283,7 @@ function mbWaitOp(m, sp, ds, a, s) = {
        reported under .ub strict */
     if ub & not_bool(has(m, "parity")) & mbPhase(k) > land_int(v, 4294967295) + 1 then
       fault("mbarrier.test_wait: the state is older than the immediately preceding phase", v)
-    else { let r = mbDone(k, m, v); if r then mbWaited(k); wrWait(ds, b2i(r)) }
+    else { let r = mbDone(k, m, v); if r then mbWaited(k); wrWaitR(ds, b2i(r), mbRp(k)) }
   }
 }
 
@@ -352,8 +391,8 @@ function ext_wait_ready() = {
     },
     K_wait("mbtry", _) => {
       let k = at(t_wd[t], 0);
-      let m : list(string) = if at(t_wd[t], 1) == 1 then [|"parity"|] else [||];
-      if mbHas(k) & mbDone(k, m, at(t_wd[t], 2)) then { mbWaited(k); wrWait(t_wx[t], 1); t_cont[t] = K_none(); true } else false
+      let m : list(string) = pend_append(if at(t_wd[t], 1) == 1 then [|"parity"|] else [||], if at(t_wd[t], 3) == 1 then [|"phase_type::conditional"|] else [||]);
+      if mbHas(k) & mbDone(k, m, at(t_wd[t], 2)) then { mbWaited(k); wrWaitR(t_wx[t], 1, mbRp(k)); t_cont[t] = K_none(); true } else false
     },
     _ => ext_wait_ready2()
   }
@@ -370,6 +409,34 @@ function cpSrcN(n, rest, hint) = match rest {
   [|_|] if hint => n,
   XS(SI(x)) :: _ => min_int(x, n),
   x :: _ => if regW(x) == 1 then (if rdu32(x) == 0 then n else 0) else min_int(rdu32(x), n)
+}
+
+/* the data inspection of .report_mechanism (PTX ISA 9.4 9.7.10.28.1.3, Table 33) on the n bytes v copied from global
+ * memory: .per_16bytes::P "A sampled element from the aligned 16 byte chunk of the source global memory is matched
+ * with the Matching bit-pattern" (FP32 0x80000000, FP16 0x8000, FP8 0x80, FP4 0x8): which element is sampled is not
+ * given; the model samples the first (lowest-addressed) element of each chunk.  .per_element::ff: "Each element is
+ * matched", 1-byte granularity: a byte 0xff matches.  Any match issues one report-on. */
+/* (w, pattern) of the .per_16bytes mechanisms (element width in bits), (-1, 255) for .per_element::ff, (0, 0) without
+ * inspection */
+val repPat : list(string) -> (int, int)
+function repPat(m) = {
+  let pre = "mbarrier::report::validity::";
+  if has(m, concat_str(pre, "per_element::ff")) then (-1, 255)
+  else if has(m, concat_str(pre, "per_16bytes::80000000")) then (32, 2147483648)
+  else if has(m, concat_str(pre, "per_16bytes::8000")) then (16, 32768)
+  else if has(m, concat_str(pre, "per_16bytes::80")) then (8, 128)
+  else if has(m, concat_str(pre, "per_16bytes::8")) then (4, 8)
+  else (0, 0)
+}
+val repHit : (list(string), int, int) -> bool
+function repHit(m, v, n) = {
+  let (w, pat) = repPat(m);
+  var hit : bool = false;
+  if w == -1 then {
+    foreach (i from 0 to (n - 1)) if land_int(asr_int(v, 8 * i), 255) == 255 then hit = true
+  } else if w > 0 then
+    foreach (c from 0 to (tdiv_int(n, 16) - 1)) if land_int(asr_int(v, 128 * c), mask(w)) == pat then hit = true;
+  hit
 }
 
 /* #bulkTx(Mb, N): complete-tx of N bytes on an existing mbarrier */
@@ -552,7 +619,13 @@ function exec_async(o, ops) = {
         var ms : list(loc) = match bulkMbar(rest) { Some(a) => bulkLocs(ea(a, cl), mk, isMc(m)), None() => [||] };
         while is_cons(ds) & is_cons(ms) & not_bool(stuck) do {
           match (ds, ms) {
-            (dl :: dr, ml :: mr) => { let _ = memop_do(dl, WrOp(n, v)); if not_bool(stuck) then bulkTx(ml, n); ds = dr; ms = mr },
+            (dl :: dr, ml :: mr) => {
+              let _ = memop_do(dl, WrOp(n, v));
+              /* the report-on precedes the complete-tx that may complete the phase */
+              if not_bool(stuck) & has(m, "global") & repHit(m, v, n) then mbReportOn(mbKey(ml));
+              if not_bool(stuck) then bulkTx(ml, n);
+              ds = dr; ms = mr
+            },
             _ => ()
           }
         };
