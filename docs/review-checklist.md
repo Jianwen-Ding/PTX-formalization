@@ -37,8 +37,9 @@ the reference for correctness.
 - [x] `clusterlaunchcontrol.try_cancel … .multicast::cluster::all` writes the response and signals the mbarrier only in
       the issuing CTA. Checked against §9.7.14.18: the model writes addr and signals mbar in every CTA of the cluster
       (tests/clc-multicast.ptx).
-- [ ] `sail/common/io.c`: addresses wrap at 2^64 (`ad + i`), keys outside [0, 2^64) are dropped; `calloc`/`realloc`
-      results unchecked.
+- [x] `sail/common/io.c`: `calloc` / `realloc` / `strdup` results are checked (an allocation failure stops the run with
+      "out of memory" instead of crashing or losing data).  Kept by design: byte addresses wrap at 2^64 (`ad + i`), as
+      64-bit PTX addresses do; keys outside [0, 2^64) read 0 and are not written (the model checks its addresses first).
 - [x] `docs/prior-work.md` (tcgen05.cp decompression) said 4-bit values land in the low bits; Figure 195 puts them in
       bits 2–5, as the code does (doc corrected; the K header is obsolete with the K semantics).
 - [ ] `.ashift` with `.sp`: decide the reading (see table) and document it.
