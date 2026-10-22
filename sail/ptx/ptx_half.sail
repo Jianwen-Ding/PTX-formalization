@@ -89,8 +89,11 @@ function gx_half(o, ops) = {
           wr(d, pack32(bin(op, m, F32, up32(lt, lane16(va, 0)), lane32(vx, 0)), bin(op, m, F32, up32(lt, lane16(va, 1)), lane32(vx, 1)))); true
         } else if isNarrowPair(dt) & ty_eq(aty, f32x2) & ty_eq(ct, f32x2) & has([|"add", "sub", "mul"|], op) then {
           let va = rd(a, aty); let vx = rd(x, ct); let lt = laneTyH(dt);
-          wr(d, pack16(cvt([|"rz"|], lt, F32, bin(op, withRz(m), F32, lane32(va, 0), lane32(vx, 0))),
-                       cvt([|"rz"|], lt, F32, bin(op, withRz(m), F32, lane32(va, 1), lane32(vx, 1))))); true
+          /* .ftz "flushes subnormal inputs and results to sign-preserving zero" (9.7.3, 9.7.4): also the f16 result */
+          let fz = has(m, "ftz");
+          let r0 = cvt([|"rz"|], lt, F32, bin(op, withRz(m), F32, lane32(va, 0), lane32(vx, 0)));
+          let r1 = cvt([|"rz"|], lt, F32, bin(op, withRz(m), F32, lane32(va, 1), lane32(vx, 1)));
+          wr(d, pack16(if fz then flushB(r0, fw(lt)) else r0, if fz then flushB(r1, fw(lt)) else r1)); true
         } else if op == "mul" & isNarrowPair(dt) & ty_eq(dt, aty) & isNarrowPair(ct) & not_bool(ty_eq(dt, ct)) then {
           let va = rd(a, aty); let vx = rd(x, ct); let lt = laneTyH(dt); let lc = laneTyH(ct);
           wr(d, pack16(bin("mul", m, lt, lane16(va, 0), cvt([||], lt, lc, lane16(vx, 0))),

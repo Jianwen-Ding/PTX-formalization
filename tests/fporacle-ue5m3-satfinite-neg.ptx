@@ -1,0 +1,35 @@
+// cvt.satfinite to .ue5m3x2 of a negative input whose magnitude exceeds MAX_NORM (found by scripts/fporacle):
+// PTX ISA 9.4 9.7.10.24 .satfinite: "If the absolute value of input (ignoring sign) is greater than MAX_NORM of the
+// specified destination format, then the result is sign-preserved MAX_NORM of the destination format and a positive
+// MAX_NORM in .ue8m0x2 and .ue5m3x2 for which the destination sign is not supported."  ue5m3 MAX_NORM = 0xfe
+// (1.75 * 2^16).  The model returns 0x00 for these lanes (it clamps every negative ue5m3 input to zero first), while
+// it already gives the positive MAX_NORM 0xfe for .ue8m0x2 (last line, a passing control).
+.version 9.4
+.target sm_107a
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %a, %b, %p; .reg .b16 %h<5>; .reg .b8 %s;
+    ld.param.u64 %o, [po];
+    // -inf, -2^17
+    mov.b32 %a, 0xff800000; mov.b32 %b, 0xc8000000;
+    cvt.rn.satfinite.ue5m3x2.f32 %h0, %a, %b;                  // 0xfefe
+    // -2^17, 2.0
+    mov.b32 %a, 0xc8000000; mov.b32 %b, 0x40000000;
+    cvt.rz.satfinite.ue5m3x2.f32 %h1, %a, %b;                  // 0xfe80
+    // f16x2 {-inf, 1.0}
+    mov.b32 %p, 0xfc003c00;
+    cvt.rp.satfinite.ue5m3x2.f16x2 %h2, %p;                    // 0xfe78
+    // bf16x2 {-inf, -2^17} with a scale factor of 1 (0x7f)
+    mov.b32 %p, 0xff80c800; mov.b16 %h4, 0x7f; cvt.u8.u16 %s, %h4;
+    cvt.rn.satfinite.scaled::n1::ue8m0.ue5m3x2.bf16x2 %h3, %p, %s;   // 0xfefe
+    // control: .ue8m0x2 already saturates to the positive MAX_NORM
+    mov.b32 %a, 0xff800000; mov.b32 %b, 0x40000000;
+    cvt.rz.satfinite.ue8m0x2.f32 %h4, %a, %b;                  // 0xfe80
+    st.global.v4.u16 [%o], {%h0, %h1, %h2, %h3};
+    st.global.u16 [%o+8], %h4;
+    ret;
+}
+.buffer OUT .u16 [5];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u16 = { 0xfefe, 0xfe80, 0xfe78, 0xfefe, 0xfe80 };

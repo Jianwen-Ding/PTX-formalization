@@ -1,0 +1,26 @@
+// cvt ... .scaled::n1::ue8m0 down-conversions of -0.0 (found by scripts/fporacle).  PTX ISA 9.4 9.7.10.24:
+// ".scaled::n1::ue8m0: When qualifier .scaled::n1::ue8m0 is specified, subnormal values for inputs a and b are flushed
+// to zero before conversion."  -0.0 is not a subnormal value, and the conversion keeps the sign of a zero (only .pzo
+// forces +0.0), so -0.0 converts to the negative zero of the destination (e4m3 / e5m2 0x80, e2m1 0x8).  The model's
+// flush replaces every input of magnitude below the smallest normal, zeros included, by +0.0.
+.version 9.4
+.target sm_107a
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %a, %b, %p; .reg .b16 %h<3>, %t; .reg .b8 %s, %q;
+    ld.param.u64 %o, [po];
+    mov.b16 %t, 0x7f; cvt.u8.u16 %s, %t;                       // scale factor 2^0
+    mov.b32 %a, 0x80000000; mov.b32 %b, 0x3f800000;            // -0.0, 1.0
+    cvt.rn.satfinite.scaled::n1::ue8m0.e4m3x2.f32 %h0, %a, %b, %s;      // 0x8038
+    cvt.rz.satfinite.scaled::n1::ue8m0.e2m1x2.f32 %q, %a, %b, %s;       // 0x82
+    mov.b32 %p, 0x80003f80;                                    // bf16x2 {-0.0, 1.0}
+    cvt.rn.satfinite.scaled::n1::ue8m0.e5m2x2.bf16x2 %h1, %p, %s;       // 0x803c
+    cvt.u16.u8 %h2, %q;
+    st.global.v2.u16 [%o], {%h0, %h1};
+    st.global.u16 [%o+4], %h2;
+    ret;
+}
+.buffer OUT .u16 [3];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u16 = { 0x8038, 0x803c, 0x0082 };

@@ -120,7 +120,8 @@ val scMul : (fv, int) -> fv
 function scMul(x, s) = if s == 255 then FV_NaN() else scaleP2(x, s - 127)
 val flushIn : (bool, fv, int) -> fv
 function flushIn(b, x, mn) =
-  if b & not_bool(fv_is_nan(x)) & not_bool(fv_is_inf(x)) & fv_cmp(fv_abs(x), FV_Fin(false, 1, mn)) < 0 then FV_Fin(false, 0, 0) else x
+  if b & not_bool(fv_is_nan(x)) & not_bool(fv_is_inf(x)) & not_bool(fv_is_zero(x)) & fv_cmp(fv_abs(x), FV_Fin(false, 1, mn)) < 0
+  then FV_Fin(false, 0, 0) else x
 /* the smallest normal exponent of a .f16x2 / .bf16x2 source lane: .scaled::n1::ue8m0 "subnormal values for inputs a
    and b are flushed to zero before conversion" (PTX ISA 9.4 9.7.10.24) at the source's own subnormal range */
 val halfMin : ty -> int
@@ -130,7 +131,15 @@ function mrnd(m) = if has(m, "rz") then 1 else if has(m, "rp") then 2 else if ha
 val pzoFix : (bool, string, int) -> int
 function pzoFix(p, k, c) = if p & k != "ue5m3" & c == pow2(mBits(k) - 1) then 0 else c
 val miniCvt : (list(string), string, fv, int) -> int
-function miniCvt(m, k, x, s) = pzoFix(has(m, "pzo"), k, miniFromR(k, scDiv(x, s), has(m, "relu"), mrnd(m)))
+function miniCvt(m, k, x, s) = {
+  let y = scDiv(x, s);
+  /* .satfinite: "If the absolute value of input (ignoring sign) is greater than MAX_NORM ... a positive MAX_NORM in
+     .ue8m0x2 and .ue5m3x2 for which the destination sign is not supported" (PTX ISA 9.4 9.7.10.24): also for a negative
+     input beyond MAX_NORM (without .relu, which makes it 0 first) */
+  if k == "ue5m3" & has(m, "satfinite") & not_bool(has(m, "relu")) & fv_sign(y) & not_bool(fv_is_nan(y))
+     & fv_cmp(fv_abs(y), miniMag(k, mTop(k))) > 0 then mTop(k)
+  else pzoFix(has(m, "pzo"), k, miniFromR(k, y, has(m, "relu"), mrnd(m)))
+}
 val scHi : (list(string), int) -> int
 function scHi(m, s) = if has(m, "scaled::n2::ue8m0") then land_int(asr_int(s, 8), 255) else land_int(s, 255)
 val scLo : (list(string), int) -> int
