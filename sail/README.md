@@ -34,7 +34,11 @@ visible at the next `wait`); status / exit code / message.
 `if/else/while_{i,f}cmp`, `pop_exec`, `jmp_exec_any/none`, `icmp_ballot fcmp_ballot`,
 `simd_shuffle{,_xor,_up,_down}`, `device_load/store` (with the `signed|unsigned` index operand),
 `threadgroup_load/store`, `device_atomic threadgroup_atomic`, `wait`, `threadgroup_barrier`, `memory_barrier`,
-`stop`, `trap` (see "G14C additions" below).
+`stop`, `trap` (see "G14C additions" below), and the rest of Mesa's compute opcodes (see "Mesa compute opcodes"
+below): `floor ceil trunc rint rsqrt rsqrt_special sin_pt_1 sin_pt_2 log2 exp2`, `convert`, `extr`, `intl`, the quad
+and SIMD reductions and exclusive prefixes (`quad_`, `simd_`, `quad_prefix_`, `simd_prefix_` + `and or xor iadd fadd
+fmul min.s max.s min.u max.u min.f max.f`), `quad_shuffle{,_xor,_up,_down}`, `icmp_quad_ballot fcmp_quad_ballot`,
+`stack_load stack_store stack_adjust`, every device memory format, and threadgroup `cmpxchg`.
 Every instruction follows the corresponding K rule (lane loop over the pre-instruction state, `opv`
 operand views, the exact `cmpv` condition semantics including its treatment of integer conditions
 on float compares, `stkNew` stack arithmetic over all lanes, loads captured at issue and written at
@@ -56,7 +60,8 @@ every instruction above: `mov_imm` (16/32-bit), `mov` (bitop alias), `get_sr`, `
 `fmadd32/16`, `rcp`, `icmpsel`, `fcmpsel`, `if/else/while_icmp/fcmp`, `pop_exec`,
 `jmp_exec_any/none`, `icmp_ballot`, `fcmp_ballot`, the four shuffles, `device_load/store`,
 `threadgroup_load/store`, `atomic`, `threadgroup_atomic`, `wait`, `threadgroup_barrier`, `memory_barrier`, `stop`,
-`trap`.
+`trap`, and the encodings of the Mesa compute opcodes above (Mesa's `agx_pack.c` and the LLVM backend's
+`G13Instructions.td`).
 Short / long forms are chosen like applegpu (long iff a bit beyond the short form is set).  Operand
 forms that applegpu's pseudo-code calls UNDEFINED (odd register numbers for 32-bit operands, ...) or
 that are ambiguous are rejected by the decoder, so `encdec` is a bijection on what it accepts.
@@ -100,7 +105,8 @@ constant threadgroup offsets that are multiples of 4 * size in the immediate ind
 generates (`idx` imm) and `mccheck.py` / `simcheck.py` cover.
 
 Remaining, documented differences: `rcp` is the correctly rounded reciprocal (the hardware's approximation is within
-one ulp; `simcheck.py` runs `agx_run` without its recorded tables); the model's threadgroup memory has no size (the
+one ulp; `simcheck.py` runs `agx_run` without its recorded tables), and so are `rsqrt`, `rsqrt_special`, `log2`,
+`exp2` and `sin_pt_2` (below); the model's threadgroup memory has no size (the
 hardware reads 0 / drops stores beyond the allocation); reading a load destination before its `wait` gives the old
 value in the model, while `agx_run` completes wait-group-0 loads at once (not observed on the hardware).
 
@@ -154,13 +160,68 @@ Not modelled, or left undefined (the model stops with an error rather than guess
 * `umin64` / `umax64` with a destination when the source equals the memory word (no tested lane had equal values), and
   at an address that is not 8-byte aligned (the hardware tests used even indices with aligned bases).  64-bit min / max
   under contention and with a register base were not measured either; the model treats them like the other atomics.
-* Threadgroup atomics keep the ten 32-bit operations (no threadgroup float add was found among 19 gap bits; its
-  `cmpxchg` and ops 11-15 are not modelled).
+* Threadgroup atomics have the ten 32-bit operations and `cmpxchg` (no threadgroup float add was found among 19 gap
+  bits; ops 11-15 are not modelled).
 * The 31 undecoded opcodes with low bits `0b11` (`2026-10-11-opcode-descriptions`): 6-byte true no-ops, but only for
   the tested operand bytes, so the decoder does not accept them (a disassembler must still skip 6 bytes); likewise
   the 16 "ends" opcodes, 0x18 and 0x78.  The 0x78 barrier (4 aligned SIMD groups) is not modelled.
 * The ordering memory barriers and fences provide between cores, SIMD groups and threadgroups: the model has one SIMD
   group and one sequential memory.
+
+### Mesa compute opcodes (2026-10-21)
+
+Every non-graphics opcode of Mesa's packer, with the semantics of the AGX Performance Simulator's functional model
+(`func.rs`, `fsem.rs`, fitted on M2 Max recordings) and the measurements of Apple-M2-Playground:
+
+* **Float unary ops** (`rcp`'s encoding with another op field; `ceil`, `trunc`, `rint` exist only in the long form):
+  the source as in the other 32-bit float forms (fp32 denormals read as zero, 16-bit registers binary16), `.sat`, and a
+  16-bit destination rounds the binary32 result again (as measured for all fp16 inputs).  `floor ceil trunc rint` are
+  exact, keeping the sign on zero results.  `rsqrt` (+-0 -> +-inf, +inf -> 0), `rsqrt_special` (+-0 and +inf -> 1),
+  `log2` (+-0 -> -inf), `exp2` (x < -126 -> +0) and `sin_pt_2` (sin(pi x / 2) / x, pi / 2 at 0, 1 at +-1) are the
+  correctly rounded binary32 values, computed in 192-bit fixed point (exact for powers of two and integers),
+  negative / out-of-range sources NaN; `sin_pt_1` is its exact piecewise-linear step.  **Approximated**: the hardware
+  computes these with recorded tables (rcp, rsqrt, rsqrt_special), a truncated fixed-point log2, an input-quantised
+  exp2 (|x| read with 23 fraction bits) and a table for sin_pt_2, all within about one ulp of the model; `agx_run`
+  without its tables (as `simcheck.py` runs it) computes the model's values.  `agx_run` ignores `.sat` on the four
+  roundings; the model applies it like every float op (Mesa folds `fsat` into them), so `simcheck.py` does not
+  generate that combination.
+* **`convert`** (`2026-10-16-conversions`, every input class over 1.37 billion inputs): mode = width << 2 | rte << 1 |
+  signed; the field applegpu and LLVM call `round` is the direction.  Float -> integer saturates, NaN -> 0, results
+  masked to the width; integer -> float takes the low `width` bits, rounds to binary32 (binary16 for a 16-bit
+  destination), round-toward-zero still overflowing to inf at 65536 into binary16.  Modes 2, 3 and 12-63 are rejected
+  (never run, on the playground's do-not-run list).  Assembly: `convert.f2i.s16.rte D, A`.
+* **`extr`** (bfi's encoding, sub-op 1): `(B:A >> (C & 127)) & mask`; **`intl`**: the low 16 bits of A and B
+  interleaved (A in the even bits).
+* **Reductions and prefixes** (`agx_run` `cross_lane`): combined at 16 bits for 16-bit sources (fp16, denormals kept),
+  else at 32 (64-bit sources read as their low word; fp32 fadd / fmul flush denormals); pairwise trees, the quad prefix
+  chain and the Sklansky SIMD prefix, exclusive (lane 0 gets the op's identity); inactive lanes skipped, except as NaN
+  for `min.f` / `max.f`.  `agx_run` (and applegpu) lack `quad_prefix_and/or/xor/min/max` and `simd_prefix_min.f/max.f`:
+  the model applies the same rules, not checked against the simulator.
+* **Quad shuffles** read lane q + j of the quad (j from the low 16 bits of B), the lane's own A when j leaves the quad;
+  **quad ballots** give each lane its quad's 4-bit mask.
+* **Stack**: `stack_adjust N` (signed 16 bits, words per lane) allocates the SIMD group's stack, laid out as measured on
+  the M2 Max: byte offset o of lane l at (N - 1 - o / 4) * 128 + 4 * l + o % 4 of the allocation.  `stack_load` /
+  `stack_store` (`u8 u16 u32`, element masks and tuples as for device accesses, an immediate or register byte offset,
+  loads visible at `wait`) access the lane's bytes; that is `agx_run`'s per-lane stack within the allocation.
+* **Device formats**: `f16` (16 bits, unconverted), `u8norm s8norm u16norm s16norm` (`agx_run`'s `norm_load` /
+  `norm_store`: loads round once to binary32 / binary16, stores clamp, NaN -> 0, scale and round halves away from zero),
+  `u6` = bits 44-45 on loads and stores (3 is Mesa's coherent access; no effect in one sequential memory).
+* **Threadgroup `cmpxchg`** (op 3, `2026-10-17-tg-atomic-followup`): S is the pair new value, compare value.
+
+Decoded but undefined (the model stops with an error; not measured): device accesses with the packed formats
+(`rgb10a2 srgba8 rg11b10f rgb9e5` and the `.rtz` ones); stack accesses outside the allocation, a second
+`stack_adjust` and a non-positive one (Mesa's fragment-shader cleanup); and three operand forms Mesa's packer accepts
+(its compiler aligns them) that applegpu and `agx_run` read differently from what LLVM allows:
+* 32-bit uniforms at an odd 16-bit index (`uN.odd`, AST view 4): applegpu / `agx_run` read uN, LLVM rejects the
+  encoding (applegpu's `CmpselSrcDesc` asserts on it in select operands);
+* 64-bit `imadd` multiplicands (A or B a register pair): applegpu / `agx_run` read the low register, LLVM rejects them;
+* 32-bit `simd_shuffle` lane indices: applegpu / `agx_run` read the 16-bit register of the same index, LLVM rejects
+  them.
+
+Float immediates keep their abs / neg bits (`2.5.abs.neg`, AST `OFMod`), as applegpu and `agx_run` read them; LLVM's
+disassembler drops the bits from its text (the instruction re-encodes correctly) and its assembler has no syntax for
+them.  Memory register tuples that run past r127h are rejected (applegpu and LLVM cannot name them; one `local_load`
+of the g13x corpus has one).
 
 ### Differential tests (`sail/agx/gen`)
 
@@ -169,12 +230,35 @@ Not modelled, or left undefined (the model stops with an error rather than guess
   saturation, shifts, formats, masks, signedness, wait groups, push counts) one factor at a time, plus random forms.
 * `mccheck.py`: the LLVM AGX MC layer against `encdec`: applegpu disassembly of the Sail bytes, `llvm-mc --disassemble`
   (length, text, re-encoding) and `llvm-mc` assembly of the expected text, for the generated forms, random
-  instructions and random words the Sail model decodes.
+  instructions and random words the Sail model decodes.  The documented LLVM differences (odd 32-bit uniforms, 64-bit
+  imadd multiplicands, 32-bit simd_shuffle indices, float immediate modifiers; above) are counted as `known`.
+  Seed 1 (`-n 3000 -w 3000 --reps 2`, 2026-10-21): 10,449 instructions, 8,596 forms, all agree in every check;
+  1,009 known (492 odd uniforms, 5 of them in select operands where applegpu asserts, 109 imadd multiplicands, 54 lane
+  indices, 349 float immediate modifiers).
 * `simcheck.py`: random programs (ALU, nested if/else/while with exec-mask jumps, device/threadgroup memory and
-  atomics), encoded by the Sail model, run on the Sail model and on `agx_run`; final registers and memory compared.
-  `--tests` also runs Sail-dialect tests (`sail/agx/tests/hw-semantics.agx`, `atomic-variants.agx`) on `agx_run`.
-  Device atomics cover every op but `end11`..`end15` and every mode; `umin64` / `umax64` without destination at even
-  indices, `fadd` with a destination (the forms the model defines).
+  atomics, stack accesses after a `stack_adjust` prologue), encoded by the Sail model, run on the Sail model and on
+  `agx_run`; final registers and memory compared.  `--tests` also runs Sail-dialect tests (`sail/agx/tests/*.agx`) on
+  `agx_run`.  Device atomics cover every op but `end11`..`end15` and every mode; `umin64` / `umax64` without
+  destination at even indices, `fadd` with a destination (the forms the model defines).  Not generated: the undefined
+  forms, `.sat` on the roundings and the reductions `agx_run` lacks (above).  Seed 1 (`-n 400 -l 40`): 400 / 400
+  programs agree, 11,893 forms executed; the tests hw-semantics, binary-alu, atomic-variants, funop, formats, convert
+  and stack pass on `agx_run`.
+* `xcheck_applegpu.py` (`-n 3000`): every test and random instruction disassembles in applegpu as the model prints it;
+  of 3,000 random words, 0 decode differently.
+
+* `mesacheck.py`: the Mesa subset of the model. Mesa's asahi compiler emits only the forms that
+  `llvm/utils/agx-mesa-isa/mesa_isa.py` (LLVM AGX fork) reads off its packer; strict mode (agx-strict: the backend's
+  `-mattr=+agx-strict`, the simulator's `--agx-strict`) allows only those. Forward: every generated instruction is
+  encoded by the model and classified (seed 1, `--reps 2 -n 2000`: 8,316 instructions, 7,266 forms; 5,515 forms Mesa
+  emits for g13 and g14, 1,751 it never does: saturating `imadd`/`imsub`, `iadd`/`imad` shifts above 4, sign extension
+  of immediates and 64-bit sources, float modifiers on ballot sources, memory masks of 0 and non-contiguous masks, the
+  short device and threadgroup memory forms, `u6` values 1 and 2, memory barrier encodings Mesa does not use, indexed
+  threadgroup atomics and the G14 atomic modes). Backward: the instructions of the simulator's
+  `rust/src/isa/mesa_corpus.txt`, packed by Mesa's own `agx_pack.c` with random operands, are decoded by the model:
+  **all 440 non-graphics g14 instructions (85 opcodes) and all 405 g13 ones (85 opcodes) decode at their length**.
+  The opcodes left out are graphics (tile, varyings, textures, images, depth/stencil, sample masks, `dfdx`/`dfdy`,
+  `uniform_store`, `stack_map`/`stack_unmap`, `doorbell`).  For the multi-cluster corpora, g14d decodes 433 / 433 and
+  g13x 421 / 422 (one `local_load` whose register tuple runs past r127h).
 
 ### PTX differential tests (`sail/ptx/gen`)
 

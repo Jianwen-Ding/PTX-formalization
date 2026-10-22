@@ -28,6 +28,7 @@ val rd_op : unit -> aop
 function rd_op() = match tok_str() {
   "R" => OReg(rd_reg()),
   "I" => OImm(tok_int()),
+  "M" => { let b = tok_int(); let ab = rd_bool(); let ng = rd_bool(); OFMod(b, ab, ng) },
   _ => OFImm(tok_int())
 }
 
@@ -49,7 +50,11 @@ function rd_cc() = match tok_str() {
 }
 
 val rd_fmt : unit -> afmt
-function rd_fmt() = match tok_str() { "u8" => F_U8, "u16" => F_U16, _ => F_U32 }
+function rd_fmt() = match tok_str() {
+  "u8" => F_U8, "u16" => F_U16, "f16" => F_F16, "u8norm" => F_U8NORM, "s8norm" => F_S8NORM, "u16norm" => F_U16NORM,
+  "s16norm" => F_S16NORM, "rgb10a2" => F_RGB10A2, "srgba8" => F_SRGBA8, "rg11b10f" => F_RG11B10F, "rgb9e5" => F_RGB9E5,
+  "rg11b10f.rtz" => F_RG11B10F_RTZ, "rgb9e5.rtz" => F_RGB9E5_RTZ, _ => F_U32
+}
 
 val rd_aop : unit -> aaop
 function rd_aop() = match tok_str() {
@@ -71,6 +76,9 @@ function rd_instr() = match tok_str() {
   "BITOP" => { let tt = tok_int(); let d = rd_reg(); let a = rd_op(); let b = rd_op(); BITOP(tt, d, a, b) },
   "BFI" => { let m = tok_int(); let d = rd_reg(); let a = rd_op(); let b = rd_op(); let c = rd_op(); BFI(m, d, a, b, c) },
   "BFEIL" => { let m = tok_int(); let d = rd_reg(); let a = rd_op(); let b = rd_op(); let c = rd_op(); BFEIL(m, d, a, b, c) },
+  "EXTR" => { let m = tok_int(); let d = rd_reg(); let a = rd_op(); let b = rd_op(); let c = rd_op(); EXTR(m, d, a, b, c) },
+  "INTL" => { let d = rd_reg(); let a = rd_op(); let b = rd_op(); INTL(d, a, b) },
+  "CONVERT" => { let m = tok_int(); let i2f = rd_bool(); let d = rd_reg(); let a = rd_op(); CONVERT(m, i2f, d, a) },
   "ASR" => { let d = rd_reg(); let a = rd_op(); let b = rd_op(); ASR(d, a, b) },
   "IUNOP" => {
     let o : iunop = match tok_str() { "popcount" => U_popcount, "bitrev" => U_bitrev, _ => U_ffs };
@@ -82,6 +90,13 @@ function rd_instr() = match tok_str() {
   },
   "FMADD" => { let h = rd_bool(); let st = rd_bool(); let d = rd_reg(); let a = rd_op(); let b = rd_op(); let c = rd_op(); FMADD(h, st, d, a, b, c) },
   "RCP" => { let st = rd_bool(); let d = rd_reg(); let a = rd_op(); RCP(st, d, a) },
+  "FUNOP" => {
+    let o : funop = match tok_str() {
+      "floor" => FU_floor, "ceil" => FU_ceil, "trunc" => FU_trunc, "rint" => FU_rint, "rsqrt" => FU_rsqrt,
+      "rsqrt_special" => FU_rsqrt_special, "sin_pt_1" => FU_sin_pt_1, "sin_pt_2" => FU_sin_pt_2, "log2" => FU_log2, _ => FU_exp2
+    };
+    let st = rd_bool(); let d = rd_reg(); let a = rd_op(); FUNOP(o, st, d, a)
+  },
   "CMPSEL" => { let f = rd_bool(); let cc = rd_cc(); let d = rd_reg(); let a = rd_op(); let b = rd_op(); let x = rd_op(); let y = rd_op(); CMPSEL(f, cc, d, a, b, x, y) },
   "STACKOP" => {
     let k : stkkind = match tok_str() { "if" => SK_if, "else" => SK_else, _ => SK_while };
@@ -97,6 +112,19 @@ function rd_instr() = match tok_str() {
     let k : shufkind = match tok_str() { "idx" => SH_idx, "xor" => SH_xor, "up" => SH_up, _ => SH_down };
     let d = rd_reg(); let a = rd_op(); let b = rd_op(); SHUFFLE(k, d, a, b)
   },
+  "XLANE" => {
+    let k : xkind = match tok_str() { "quad" => XK_quad, "simd" => XK_simd, "quad_prefix" => XK_quad_prefix, _ => XK_simd_prefix };
+    let o : xop = match tok_str() {
+      "and" => XO_and, "fadd" => XO_fadd, "or" => XO_or, "fmul" => XO_fmul, "xor" => XO_xor, "min.f" => XO_fmin,
+      "max.f" => XO_fmax, "iadd" => XO_iadd, "min.s" => XO_smin, "max.s" => XO_smax, "min.u" => XO_umin, _ => XO_umax
+    };
+    let d = rd_reg(); let a = rd_op(); XLANE(k, o, d, a)
+  },
+  "QSHUFFLE" => {
+    let k : shufkind = match tok_str() { "idx" => SH_idx, "xor" => SH_xor, "up" => SH_up, _ => SH_down };
+    let d = rd_reg(); let a = rd_op(); let b = rd_op(); QSHUFFLE(k, d, a, b)
+  },
+  "QBALLOT" => { let f = rd_bool(); let cc = rd_cc(); let d = rd_reg(); let a = rd_op(); let b = rd_op(); QBALLOT(f, cc, d, a, b) },
   "DEVMEM" => {
     let st = rd_bool(); let f = rd_fmt(); let m = tok_int(); let r = rd_reg(); let p = rd_pair(); let i = rd_op();
     let sg = rd_bool(); let s = tok_int(); let g = tok_int(); let u6 = tok_int();
@@ -105,6 +133,8 @@ function rd_instr() = match tok_str() {
   "TGMEM" => { let st = rd_bool(); let f = rd_fmt(); let m = tok_int(); let r = rd_reg(); let b = rd_op(); let i = rd_op(); let s = tok_int(); TGMEM(st, f, m, r, b, i, s) },
   "DEVATOM" => { let o = rd_aop(); let d = rd_adst(); let p = rd_pair(); let i = rd_op(); let sg = rd_bool(); let v = rd_op(); let g = tok_int(); let m = tok_int(); DEVATOM(o, d, p, i, sg, v, g, m) },
   "TGATOM" => { let o = rd_aop(); let d = rd_adst(); let b = rd_op(); let i = rd_op(); let v = rd_op(); TGATOM(o, d, b, i, v) },
+  "STACKMEM" => { let st = rd_bool(); let f = rd_fmt(); let m = tok_int(); let r = rd_reg(); let o = rd_op(); let g = tok_int(); STACKMEM(st, f, m, r, o, g) },
+  "STACK_ADJUST" => STACK_ADJUST(tok_int()),
   "WAIT" => WAIT(tok_int()),
   "TG_BARRIER" => TG_BARRIER(),
   "MEMORY_BARRIER" => { let a = tok_int(); let b = tok_int(); let c = tok_int(); MEMORY_BARRIER(a, b, c) },

@@ -39,10 +39,16 @@ ICC = {"eq": "ueq", "ult": "ult", "ugt": "ugt", "seq": "seq", "slt": "slt", "sgt
 MASKS = {a: ('x' if a & 1 else '') + ('y' if a & 2 else '') + ('z' if a & 4 else '') + ('w' if a & 8 else '') for a in range(16)}
 
 
+# applegpu's / LLVM's names of the convert modes (the direction field prints as rtz / rte)
+CONVERT_NAMES = {0: "u8_to_f", 1: "s8_to_f", 4: "f_to_u16", 5: "f_to_s16", 6: "u16_to_f", 7: "s16_to_f", 8: "f_to_u32",
+                 9: "f_to_s32", 10: "u32_to_f", 11: "s32_to_f"}
 SR_NAMES = dict(XA.applegpu.SR_NAMES) if XA is not None else {}
 
 
 def sail_encode(instrs):
+    # the model reads at most 4096 instructions per run
+    if len(instrs) > 1000:
+        return sum((sail_encode(instrs[i:i + 1000]) for i in range(0, len(instrs), 1000)), [])
     code, out, err = agxtest.run_tokens([["I"] + t for t in instrs] + [["X"]])
     printed = [l for l in out.splitlines() if l.startswith(("ENC ", "NOENC "))]
     assert len(printed) == len(instrs), (len(printed), len(instrs), err[-500:])
@@ -56,6 +62,8 @@ def sail_encode(instrs):
 
 
 def sail_decode(words):
+    if len(words) > 1000:
+        return sum((sail_decode(words[i:i + 1000]) for i in range(0, len(words), 1000)), [])
     code, out, err = agxtest.run_tokens([["V", w] for w in words])
     decs = [l for l in out.splitlines() if l.startswith("DEC ")]
     assert len(decs) == len(words), err[-500:]
@@ -94,7 +102,7 @@ def llvm_asm(txt):
 # ---------------------------------------------------------------- expected LLVM text
 def reg_text(f, n, view, hint, sx, ab, ng):
     p = "u" if f else "r"
-    base = {0: "%s%d" % (p, n), 1: "%s%dl" % (p, n), 2: "%s%dh" % (p, n), 3: "%s%d_%s%d" % (p, n, p, n + 1)}[view]
+    base = {0: "%s%d" % (p, n), 1: "%s%dl" % (p, n), 2: "%s%dh" % (p, n), 3: "%s%d_%s%d" % (p, n, p, n + 1), 4: "%s%d" % (p, n)}[view]
     return base + (".cache" if hint == 1 else ".discard" if hint == 2 else "") + (".sx" if sx else "") + (".abs" if ab else "") + \
         (".neg" if ng else "")
 
@@ -121,6 +129,9 @@ class Toks:
         v = self.int()
         if k == "I":
             return str(v)
+        if k == "M":
+            # LLVM prints a float immediate without its modifier bits (and its assembler has no syntax for them)
+            self.int(), self.int()
         return fmt_float(v)
 
 
@@ -171,7 +182,26 @@ def llvm_text(toks):
         if tt in alias:
             return "%s %s, %s, %s" % (alias[tt], reg_text(*d), a, b)
         return "bitop %s, %s, %s, %s" % ("".join(str((tt >> i) & 1) for i in range(4)), reg_text(*d), a, b)
-    if c in ("BFI", "BFEIL"):
+    if c == "XLANE":
+        k, o = T.next(), T.next()
+        d = T.reg()
+        return "%s_%s %s, %s" % (k, o, reg_text(*d), T.op())
+    if c == "QSHUFFLE":
+        k = T.next()
+        d = T.reg()
+        return "quad_shuffle%s %s, %s, %s" % ("" if k == "idx" else "_" + k, reg_text(*d), T.op(), T.op())
+    if c == "QBALLOT":
+        f, cc = T.int(), T.next()
+        d = T.reg()
+        return "%s %s, %s, %s, %s" % ("fcmp_quad_ballot" if f else "icmp_quad_ballot", reg_text(*d), (FCC if f else ICC)[cc], T.op(), T.op())
+    if c == "INTL":
+        d = T.reg()
+        return "intl %s, %s, %s" % (reg_text(*d), T.op(), T.op())
+    if c == "CONVERT":
+        m, i2f = T.int(), T.int()
+        d = T.reg()
+        return "convert %s, %s, %s, %s" % (CONVERT_NAMES[m], reg_text(*d), T.op(), "rte" if i2f else "rtz")
+    if c in ("BFI", "BFEIL", "EXTR"):
         m = T.int()
         d = T.reg()
         ops = [T.op() for _ in range(3)]
@@ -195,6 +225,10 @@ def llvm_text(toks):
         sat = T.int()
         d = T.reg()
         return "rcp%s %s, %s" % (".sat" if sat else "", reg_text(*d), T.op())
+    if c == "FUNOP":
+        o, sat = T.next(), T.int()
+        d = T.reg()
+        return "%s%s %s, %s" % (o, ".sat" if sat else "", reg_text(*d), T.op())
     if c == "CMPSEL":
         f, cc = T.int(), T.next()
         d = T.reg()
@@ -226,10 +260,10 @@ def llvm_text(toks):
         i = T.op()
         sg, s, g, u6 = T.int(), T.int(), T.int(), T.int()
         base = "%s%d_%s%d" % ("u" if pf else "r", lo, "u" if pf else "r", hi)
-        F = {"u8": "i8", "u16": "i16", "u32": "i32"}[fmt]
+        F = {"u8": "i8", "u16": "i16", "u32": "i32"}.get(fmt, fmt)
         return "%s %d, %s, %s, %s, %s, %s, %s%s%s" % ("device_store" if st else "device_load", g, F, MASKS[mask] or "0",
                                                      tuple_text(r, bin(mask).count("1")), base, i, "signed" if sg else "unsigned",
-                                                     ", lsl %d" % s if s else "", ", %d" % u6 if st and u6 else "")
+                                                     ", lsl %d" % s if s else "", ", %d" % u6 if u6 else "")
     if c == "TGMEM":
         st, fmt, mask = T.int(), T.next(), T.int()
         r = T.reg()
@@ -253,6 +287,15 @@ def llvm_text(toks):
         b, i, v = T.op(), T.op(), T.op()
         A = {"min": "umin", "max": "umax"}.get(o, o)
         return "threadgroup_atomic %s, %s, %s, %s, %s" % (A, d, b, i, v)
+    if c == "STACKMEM":
+        st, fmt, mask = T.int(), T.next(), T.int()
+        r = T.reg()
+        o, g = T.op(), T.int()
+        F = {"u8": "i8", "u16": "i16", "u32": "i32"}[fmt]
+        return "%s %d, %s, %s, %s, %s" % ("stack_store" if st else "stack_load", g, F, MASKS[mask] or "0",
+                                          tuple_text(r, bin(mask).count("1")), o)
+    if c == "STACK_ADJUST":
+        return "stack_adjust %d" % (T.int() & 0xffff)
     if c == "WAIT":
         return "wait %d" % T.int()
     if c == "TG_BARRIER":
@@ -268,11 +311,29 @@ def llvm_text(toks):
 
 def norm(s):
     # special-register names in parentheses are comments (LLVM and applegpu name different sets)
-    s = re.sub(r" \([a-z_.]+\)", "", s)
+    s = re.sub(r" \([a-z_.0-9]+\)", "", s)
     return " ".join(s.replace(",", " , ").split())
 
 
 # ---------------------------------------------------------------- the check
+def llvm_known(t):
+    """documented differences between the LLVM AGX MC layer and the Sail model (sail/README.md): the failure kinds
+    expected for this instruction, and why"""
+    regs = agxgen._regs(t)
+    if t[0] == "CMPSEL" and any(r[2] == 4 for r in regs[-2:]):
+        return {"applegpu", "decode", "reencode", "text", "asm"}, \
+            "LLVM rejects 32-bit uniforms at odd 16-bit indices; applegpu's CmpselSrcDesc asserts on them"
+    if any(r[2] == 4 for r in regs):
+        return {"decode", "reencode", "text", "asm"}, "LLVM rejects 32-bit uniforms at odd 16-bit indices"
+    if agxgen.unmeasured(t) == "imadd 64-bit multiplicand":
+        return {"decode", "reencode", "text", "asm"}, "LLVM rejects 64-bit imadd multiplicands"
+    if agxgen.unmeasured(t) == "32-bit lane index":
+        return {"decode", "reencode", "text", "asm"}, "LLVM rejects 32-bit lane indices of simd_shuffle"
+    if "M" in t:
+        return {"asm"}, "LLVM has no syntax for float immediate modifiers (its disassembler drops them)"
+    return set(), None
+
+
 def check(instrs, origin, jobs, verbose, results):
     enc = sail_encode(instrs)
     todo = [(t, e) for t, e in zip(instrs, enc)]
@@ -309,6 +370,9 @@ def check(instrs, origin, jobs, verbose, results):
         a, err = llvm_asm(exp_llvm)
         if a != h:
             out["fails"].append(("asm", "%r assembles to %s, expected %s %s" % (exp_llvm, a, h, err)))
+        kinds, why = llvm_known(t)
+        out["known"] = why if any(k in kinds for k, _ in out["fails"]) else None
+        out["fails"] = [f for f in out["fails"] if f[0] not in kinds]
         return out
 
     with ThreadPoolExecutor(jobs) as ex:
@@ -362,6 +426,12 @@ def main(argv=None):
     print("AGX MC differential test (seed %d): %d instructions encoded by the Sail model (%d forms, %d random, %d decoded words), "
           "%d distinct forms; %d without a Sail encoding" % (a.seed, n, len(forms), len(rnd), n - len(forms) - len(rnd) + len(results["sail-noenc"]),
                                                             len(keys), len(results["sail-noenc"])))
+    known = {}
+    for r in results["checked"]:
+        if r.get("known"):
+            known[r["known"]] = known.get(r["known"], 0) + 1
+    for why, c in sorted(known.items()):
+        print("  known     %6d  %s" % (c, why))
     for kind in ("sail", "applegpu", "decode", "reencode", "text", "asm"):
         bad = by.get(kind, [])
         print("  %-9s %6d / %d agree (%.2f%%)" % (kind, n - len(bad), n, 100.0 * (n - len(bad)) / max(n, 1)))

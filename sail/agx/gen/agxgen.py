@@ -19,6 +19,8 @@ import random
 import struct
 
 R32, R16L, R16H, R64, U32, U16L, U16H, IMM, FIMM = "r32", "r16l", "r16h", "r64", "u32", "u16l", "u16h", "imm", "fimm"
+# a 32-bit uniform at an odd 16-bit index (view 4: Mesa's packer can produce it, its value is not measured)
+U32O = "u32o"
 
 ICCS = ["eq", "ult", "ugt", "seq", "slt", "sgt", "ne", "uge", "ule", "sne", "sge", "sle"]
 FCCS = ["feq", "flt", "fgt", "fltn", "fge", "fle", "fgtn", "fnequ", "fnlt", "fngt", "fnltn", "fnge", "fnle", "fngtn"]
@@ -32,6 +34,14 @@ DEV_PAIR = ("cmpxchg", "umin64", "umax64")
 DEV_MODES = dict({o: (0, 1, 2, 3) for o in AOPS}, sub=(0, 2), cmpxchg=(0, 2), fadd=(1, 3), umin64=(3,), umax64=(1,),
                  **{"end%d" % n: (0,) for n in range(11, 16)})
 FMTS = ["u8", "u16", "u32"]
+DEV_FMTS = FMTS + ["f16", "u8norm", "s8norm", "u16norm", "s16norm", "rgb10a2", "srgba8", "rg11b10f", "rgb9e5", "rg11b10f.rtz",
+                   "rgb9e5.rtz"]
+# formats whose device accesses the model does not define (they stop it with an error)
+PACKED_FMTS = ["rgb10a2", "srgba8", "rg11b10f", "rgb9e5", "rg11b10f.rtz", "rgb9e5.rtz"]
+XKINDS = ["quad", "simd", "quad_prefix", "simd_prefix"]
+XOPS = ["and", "fadd", "or", "fmul", "xor", "min.f", "max.f", "iadd", "min.s", "max.s", "min.u", "max.u"]
+CONVERT_MODES = [0, 1, 4, 5, 6, 7, 8, 9, 10, 11]
+FUNOPS = ["floor", "ceil", "trunc", "rint", "rsqrt", "rsqrt_special", "sin_pt_1", "sin_pt_2", "log2", "exp2"]
 
 
 def fimm_value(n):
@@ -56,8 +66,10 @@ def reg(f, n, view, hint=0, sx=0, ab=0, ng=0):
 
 
 class Gen:
-    def __init__(self, rng, regs=None, uregs=None):
+    def __init__(self, rng, regs=None, uregs=None, odd=True):
         self.R = rng
+        # generate the unmeasured odd 32-bit uniforms (else they become u32)
+        self.odd = odd
         # register numbers to draw from (None: the whole encodable range)
         self.regs = regs
         self.uregs = uregs
@@ -88,7 +100,13 @@ class Gen:
         if kind == IMM:
             return ["I", imm if imm is not None else (R.choice(IMM_EDGE) if R.random() < 0.3 else R.randrange(256))]
         if kind == FIMM:
-            return ["F", FIMM_CODES[imm if imm is not None else R.randrange(256)]]
+            code = FIMM_CODES[imm if imm is not None else R.randrange(256)]
+            # a float immediate with modifiers (OFMod)
+            return ["M", code, ab, ng] if ab or ng else ["F", code]
+        if kind == U32O and (not self.odd or R.random() < 0.75):
+            kind = U32
+        if kind == U32O:
+            return ["R"] + reg(1, self.un(), 4, 0, sx, ab, ng)
         h = R.choice((0, 1, 2)) if hint is None else hint
         if kind == R32:
             return ["R"] + reg(0, self.rn(), 0, h, sx, ab, ng)
@@ -118,9 +136,9 @@ class Gen:
 # ---------------------------------------------------------------------------------------------
 # instruction schemas: name -> (dimensions, builder).  A dimension is (name, list of values); the
 # builder maps a dict of chosen values to the token list.
-INT_SRC = [IMM, R32, R16L, R16H, U32, U16L, U16H]
+INT_SRC = [IMM, R32, R16L, R16H, U32, U16L, U16H, U32O]
 INT_SRC64 = INT_SRC + [R64]
-FLT_SRC = [FIMM, R32, R16L, R16H, U32, U16L, U16H]
+FLT_SRC = [FIMM, R32, R16L, R16H, U32, U16L, U16H, U32O]
 FLT16_SRC = [FIMM, R16L, R16H, U16L, U16H, U32]
 DST = [R32, R16L, R16H]
 DST64 = DST + [R64]
@@ -130,8 +148,10 @@ BOOL = [0, 1]
 
 def _srcmods(c, i, g, kind, mods):
     """source operand i with its modifiers from the choice dict"""
-    if kind in (IMM, FIMM):
+    if kind == IMM:
         return g.src(kind)
+    if kind == FIMM:
+        return g.src(kind, ab=c.get("abs%d" % i, 0) if "f" in mods else 0, ng=c.get("neg%d" % i, 0) if "f" in mods else 0)
     sx = c.get("sx%d" % i, 0) if "sx" in mods else 0
     ab = c.get("abs%d" % i, 0) if "f" in mods else 0
     ng = c.get("neg%d" % i, 0) if "f" in mods else 0
@@ -170,13 +190,17 @@ def schemas():
                 lambda c, g, sub=sub, sat=sat: ["IADD", sub, sat] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "sx") +
                 _srcmods(c, 1, g, c["s1"], "sx") + [c["shift"]])
             nm = ("imsub" if sub else "imadd") + (".sat" if sat else "")
-            add(nm, [("d", DST64), ("dhint", [0, 1]), ("shift", list(range(8)))] + srcdims(0, INT_SRC, "sx") + srcdims(1, INT_SRC, "sx") +
+            add(nm, [("d", DST64), ("dhint", [0, 1]), ("shift", list(range(8)))] + srcdims(0, INT_SRC64, "sx") + srcdims(1, INT_SRC64, "sx") +
                 srcdims(2, INT_SRC64, "sx"),
                 lambda c, g, sub=sub, sat=sat: ["IMADD", sub, sat] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "sx") +
                 _srcmods(c, 1, g, c["s1"], "sx") + _srcmods(c, 2, g, c["s2"], "sx") + [c["shift"]])
     add("bitop", [("tt", list(range(16))), ("d", DST), ("dhint", [0, 1])] + srcdims(0, INT_SRC) + srcdims(1, INT_SRC),
         lambda c, g: _bitop(c, g))
-    for nm in ("bfi", "bfeil"):
+    add("intl", [("d", DST), ("dhint", [0, 1])] + srcdims(0, INT_SRC) + srcdims(1, INT_SRC),
+        lambda c, g: ["INTL"] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "") + _srcmods(c, 1, g, c["s1"], ""))
+    add("convert", [("mode", CONVERT_MODES), ("i2f", BOOL), ("d", DST), ("dhint", [0, 1])] + srcdims(0, INT_SRC),
+        lambda c, g: ["CONVERT", c["mode"], c["i2f"]] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], ""))
+    for nm in ("bfi", "bfeil", "extr"):
         add(nm, [("m", list(range(32))), ("d", DST), ("dhint", [0, 1])] + srcdims(0, INT_SRC) + srcdims(1, INT_SRC) + srcdims(2, INT_SRC),
             lambda c, g, nm=nm: [nm.upper(), c["m"]] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "") +
             _srcmods(c, 1, g, c["s1"], "") + _srcmods(c, 2, g, c["s2"], ""))
@@ -200,6 +224,9 @@ def schemas():
             _srcmods(c, 1, g, c["s1"], "f") + _srcmods(c, 2, g, c["s2"], "f"))
     add("rcp", [("sat", BOOL), ("d", DST), ("dhint", [0, 1])] + srcdims(0, FLT_SRC, "f"),
         lambda c, g: ["RCP", c["sat"]] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "f"))
+    for o in FUNOPS:
+        add(o, [("sat", BOOL), ("d", DST), ("dhint", [0, 1])] + srcdims(0, FLT_SRC, "f"),
+            lambda c, g, o=o: ["FUNOP", o, c["sat"]] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "f"))
     for f in (0, 1):
         nm = "fcmpsel" if f else "icmpsel"
         add(nm, [("cc", FCCS_SEL if f else ICCS_SEL), ("d", DST), ("dhint", [0, 1])] + srcdims(0, FLT_SRC if f else INT_SRC, "f" if f else "") +
@@ -225,12 +252,25 @@ def schemas():
             _srcmods(c, 1, g, c["s1"], "f" if f else ""))
     for k in ("idx", "xor", "up", "down"):
         add("simd_shuffle" + ("" if k == "idx" else "_" + k), [("d", DST), ("dhint", [0, 1])] + srcdims(0, INT_SRC) +
-            srcdims(1, [IMM, R16L, R16H, U16L, U16H]),
+            srcdims(1, [IMM, R16L, R16H, U16L, U16H, R32, U32]),
             lambda c, g, k=k: ["SHUFFLE", k] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "") + _srcmods(c, 1, g, c["s1"], ""))
+    for k in XKINDS:
+        for o in XOPS:
+            add(k + "_" + o, [("d", DST), ("dhint", [0, 1])] + srcdims(0, INT_SRC64),
+                lambda c, g, k=k, o=o: ["XLANE", k, o] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], ""))
+    for k in ("idx", "xor", "up", "down"):
+        add("quad_shuffle" + ("" if k == "idx" else "_" + k), [("d", DST), ("dhint", [0, 1])] + srcdims(0, INT_SRC) + srcdims(1, INT_SRC),
+            lambda c, g, k=k: ["QSHUFFLE", k] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "") + _srcmods(c, 1, g, c["s1"], ""))
+    for f in (0, 1):
+        nm = "fcmp_quad_ballot" if f else "icmp_quad_ballot"
+        add(nm, [("cc", FCCS if f else ICCS), ("d", DST), ("dhint", [0, 1])] + srcdims(0, FLT_SRC if f else INT_SRC, "f" if f else "") +
+            srcdims(1, FLT_SRC if f else INT_SRC, "f" if f else ""),
+            lambda c, g, f=f: ["QBALLOT", f, c["cc"]] + g.dst(c["d"], c["dhint"]) + _srcmods(c, 0, g, c["s0"], "f" if f else "") +
+            _srcmods(c, 1, g, c["s1"], "f" if f else ""))
     for st in (0, 1):
         add("device_" + ("store" if st else "load"),
-            [("fmt", FMTS), ("mask", list(range(16))), ("r", [R32, R16L, R16H]), ("base", ["gpr", "uni"]), ("idx", ["imm", "gpr"]),
-             ("sg", BOOL), ("shift", [0, 1, 2]), ("g", BOOL)] + ([("u6", BOOL)] if st else []),
+            [("fmt", DEV_FMTS), ("mask", list(range(16))), ("r", [R32, R16L, R16H]), ("base", ["gpr", "uni"]), ("idx", ["imm", "gpr"]),
+             ("sg", BOOL), ("shift", [0, 1, 2]), ("g", BOOL), ("u6", [0, 1, 2, 3])],
             lambda c, g, st=st: _devmem(c, g, st))
         add("threadgroup_" + ("store" if st else "load"),
             [("fmt", FMTS), ("mask", list(range(16))), ("r", [R32, R16L, R16H]), ("base", ["zero", "r16", "u16"]), ("idx", ["imm", R16L, R16H])],
@@ -238,8 +278,14 @@ def schemas():
     add("atomic", [("op", DEV_AOPS), ("dst", ["reg", "none"]), ("base", ["gpr", "uni"]), ("idx", ["imm", "gpr"]), ("sg", BOOL), ("g", BOOL),
                    ("mode", [0, 1, 2, 3])],
         lambda c, g: _devatom(c, g))
-    add("threadgroup_atomic", [("op", AOPS), ("dst", [R32, R16L, R16H, "none"]), ("base", ["zero", "r16", "u16"]), ("idx", ["imm", R16L, R16H])],
+    add("threadgroup_atomic", [("op", AOPS + ["cmpxchg"]), ("dst", [R32, R16L, R16H, "none"]), ("base", ["zero", "r16", "u16"]), ("idx", ["imm", R16L, R16H])],
         lambda c, g: _tgatom(c, g))
+    for st in (0, 1):
+        add("stack_" + ("store" if st else "load"),
+            [("fmt", FMTS), ("mask", list(range(16))), ("r", [R32, R16L, R16H]), ("off", ["imm", "gpr"]), ("g", BOOL)],
+            lambda c, g, st=st: _stackmem(c, g, st))
+    add("stack_adjust", [("n", ["small", "big", "neg"])],
+        lambda c, g: ["STACK_ADJUST", {"small": g.R.randrange(1, 64), "big": g.R.randrange(1, 32768), "neg": -g.R.randrange(1, 32769)}[c["n"]]])
     add("wait", [("n", [0, 1])], lambda c, g: ["WAIT", c["n"]])
     add("threadgroup_barrier", [], lambda c, g: ["TG_BARRIER"])
     add("memory_barrier", [("a", [0, 1, 2, 3]), ("b", [0, 1, 2, 3]), ("c", list(range(16)))],
@@ -262,7 +308,7 @@ def _csel(g, kind, is32):
         return ["I", g.R.randrange(256)]
     if kind == "gpr":
         return g.src(R32 if is32 else g.pick([R16L, R16H]))
-    return g.src(U32 if is32 else g.pick([U16L, U16H]))
+    return g.src(g.pick([U32, U32, U32O]) if is32 else g.pick([U16L, U16H]))
 
 
 def _cmpsel(c, g, f):
@@ -289,7 +335,17 @@ def _devmem(c, g, st):
     r = reg(0, g.rn(max(hi, 1)), view)
     idx = ["I", g.R.choice([0, 1, -1, 32767, -32768]) if g.R.random() < 0.3 else g.R.randrange(-32768, 32768)] if c["idx"] == "imm" \
         else ["R"] + reg(0, g.rn(128), 0)
-    return ["DEVMEM", st, fmt, c["mask"]] + r + _pair(g, c["base"]) + idx + [c["sg"], c["shift"], c["g"], c.get("u6", 0) if st else 0]
+    return ["DEVMEM", st, fmt, c["mask"]] + r + _pair(g, c["base"]) + idx + [c["sg"], c["shift"], c["g"], c["u6"]]
+
+
+def _stackmem(c, g, st):
+    view = {R32: 0, R16L: 1, R16H: 2}[c["r"]]
+    n = bin(c["mask"]).count("1")
+    hi = 128 - max(n, 1) if view == 0 else 128 - (max(n, 1) + 1) // 2
+    r = reg(0, g.rn(max(hi, 1)), view)
+    off = ["I", g.R.choice([0, 4, 32767, -4]) if g.R.random() < 0.3 else g.R.randrange(-32768, 32768)] if c["off"] == "imm" \
+        else ["R"] + reg(0, g.rn(128), 0)
+    return ["STACKMEM", st, c["fmt"], c["mask"]] + r + off + [c["g"]]
 
 
 def _tgbase(g, kind):
@@ -327,7 +383,8 @@ def _tgatom(c, g):
         d = ["N"]
     else:
         d = ["S"] + reg(0, g.rn(128), {R32: 0, R16L: 1, R16H: 2}[c["dst"]])
-    return ["TGATOM", c["op"]] + d + _tgbase(g, c["base"]) + _tgidx(g, c["idx"]) + ["R"] + reg(0, g.rn(128), 0)
+    v = reg(0, g.rn(127), 3) if c["op"] == "cmpxchg" else reg(0, g.rn(128), 0)
+    return ["TGATOM", c["op"]] + d + _tgbase(g, c["base"]) + _tgidx(g, c["idx"]) + ["R"] + v
 
 
 SCHEMAS = schemas()
@@ -377,8 +434,10 @@ def _okind(t, i):
         return "imm", i + 2
     if k == "F":
         return "fimm", i + 2
+    if k == "M":
+        return "fimm" + (".abs" if t[i + 2] else "") + (".neg" if t[i + 3] else ""), i + 4
     f, n, v, h, sx, ab, ng = t[i + 1:i + 8]
-    s = ("u" if f else "r") + {0: "32", 1: "16l", 2: "16h", 3: "64"}[v]
+    s = ("u" if f else "r") + {0: "32", 1: "16l", 2: "16h", 3: "64", 4: "32.odd"}[v]
     s += {0: "", 1: ".cache", 2: ".discard"}[h] + (".sx" if sx else "") + (".abs" if ab else "") + (".neg" if ng else "")
     return s, i + 8
 
@@ -411,7 +470,30 @@ def form_key(t):
             a, i = _okind(t, i)
             b, i = _okind(t, i)
             return "bitop %d %s, %s, %s" % (t[1], d, a, b)
-        if c in ("BFI", "BFEIL"):
+        if c == "XLANE":
+            d, i = _dkind(t, 3)
+            a, i = _okind(t, i)
+            return "%s_%s %s, %s" % (t[1], t[2], d, a)
+        if c == "QSHUFFLE":
+            d, i = _dkind(t, 2)
+            a, i = _okind(t, i)
+            b, i = _okind(t, i)
+            return "quad_shuffle_%s %s, %s, %s" % (t[1], d, a, b)
+        if c == "QBALLOT":
+            d, i = _dkind(t, 3)
+            a, i = _okind(t, i)
+            b, i = _okind(t, i)
+            return "%scmp_quad_ballot %s %s, %s, %s" % ("f" if t[1] else "i", t[2], d, a, b)
+        if c == "INTL":
+            d, i = _dkind(t, 1)
+            a, i = _okind(t, i)
+            b, i = _okind(t, i)
+            return "intl %s, %s, %s" % (d, a, b)
+        if c == "CONVERT":
+            d, i = _dkind(t, 3)
+            a, i = _okind(t, i)
+            return "convert m%d %s %s, %s" % (t[1], "i2f" if t[2] else "f2i", d, a)
+        if c in ("BFI", "BFEIL", "EXTR"):
             d, i = _dkind(t, 2)
             ops = []
             for _ in range(3):
@@ -443,6 +525,10 @@ def form_key(t):
             d, i = _dkind(t, 2)
             a, i = _okind(t, i)
             return "rcp%s %s, %s" % (".sat" if t[1] else "", d, a)
+        if c == "FUNOP":
+            d, i = _dkind(t, 3)
+            a, i = _okind(t, i)
+            return "%s%s %s, %s" % (t[1], ".sat" if t[2] else "", d, a)
         if c == "CMPSEL":
             d, i = _dkind(t, 3)
             ops = []
@@ -476,9 +562,8 @@ def form_key(t):
             ik = "imm" if t[i] == "I" else "r32"
             i += 2 if t[i] == "I" else 8
             sg, s, gg, u6 = t[i:i + 4]
-            return "device_%s %s m%d %s, %s, %s, %s, lsl %d, g%d%s" % ("store" if t[1] else "load", t[2], t[3], r.split(".")[0],
-                                                                     "u" if pf else "r", ik, "signed" if sg else "unsigned", s, gg,
-                                                                     ", u6=%d" % u6 if t[1] else "")
+            return "device_%s %s m%d %s, %s, %s, %s, lsl %d, g%d, u6=%d" % ("store" if t[1] else "load", t[2], t[3], r.split(".")[0],
+                                                                          "u" if pf else "r", ik, "signed" if sg else "unsigned", s, gg, u6)
         if c == "TGMEM":
             r, i = _dkind(t, 4)
             b, i = _okind(t, i)
@@ -509,6 +594,12 @@ def form_key(t):
             b, i = _okind(t, i)
             x, i = _okind(t, i)
             return "threadgroup_atomic %s %s, %s, %s" % (t[1], d, b, x)
+        if c == "STACKMEM":
+            r, i = _dkind(t, 4)
+            o, i = _okind(t, i)
+            return "stack_%s %s m%d %s, %s, g%d" % ("store" if t[1] else "load", t[2], t[3], r.split(".")[0], o, t[i])
+        if c == "STACK_ADJUST":
+            return "stack_adjust %s" % ("neg" if t[1] < 0 else "pos")
         if c == "WAIT":
             return "wait %d" % t[1]
         if c == "MEMORY_BARRIER":
@@ -516,6 +607,39 @@ def form_key(t):
         return c.lower()
     except (IndexError, KeyError):
         return c.lower() + " ?"
+
+
+def _regs(t):
+    """the serialized registers (file, number, view, ...) in a token list"""
+    out, i = [], 0
+    while i < len(t):
+        if t[i] in ("R", "S") and i + 7 < len(t) + 1 and all(isinstance(x, int) for x in t[i + 1:i + 8]):
+            out.append(t[i + 1:i + 8])
+            i += 8
+        else:
+            i += 1
+    return out
+
+
+def unmeasured(t):
+    """the instruction has a form whose execution the model leaves undefined (it stops with an error)"""
+    if any(r[2] == 4 for r in _regs(t)):
+        return "odd 32-bit uniform"
+    if t[0] == "IMADD":
+        # the sources A, B, C after the destination: A or B a register pair
+        ops, i = [], 10
+        for _ in range(3):
+            if t[i] == "R":
+                ops.append(t[i + 3]); i += 8
+            else:
+                ops.append(None); i += 2
+        if 3 in ops[:2]:
+            return "imadd 64-bit multiplicand"
+    if t[0] == "SHUFFLE" and _regs(t[1:])[-1:] and _regs(t)[-1][2] in (0, 4) and t[-8] == "R":
+        return "32-bit lane index"
+    if t[0] == "DEVMEM" and t[2] in PACKED_FMTS:
+        return "packed format"
+    return None
 
 
 def class_of(t):

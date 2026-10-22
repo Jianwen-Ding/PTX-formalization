@@ -103,8 +103,8 @@ let C_SHUFDOWN = cls(35, 6, 6, 15, [|(0, 7, 111), (15, 1, 0), (47, 1, 0), (38, 2
 let C_SHUFUP = cls(36, 6, 6, 15, [|(0, 7, 111), (15, 1, 0), (47, 1, 0), (38, 2, 2), (26, 2, 1)|])
 let C_SHUFXOR = cls(37, 6, 6, 15, [|(0, 7, 111), (15, 1, 0), (47, 1, 0), (38, 2, 1), (26, 2, 1)|])
 let C_WAIT = cls(38, 2, 2, 15, [|(0, 8, 56)|])
-let C_DEVLOAD = cls(39, 6, 8, 47, [|(0, 7, 5), (26, 1, 1), (28, 2, 0), (44, 3, 4), (50, 2, 0)|])
-let C_DEVSTORE = cls(40, 6, 8, 47, [|(0, 7, 69), (26, 1, 1), (28, 2, 0), (45, 2, 2), (50, 2, 0)|])
+let C_DEVLOAD = cls(39, 6, 8, 47, [|(0, 7, 5), (26, 1, 1), (28, 2, 0), (46, 1, 1), (50, 2, 0)|])
+let C_DEVSTORE = cls(40, 6, 8, 47, [|(0, 7, 69), (26, 1, 1), (28, 2, 0), (46, 1, 1), (50, 2, 0)|])
 let C_TGLOAD = cls(41, 6, 8, 15, [|(0, 4, 9), (5, 2, 3)|])
 let C_TGSTORE = cls(42, 6, 8, 15, [|(0, 4, 9), (5, 2, 1)|])
 let C_TGBARRIER = cls(43, 2, 2, 15, [|(0, 8, 104)|])
@@ -113,12 +113,74 @@ let C_TGATOMIC = cls(45, 6, 10, 15, [|(0, 6, 25)|])
 let C_MEMBAR = cls(46, 2, 2, 15, [|(0, 8, 245)|])
 let C_TRAP = cls(47, 2, 2, 15, [|(0, 16, 8)|])
 
+/* the float unary operations: the rcp class with another op field (28, 6); ceil, trunc and rint set bit 32 or 33,
+ * so they have only the long form */
+val funop_code : funop -> int
+function funop_code(o) = match o {
+  FU_floor => 0, FU_rsqrt_special => 1, FU_rsqrt => 9, FU_sin_pt_1 => 10, FU_log2 => 12, FU_exp2 => 13,
+  FU_sin_pt_2 => 14, FU_ceil => 16, FU_trunc => 32, FU_rint => 48
+}
+val funop_cls : funop -> icls
+function funop_cls(o) = cls(48 + funop_code(o), 4, 6, 15, [|(0, 6, 10), (34, 8, 0), (28, 6, funop_code(o))|])
+let C_FLOOR = funop_cls(FU_floor)
+let C_RSQRT_SPECIAL = funop_cls(FU_rsqrt_special)
+let C_RSQRT = funop_cls(FU_rsqrt)
+let C_SIN_PT_1 = funop_cls(FU_sin_pt_1)
+let C_LOG2 = funop_cls(FU_log2)
+let C_EXP2 = funop_cls(FU_exp2)
+let C_SIN_PT_2 = funop_cls(FU_sin_pt_2)
+let C_CEIL = funop_cls(FU_ceil)
+let C_TRUNC = funop_cls(FU_trunc)
+let C_RINT = funop_cls(FU_rint)
+let C_EXTR = cls(200, 8, 8, 15, [|(0, 7, 46), (15, 1, 0), (26, 2, 1)|])
+let C_INTL = cls(201, 6, 6, 15, [|(0, 7, 62), (15, 1, 0), (38, 2, 0), (26, 2, 0)|])
+let C_CONVERT = cls(202, 6, 6, 15, [|(0, 7, 62), (15, 1, 1), (22, 4, 0), (38, 2, 0), (42, 2, 0)|])
+/* quad / SIMD reductions and prefixes (G13Reduce of the LLVM backend, Mesa's quad_reduce .. simd_prefix): opc
+ * (29, 2), op = bit 28 | (38, 3) << 1 | bit 47 << 4, A (16, 42) up to 64 bits, D (44) */
+val xkind_code : xkind -> int
+function xkind_code(k) = match k { XK_quad => 0, XK_simd => 1, XK_quad_prefix => 2, XK_simd_prefix => 3 }
+val xop_code : xop -> int
+function xop_code(o) = match o {
+  XO_and => 0, XO_fadd => 1, XO_or => 2, XO_fmul => 3, XO_xor => 4, XO_fmin => 5, XO_fmax => 7, XO_iadd => 16,
+  XO_smin => 20, XO_smax => 22, XO_umin => 28, XO_umax => 30
+}
+val code_xop : int -> option(xop)
+function code_xop(n) = match n {
+  0 => Some(XO_and), 1 => Some(XO_fadd), 2 => Some(XO_or), 3 => Some(XO_fmul), 4 => Some(XO_xor), 5 => Some(XO_fmin),
+  7 => Some(XO_fmax), 16 => Some(XO_iadd), 20 => Some(XO_smin), 22 => Some(XO_smax), 28 => Some(XO_umin),
+  30 => Some(XO_umax), _ => None()
+}
+val xlane_cls : xkind -> icls
+function xlane_cls(k) = cls(210 + xkind_code(k), 6, 6, 15, [|(0, 7, 111), (15, 1, 1), (26, 2, 0), (29, 2, xkind_code(k)), (31, 7, 0), (41, 1, 0)|])
+let C_XQUAD = xlane_cls(XK_quad)
+let C_XSIMD = xlane_cls(XK_simd)
+let C_XQUADP = xlane_cls(XK_quad_prefix)
+let C_XSIMDP = xlane_cls(XK_simd_prefix)
+/* quad shuffles: the simd shuffle classes with bit 26 clear */
+let C_QSHUF = cls(220, 6, 6, 15, [|(0, 7, 111), (15, 1, 0), (47, 1, 0), (38, 2, 0), (26, 2, 0)|])
+let C_QSHUFXOR = cls(221, 6, 6, 15, [|(0, 7, 111), (15, 1, 0), (47, 1, 0), (38, 2, 1), (26, 2, 0)|])
+let C_QSHUFUP = cls(222, 6, 6, 15, [|(0, 7, 111), (15, 1, 0), (47, 1, 0), (38, 2, 2), (26, 2, 0)|])
+let C_QSHUFDOWN = cls(223, 6, 6, 15, [|(0, 7, 111), (15, 1, 0), (47, 1, 0), (38, 2, 3), (26, 2, 0)|])
+/* quad ballots: the ballot classes with bit 48 clear */
+let C_ICMPQBALLOT = cls(224, 8, 8, 15, [|(0, 7, 50), (26, 2, 0), (38, 2, 0), (48, 13, 0)|])
+let C_FCMPQBALLOT = cls(225, 8, 8, 15, [|(0, 7, 34), (48, 13, 0)|])
+/* stack_load / stack_store (Mesa's packer, the LLVM backend's G13StackMem): opcode (0, 8) 0x35 / 0xb5, always 8 bytes
+ * (bit 47 set), F (8,2)+(50,2), R (10,6)+(40,2) flag 49, byte offset as the device index (20,4)+(32,4)+(56,8) with
+ * the immediate flag 24, g (30), mask (52,4); bits 44-46 = 4 and bit 26 set, the other bits clear */
+let C_STACKLOAD = cls(230, 8, 8, 15, [|(0, 8, 53), (16, 4, 0), (25, 1, 0), (26, 1, 1), (27, 3, 0), (31, 1, 0), (36, 4, 0), (44, 3, 4), (47, 1, 1), (48, 1, 0)|])
+let C_STACKSTORE = cls(231, 8, 8, 15, [|(0, 8, 181), (16, 4, 0), (25, 1, 0), (26, 1, 1), (27, 3, 0), (31, 1, 0), (36, 4, 0), (44, 3, 4), (47, 1, 1), (48, 1, 0)|])
+/* stack_adjust: Mesa's 0x10100b5 | 1 << 26 | 2 << 36 | 1 << 47 with the 16-bit size at (20,4)+(32,4)+(56,8) */
+let C_STACKADJ = cls(232, 8, 8, 15, [|(0, 20, 65717), (24, 8, 5), (36, 20, 2050)|])
+let funops : list(funop) = [|FU_floor, FU_rsqrt_special, FU_rsqrt, FU_sin_pt_1, FU_log2, FU_exp2, FU_sin_pt_2, FU_ceil,
+  FU_trunc, FU_rint|]
+
 /* the classes in applegpu's matching order (the first matching descriptor wins) */
 let all_classes : list(icls) = [|C_MOVI16, C_MOVI32, C_GETSR, C_IADD, C_IMADD, C_BFI, C_BFEIL, C_ASR,
-  C_BITOP, C_BITREV, C_POPCOUNT, C_FFS, C_FMADD32, C_FMADD16, C_FADD32, C_FADD16, C_FMUL32, C_FMUL16,
-  C_RCP, C_STOP, C_JMPANY, C_JMPNONE, C_POPEXEC, C_IFICMP, C_IFFCMP, C_WHILEICMP, C_WHILEFCMP,
+  C_BITOP, C_BITREV, C_POPCOUNT, C_FFS, C_EXTR, C_INTL, C_CONVERT, C_FMADD32, C_FMADD16, C_FADD32, C_FADD16, C_FMUL32, C_FMUL16,
+  C_RCP, C_FLOOR, C_RSQRT_SPECIAL, C_RSQRT, C_SIN_PT_1, C_LOG2, C_EXP2, C_SIN_PT_2, C_CEIL, C_TRUNC, C_RINT, C_STOP, C_JMPANY, C_JMPNONE, C_POPEXEC, C_IFICMP, C_IFFCMP, C_WHILEICMP, C_WHILEFCMP,
   C_ELSEICMP, C_ELSEFCMP, C_ICMPSEL, C_FCMPSEL, C_ICMPBALLOT, C_FCMPBALLOT, C_SHUF, C_SHUFDOWN,
-  C_SHUFUP, C_SHUFXOR, C_WAIT, C_DEVLOAD, C_DEVSTORE, C_TGLOAD, C_TGSTORE, C_TGBARRIER, C_ATOMIC,
+  C_SHUFUP, C_SHUFXOR, C_XQUAD, C_XSIMD, C_XQUADP, C_XSIMDP, C_QSHUF, C_QSHUFXOR, C_QSHUFUP, C_QSHUFDOWN,
+  C_ICMPQBALLOT, C_FCMPQBALLOT, C_STACKADJ, C_STACKLOAD, C_STACKSTORE, C_WAIT, C_DEVLOAD, C_DEVSTORE, C_TGLOAD, C_TGSTORE, C_TGBARRIER, C_ATOMIC,
   C_TGATOMIC, C_MEMBAR, C_TRAP|]
 /* memory_barrier (byte 0xf5) and trap (0x0008) match no earlier class: adding them changes no other decoding */
 
@@ -194,7 +256,7 @@ function nomods(r) = not_bool(r.sx | r.fabs | r.fneg)
 /* ALUDstDesc: value (9, 6) + (ex, 2), flags (7, 2) */
 val e_dst : (int, areg, int, bool, bool) -> int
 function e_dst(w, r, ex, a32, a64) = {
-  if r.file != GPR | not_bool(nomods(r)) | r.hint == HDiscard then enc_err = true;
+  if r.file != GPR | not_bool(nomods(r)) | r.hint == HDiscard | r.view == 4 then enc_err = true;
   var value : int = 0;
   var flags : int = 0;
   match r.view {
@@ -246,6 +308,12 @@ function e_src(w0, a, off, ex, ts, a32, a64, fimm, sxpos, mpos) = {
       if not_bool(fimm) then enc_err = true;
       match fimm_code(b) { Some(c) => value = c, None() => enc_err = true }
     },
+    /* a float immediate with modifiers (not both clear: that is OFImm) */
+    OFMod(b, ab, ng) => {
+      if not_bool(fimm) | not_bool(ab | ng) then enc_err = true;
+      m = bool_bit(ab) + 2 * bool_bit(ng);
+      match fimm_code(b) { Some(c) => value = c, None() => enc_err = true }
+    },
     OReg(r) => {
       sx = bool_bit(r.sx);
       m = bool_bit(r.fabs) + 2 * bool_bit(r.fneg);
@@ -253,6 +321,7 @@ function e_src(w0, a, off, ex, ts, a32, a64, fimm, sxpos, mpos) = {
         if r.hint != HNone then enc_err = true;
         match r.view {
           0 => { if not_bool(a32) then enc_err = true; let n = 2 * r.num in { flags = 6 + fget(n, 8, 1); value = fget(n, 0, 8); if n >= 512 then enc_err = true } },
+          4 => { if not_bool(a32) then enc_err = true; let n = 2 * r.num + 1 in { flags = 6 + fget(n, 8, 1); value = fget(n, 0, 8); if n >= 512 then enc_err = true } },
           3 => enc_err = true,
           v => { let n = 2 * r.num + v - 1 in { flags = 4 + fget(n, 8, 1); value = fget(n, 0, 8); if n >= 512 then enc_err = true } }
         }
@@ -260,6 +329,7 @@ function e_src(w0, a, off, ex, ts, a32, a64, fimm, sxpos, mpos) = {
         match r.view {
           0 => { if not_bool(a32) then enc_err = true; flags = 8; value = 2 * r.num },
           3 => { if not_bool(a64) then enc_err = true; flags = 12; value = 2 * r.num },
+          4 => enc_err = true,
           v => { flags = 0; value = 2 * r.num + v - 1 }
         };
         flags = flags + hint_code(r.hint)
@@ -278,13 +348,14 @@ function d_src(w, off, ex, ts, a32, a64, fimm, sxpos, mpos) = {
   let sx = if sxpos >= 0 then bit_int(w, sxpos) else false;
   let m = if mpos >= 0 then fget(w, mpos, 2) else 0;
   if flags == 0 then {
-    dchk(not_bool(sx) & m == 0);
-    if fimm then OFImm(fimm_bits(value)) else OImm(value)
+    dchk(not_bool(sx));
+    if fimm & m != 0 then OFMod(fimm_bits(value), bit_int(m, 0), bit_int(m, 1))
+    else if fimm then OFImm(fimm_bits(value)) else OImm(value)
   } else {
     var r : areg = mkreg(GPR, 0, 0, HNone);
     if land_int(flags, 12) == 4 then {
       let u = value + shl_int(fget(flags, 0, 1), 8);
-      if bit_int(flags, 1) then { dchk(a32 & not_bool(bit_int(u, 0))); r = mkreg(UNI, shr_int(u, 1), 0, HNone) }
+      if bit_int(flags, 1) then { dchk(a32); r = mkreg(UNI, shr_int(u, 1), if bit_int(u, 0) then 4 else 0, HNone) }
       else r = reg16(UNI, u, HNone)
     } else {
       let top = land_int(flags, 12);
@@ -308,9 +379,9 @@ function e_alu16(w, a, off, ex) = e_src(w, a, off, ex, 4, false, false, false, -
 val d_alu16 : (int, int, int) -> aop
 function d_alu16(w, off, ex) = d_src(w, off, ex, 4, false, false, false, -1, -1)
 val e_mul : (int, aop, int, int) -> int
-function e_mul(w, a, off, ex) = e_src(w, a, off, ex, 4, true, false, false, off + 10, -1)
+function e_mul(w, a, off, ex) = e_src(w, a, off, ex, 4, true, true, false, off + 10, -1)
 val d_mul : (int, int, int) -> aop
-function d_mul(w, off, ex) = d_src(w, off, ex, 4, true, false, false, off + 10, -1)
+function d_mul(w, off, ex) = d_src(w, off, ex, 4, true, true, false, off + 10, -1)
 val e_add : (int, aop, int, int) -> int
 function e_add(w, a, off, ex) = e_src(w, a, off, ex, 4, true, true, false, off + 10, -1)
 val d_add : (int, int, int) -> aop
@@ -332,11 +403,12 @@ function e_csel(w, a, off, ex, is32) = {
   match a {
     OImm(i) => { value = i; flags = 4 },
     OFImm(_) => enc_err = true,
+    OFMod(_) => enc_err = true,
     OReg(r) => {
       if not_bool(nomods(r)) then enc_err = true;
-      if is32 & r.view != 0 then enc_err = true;
-      if not_bool(is32) & (r.view == 0 | r.view == 3) then enc_err = true;
-      let n = if is32 then 2 * r.num else 2 * r.num + r.view - 1 in {
+      if is32 & r.view != 0 & not_bool(r.view == 4 & r.file == UNI) then enc_err = true;
+      if not_bool(is32) & (r.view == 0 | r.view == 3 | r.view == 4) then enc_err = true;
+      let n = if is32 then 2 * r.num + (if r.view == 4 then 1 else 0) else 2 * r.num + r.view - 1 in {
         if r.file == UNI then {
           if r.hint != HNone | n >= 512 then enc_err = true;
           flags = 6 + fget(n, 8, 1);
@@ -358,7 +430,7 @@ function d_csel(w, off, ex, is32) = {
     else OReg(reg16(GPR, value, code_hint(flags)))
   } else if flags == 6 | flags == 7 then {
     let u = value + shl_int(fget(flags, 0, 1), 8);
-    if is32 then { dchk(not_bool(bit_int(u, 0))); OReg(mkreg(UNI, shr_int(u, 1), 0, HNone)) }
+    if is32 then OReg(mkreg(UNI, shr_int(u, 1), if bit_int(u, 0) then 4 else 0, HNone))
     else OReg(reg16(UNI, u, HNone))
   } else { dec_err = true; OImm(0) }
 }
@@ -408,10 +480,18 @@ function d_cc(w, isf, ccoff, ccnoff) = {
 /* MemoryRegDesc / ThreadgroupMemoryRegDesc: first register of the tuple; value (off, 6) + (offx, 2), flag at offt */
 val e_memreg : (int, areg, int, int, int) -> int
 function e_memreg(w, r, off, offx, offt) = {
-  if r.file != GPR | not_bool(nomods(r)) | r.hint != HNone | r.view == 3 then enc_err = true;
+  if r.file != GPR | not_bool(nomods(r)) | r.hint != HNone | r.view >= 3 then enc_err = true;
   let t = if r.view == 0 then 1 else 0 in
   let value = if r.view == 0 then 2 * r.num else 2 * r.num + r.view - 1 in
   fput(fput2(w, off, 6, offx, 2, value), offt, 1, t)
+}
+
+/* a memory register tuple (one register per element of the mask) stays within r0 .. r127 (applegpu and the LLVM
+ * backend have no names beyond) */
+val tuple_ok : (areg, int) -> bool
+function tuple_ok(r, mask) = {
+  let n = popc_int(mask);
+  if r.view == 0 then r.num + n <= 128 else 2 * r.num + r.view - 1 + n <= 256
 }
 
 val d_memreg : (int, int, int, int) -> areg
@@ -444,7 +524,7 @@ function e_memidx(w, a) = match a {
     if r.file != GPR | r.view != 0 | not_bool(nomods(r)) | r.hint != HNone | r.num >= 128 then enc_err = true;
     fput3(w, 20, 4, 32, 4, 56, 8, 2 * r.num)
   },
-  OFImm(_) => { enc_err = true; w }
+  _ => { enc_err = true; w }
 }
 val d_memidx : int -> aop
 function d_memidx(w) = {
@@ -458,13 +538,13 @@ val e_tgbase : (int, aop) -> int
 function e_tgbase(w, a) = match a {
   OImm(i) => { if i != 0 then enc_err = true; fput(w, 22, 2, 2) },
   OReg(r) => {
-    if not_bool(nomods(r)) | r.hint != HNone | r.view == 0 | r.view == 3 then enc_err = true;
+    if not_bool(nomods(r)) | r.hint != HNone | r.view == 0 | r.view >= 3 then enc_err = true;
     let n = 2 * r.num + r.view - 1 in {
       if r.file == UNI then { if n >= 512 then enc_err = true; fput(fput2(w, 16, 6, 58, 2, fget(n, 0, 8)), 22, 2, 1 + 2 * fget(n, 8, 1)) }
       else fput2(w, 16, 6, 58, 2, n)
     }
   },
-  OFImm(_) => { enc_err = true; w }
+  _ => { enc_err = true; w }
 }
 val d_tgbase : int -> aop
 function d_tgbase(w) = {
@@ -480,10 +560,10 @@ val e_tgidx : (int, aop) -> int
 function e_tgidx(w, a) = match a {
   OImm(i) => { if i < -32768 | i >= 32768 then enc_err = true; fput(fput2(w, 28, 6, 48, 10, trunc_int(i, 16)), 34, 1, 1) },
   OReg(r) => {
-    if r.file != GPR | not_bool(nomods(r)) | r.hint != HNone | r.view == 0 | r.view == 3 then enc_err = true;
+    if r.file != GPR | not_bool(nomods(r)) | r.hint != HNone | r.view == 0 | r.view >= 3 then enc_err = true;
     fput2(w, 28, 6, 48, 10, 2 * r.num + r.view - 1)
   },
-  OFImm(_) => { enc_err = true; w }
+  _ => { enc_err = true; w }
 }
 val d_tgidx : int -> aop
 function d_tgidx(w) = {
@@ -494,9 +574,20 @@ function d_tgidx(w) = {
 
 /* element mask and formats */
 val fmt_code : afmt -> int
-function fmt_code(f) = match f { F_U8 => 0, F_U16 => 1, F_U32 => 2 }
+function fmt_code(f) = match f {
+  F_U8 => 0, F_U16 => 1, F_U32 => 2, F_F16 => 3, F_U8NORM => 4, F_S8NORM => 5, F_U16NORM => 6, F_S16NORM => 7,
+  F_RGB10A2 => 8, F_SRGBA8 => 10, F_RG11B10F => 12, F_RGB9E5 => 13, F_RG11B10F_RTZ => 14, F_RGB9E5_RTZ => 15
+}
+/* the format codes (applegpu MEMORY_FORMATS; 9 and 11 have no name and are rejected) */
 val code_fmt : int -> afmt
-function code_fmt(n) = match n { 0 => F_U8, 1 => F_U16, 2 => F_U32, _ => { dec_err = true; F_U32 } }
+function code_fmt(n) = match n {
+  0 => F_U8, 1 => F_U16, 2 => F_U32, 3 => F_F16, 4 => F_U8NORM, 5 => F_S8NORM, 6 => F_U16NORM, 7 => F_S16NORM,
+  8 => F_RGB10A2, 10 => F_SRGBA8, 12 => F_RG11B10F, 13 => F_RGB9E5, 14 => F_RG11B10F_RTZ, 15 => F_RGB9E5_RTZ,
+  _ => { dec_err = true; F_U32 }
+}
+/* threadgroup and stack accesses have the integer formats only */
+val int_fmt : afmt -> bool
+function int_fmt(f) = f == F_U8 | f == F_U16 | f == F_U32
 
 /* the op field of the ten 32-bit operations (both atomics); the device-only forms are rejected here */
 val atom_code : aaop -> int
@@ -534,7 +625,7 @@ function e_mov(d, a) = {
     },
     /* mov from a register: applegpu's bitop alias `mov` (truth table 0101 = a, B = 0) */
     OReg(_) => finish(C_BITOP, fput(fput(fput(fput(e_alu(e_alu(e_dst(0, d, 44, true, false), a, 16, 42), OImm(0), 28, 40), 26, 1, 0), 27, 1, 1), 38, 1, 0), 39, 1, 1)),
-    OFImm(_) => None()
+    _ => None()
   }
 }
 
@@ -609,6 +700,34 @@ function d_bitop(w) = {
   if tt == 10 & is_imm0(b) then fin_dec(MOV(d, a)) else fin_dec(BITOP(tt, d, a, b))
 }
 
+val d_extr : int -> option(ast)
+function d_extr(w) = { start_dec(); fin_dec(EXTR(fget3(w, 38, 2, 50, 2, 63, 1), d_dst(w, 60, true, false), d_alu(w, 16, 58), d_alu(w, 28, 56), d_alu(w, 40, 54))) }
+
+/* intl: D (44), A (16, 42), B (28, 40) */
+val e_intl : (areg, aop, aop) -> option(int)
+function e_intl(d, a, b) = { start_enc(); finish(C_INTL, e_alu(e_alu(e_dst(0, d, 44, true, false), a, 16, 42), b, 28, 40)) }
+val d_intl : int -> option(ast)
+function d_intl(w) = { start_dec(); fin_dec(INTL(d_dst(w, 44, true, false), d_alu(w, 16, 42), d_alu(w, 28, 40))) }
+
+/* convert: mode (16, 6) (Mesa's first source, an immediate: bits 22-25 and 42-43 clear), direction (26, 2): 0 float
+ * -> integer, 1 integer -> float (applegpu's `round` field), D (44), the source (28, 40).  Modes 2, 3 and 12-63 are
+ * rejected: Mesa does not emit them and they were not run on the hardware (Apple-M2-Playground 2026-10-16-conversions) */
+val convert_mode_ok : int -> bool
+function convert_mode_ok(m) = m == 0 | m == 1 | (m >= 4 & m <= 11)
+val e_convert : (int, bool, areg, aop) -> option(int)
+function e_convert(m, i2f, d, a) = {
+  start_enc();
+  if not_bool(convert_mode_ok(m)) then enc_err = true;
+  finish(C_CONVERT, fput(fput(e_alu(e_dst(0, d, 44, true, false), a, 28, 40), 16, 6, m), 26, 2, bool_bit(i2f)))
+}
+val d_convert : int -> option(ast)
+function d_convert(w) = {
+  start_dec();
+  let m = fget(w, 16, 6);
+  dchk(convert_mode_ok(m) & fget(w, 26, 2) <= 1);
+  fin_dec(CONVERT(m, fget(w, 26, 2) == 1, d_dst(w, 44, true, false), d_alu(w, 28, 40)))
+}
+
 val iunop_cls : iunop -> icls
 function iunop_cls(o) = match o { U_popcount => C_POPCOUNT, U_bitrev => C_BITREV, U_ffs => C_FFS }
 val e_iunop : (iunop, areg, aop) -> option(int)
@@ -657,6 +776,20 @@ val e_rcp : (bool, areg, aop) -> option(int)
 function e_rcp(sat, d, a) = { start_enc(); finish(C_RCP, e_flt(fput(e_dst(0, d, 44, true, false), 6, 1, bool_bit(sat)), a, 16, 42)) }
 val d_rcp : int -> option(ast)
 function d_rcp(w) = { start_dec(); fin_dec(RCP(bit_int(w, 6), d_dst(w, 44, true, false), d_flt(w, 16, 42))) }
+
+val e_funop : (funop, bool, areg, aop) -> option(int)
+function e_funop(o, sat, d, a) = { start_enc(); finish(funop_cls(o), e_flt(fput(e_dst(0, d, 44, true, false), 6, 1, bool_bit(sat)), a, 16, 42)) }
+val d_funop : (funop, int) -> option(ast)
+function d_funop(o, w) = { start_dec(); fin_dec(FUNOP(o, bit_int(w, 6), d_dst(w, 44, true, false), d_flt(w, 16, 42))) }
+
+/* the funop of class number n, if any */
+val cid_funop : int -> option(funop)
+function cid_funop(n) = {
+  var r : option(funop) = None();
+  var l = funops;
+  while is_cons(l) do { match l { o :: rest => { if funop_cls(o).cid == n then r = Some(o); l = rest }, [||] => () } };
+  r
+}
 
 /* icmpsel / fcmpsel: cc (61, 3), D (9,6)+(76,2), A (16,74), B (28,72), X (40,70), Y (52,68) */
 val e_cmpsel : (bool, acc, areg, aop, aop, aop, aop) -> option(int)
@@ -728,22 +861,84 @@ function d_ballot(isf, w) = {
   fin_dec(BALLOT(isf, d_cc(w, isf, 61, 47), d_dst(w, 44, true, false), a, b))
 }
 
-/* shuffles: D (9,6)+(44,2), A (16, 42), B 16-bit source (28, 40) */
+/* shuffles: D (9,6)+(44,2), A (16, 42), B (28, 40): a 16-bit source, or a 32-bit one (Mesa's packer accepts it,
+ * applegpu and agx_run read the 16-bit register of the same index, the LLVM backend rejects it; not measured) */
 val e_shuf : (shufkind, areg, aop, aop) -> option(int)
 function e_shuf(k, d, a, b) = {
   start_enc();
   let c : icls = match k { SH_idx => C_SHUF, SH_down => C_SHUFDOWN, SH_up => C_SHUFUP, SH_xor => C_SHUFXOR };
-  finish(c, e_alu16(e_alu(e_dst(0, d, 44, true, false), a, 16, 42), b, 28, 40))
+  finish(c, e_alu(e_alu(e_dst(0, d, 44, true, false), a, 16, 42), b, 28, 40))
 }
 val d_shuf : (shufkind, int) -> option(ast)
-function d_shuf(k, w) = { start_dec(); fin_dec(SHUFFLE(k, d_dst(w, 44, true, false), d_alu(w, 16, 42), d_alu16(w, 28, 40))) }
+function d_shuf(k, w) = { start_dec(); fin_dec(SHUFFLE(k, d_dst(w, 44, true, false), d_alu(w, 16, 42), d_alu(w, 28, 40))) }
+
+val e_xlane : (xkind, xop, areg, aop) -> option(int)
+function e_xlane(k, o, d, a) = {
+  start_enc();
+  let c = xop_code(o);
+  let w = e_src(e_dst(0, d, 44, true, false), a, 16, 42, 4, true, true, false, -1, -1);
+  finish(xlane_cls(k), fput(fput(fput(w, 28, 1, fget(c, 0, 1)), 38, 3, fget(c, 1, 3)), 47, 1, fget(c, 4, 1)))
+}
+val d_xlane : (xkind, int) -> option(ast)
+function d_xlane(k, w) = {
+  start_dec();
+  let c = fget(w, 28, 1) + 2 * fget(w, 38, 3) + 16 * fget(w, 47, 1);
+  match code_xop(c) {
+    Some(o) => fin_dec(XLANE(k, o, d_dst(w, 44, true, false), d_src(w, 16, 42, 4, true, true, false, -1, -1))),
+    None() => None()
+  }
+}
+
+val qshuf_cls : shufkind -> icls
+function qshuf_cls(k) = match k { SH_idx => C_QSHUF, SH_xor => C_QSHUFXOR, SH_up => C_QSHUFUP, SH_down => C_QSHUFDOWN }
+val e_qshuf : (shufkind, areg, aop, aop) -> option(int)
+function e_qshuf(k, d, a, b) = { start_enc(); finish(qshuf_cls(k), e_alu(e_alu(e_dst(0, d, 44, true, false), a, 16, 42), b, 28, 40)) }
+val d_qshuf : (shufkind, int) -> option(ast)
+function d_qshuf(k, w) = { start_dec(); fin_dec(QSHUFFLE(k, d_dst(w, 44, true, false), d_alu(w, 16, 42), d_alu(w, 28, 40))) }
+
+val e_qballot : (bool, acc, areg, aop, aop) -> option(int)
+function e_qballot(isf, cc, d, a, b) = {
+  start_enc();
+  let w0 = e_cc(e_dst(0, d, 44, true, false), isf, cc, 61, 47);
+  finish(if isf then C_FCMPQBALLOT else C_ICMPQBALLOT, if isf then e_flt(e_flt(w0, a, 16, 42), b, 28, 40) else e_alu(e_alu(w0, a, 16, 42), b, 28, 40))
+}
+val d_qballot : (bool, int) -> option(ast)
+function d_qballot(isf, w) = match d_ballot(isf, w) {
+  Some(BALLOT(f, cc, d, a, b)) => Some(QBALLOT(f, cc, d, a, b)),
+  _ => None()
+}
+
+val e_stackmem : (bool, afmt, int, areg, aop, int) -> option(int)
+function e_stackmem(st, f, mask, r, o, g) = {
+  start_enc();
+  if not_bool(int_fmt(f) & tuple_ok(r, mask)) then enc_err = true;
+  let c = fmt_code(f);
+  let w = e_memidx(e_memreg(fput(fput(fput2(0, 8, 2, 50, 2, c), 52, 4, mask), 30, 1, g), r, 10, 40, 49), o);
+  finish(if st then C_STACKSTORE else C_STACKLOAD, w)
+}
+val d_stackmem : (bool, int) -> option(ast)
+function d_stackmem(st, w) = {
+  start_dec();
+  let f = code_fmt(fget2(w, 8, 2, 50, 2));
+  dchk(int_fmt(f) & tuple_ok(d_memreg(w, 10, 40, 49), fget(w, 52, 4)));
+  fin_dec(STACKMEM(st, f, fget(w, 52, 4), d_memreg(w, 10, 40, 49), d_memidx(w), fget(w, 30, 1)))
+}
+
+val e_stackadj : int -> option(int)
+function e_stackadj(n) = {
+  start_enc();
+  if n < -32768 | n > 32767 then enc_err = true;
+  finish(C_STACKADJ, fput3(0, 20, 4, 32, 4, 56, 8, trunc_int(n, 16)))
+}
 
 /* device_load / device_store: g (30), F (7,3)+(48,1), mask (52,4), R (10,6)+(40,2) flag 49, base, index,
- * Ou (25: 0 signed, 1 unsigned), shift (42,2), store: u6 (44) */
+ * Ou (25: 0 signed, 1 unsigned), shift (42,2), u6 (44,2) with bit 46 set (the LLVM backend's trailing operand; Mesa's
+ * u4 = bits 44-46 is 4, or 7 for a coherent access; applegpu's plain descriptors cover u6 = 0 for loads and bit 45
+ * clear for stores, its `.TODO` descriptors the rest) */
 val e_devmem : (bool, afmt, int, areg, apair, aop, bool, int, int, int) -> option(int)
 function e_devmem(st, f, mask, r, p, i, sgn, s, g, u6) = {
   start_enc();
-  if not_bool(st) & u6 != 0 then enc_err = true;
+  if not_bool(tuple_ok(r, mask)) then enc_err = true;
   /* shift field value 3: applegpu's notes (commented-out code in MemoryShiftDesc.decode, and its
    * emulator's `if shift == 3: shift = 2`) suggest it acts as 2, which is not confirmed; agx.k adds the
    * shift as given.  The value is rejected in both directions, so every encoded / decoded access has
@@ -751,29 +946,31 @@ function e_devmem(st, f, mask, r, p, i, sgn, s, g, u6) = {
   if s < 0 | s > 2 then enc_err = true;
   let w0 = fput(fput(fput2(fput(0, 30, 1, g), 7, 3, 48, 1, fmt_code(f)), 52, 4, mask), 25, 1, if sgn then 0 else 1);
   let w1 = fput(e_memidx(e_membase(e_memreg(w0, r, 10, 40, 49), p), i), 42, 2, s);
-  finish(if st then C_DEVSTORE else C_DEVLOAD, if st then fput(w1, 44, 1, u6) else w1)
+  finish(if st then C_DEVSTORE else C_DEVLOAD, fput(w1, 44, 2, u6))
 }
 val d_devmem : (bool, int) -> option(ast)
 function d_devmem(st, w) = {
   start_dec();
   let f = code_fmt(fget2(w, 7, 3, 48, 1));
-  dchk(fget(w, 42, 2) != 3);   /* see e_devmem */
+  dchk(fget(w, 42, 2) != 3 & tuple_ok(d_memreg(w, 10, 40, 49), fget(w, 52, 4)));   /* see e_devmem */
   fin_dec(DEVMEM(st, f, fget(w, 52, 4), d_memreg(w, 10, 40, 49), d_membase(w), d_memidx(w), not_bool(bit_int(w, 25)),
-                 fget(w, 42, 2), fget(w, 30, 1), if st then fget(w, 44, 1) else 0))
+                 fget(w, 42, 2), fget(w, 30, 1), fget(w, 44, 2)))
 }
 
 /* threadgroup_load / store: F (24,4), mask (36,4), R (9,6)+(60,2) flag 8, base, index; no shift field */
 val e_tgmem : (bool, afmt, int, areg, aop, aop, int) -> option(int)
 function e_tgmem(st, f, mask, r, base, i, s) = {
   start_enc();
-  if s != 0 then enc_err = true;
+  if s != 0 | not_bool(int_fmt(f)) | not_bool(tuple_ok(r, mask)) then enc_err = true;
   let w = e_tgidx(e_tgbase(e_memreg(fput(fput(0, 24, 4, fmt_code(f)), 36, 4, mask), r, 9, 60, 8), base), i);
   finish(if st then C_TGSTORE else C_TGLOAD, w)
 }
 val d_tgmem : (bool, int) -> option(ast)
 function d_tgmem(st, w) = {
   start_dec();
-  fin_dec(TGMEM(st, code_fmt(fget(w, 24, 4)), fget(w, 36, 4), d_memreg(w, 9, 60, 8), d_tgbase(w), d_tgidx(w), 0))
+  let f = code_fmt(fget(w, 24, 4));
+  dchk(int_fmt(f) & tuple_ok(d_memreg(w, 9, 60, 8), fget(w, 36, 4)));
+  fin_dec(TGMEM(st, f, fget(w, 36, 4), d_memreg(w, 9, 60, 8), d_tgbase(w), d_tgidx(w), 0))
 }
 
 /* device atomic: op (6,4), g (30), R (10,6)+(40,2) flag 47, base, index, Ou (25), S (48, 8), bits 45-46;
@@ -854,14 +1051,20 @@ function d_devatom(w) = {
   fin_dec(DEVATOM(op, d, d_membase(w), d_memidx(w), not_bool(bit_int(w, 25)), OReg(v), fget(w, 30, 1), m))
 }
 
-/* threadgroup atomic: op (24,4), R (9,6)+(60,2) flag 8, present 38, base, index, S (64, 8);
+/* threadgroup atomic: op (24,4) (the ten 32-bit operations and cmpxchg, op 3), R (9,6)+(60,2) flag 8, present 38, base, index, S (64, 8);
  * observed values u1 (6,2) = 0, u3 (35,3) = 2, u4 (40,8) = 128, u5 (72,8) = 0 */
 val e_tgatom : (aaop, option(areg), aop, aop, aop) -> option(int)
 function e_tgatom(op, d, base, i, v) = {
   start_enc();
-  var w : int = fput(0, 24, 4, atom_code(op));
+  var w : int = fput(0, 24, 4, if op == A_cmpxchg then 3 else atom_code(op));
   match d { Some(r) => w = fput(e_memreg(w, r, 9, 60, 8), 38, 1, 1), None() => () };
-  match op_reg32(v) { Some(r) => w = fput(w, 64, 8, 2 * r.num), None() => enc_err = true };
+  if op == A_cmpxchg then {
+    /* cmpxchg: the register pair S (new value), S + 1 (compare value) */
+    match v {
+      OReg(r) => { if r.file != GPR | r.view != 3 | not_bool(nomods(r)) | r.hint != HNone then enc_err = true; w = fput(w, 64, 8, 2 * r.num) },
+      _ => enc_err = true
+    }
+  } else match op_reg32(v) { Some(r) => w = fput(w, 64, 8, 2 * r.num), None() => enc_err = true };
   w = e_tgidx(e_tgbase(w, base), i);
   w = fput(fput(w, 35, 3, 2), 40, 8, 128);
   finish(C_TGATOMIC, w)
@@ -873,7 +1076,8 @@ function d_tgatom(w) = {
   let d : option(areg) = if bit_int(w, 38) then Some(d_memreg(w, 9, 60, 8)) else { dchk(fget2(w, 9, 6, 60, 2) == 0 & fget(w, 8, 1) == 0); None() };
   let sv = fget(w, 64, 8);
   dchk(not_bool(bit_int(sv, 0)));
-  fin_dec(TGATOM(code_atom(fget(w, 24, 4)), d, d_tgbase(w), d_tgidx(w), OReg(mkreg(GPR, shr_int(sv, 1), 0, HNone))))
+  let op = if fget(w, 24, 4) == 3 then A_cmpxchg else code_atom(fget(w, 24, 4));
+  fin_dec(TGATOM(op, d, d_tgbase(w), d_tgidx(w), OReg(mkreg(GPR, shr_int(sv, 1), if op == A_cmpxchg then 3 else 0, HNone))))
 }
 
 val e_wait : int -> option(int)
@@ -891,17 +1095,26 @@ function agx_encode(i) = match i {
   BITOP(tt, d, a, b) => e_bitop(tt, d, a, b),
   BFI(m, d, a, b, c) => e_bf(C_BFI, m, d, a, b, c),
   BFEIL(m, d, a, b, c) => e_bf(C_BFEIL, m, d, a, b, c),
+  EXTR(m, d, a, b, c) => e_bf(C_EXTR, m, d, a, b, c),
+  INTL(d, a, b) => e_intl(d, a, b),
+  CONVERT(m, i2f, d, a) => e_convert(m, i2f, d, a),
   ASR(d, a, b) => e_asr(d, a, b),
   IUNOP(o, d, a) => e_iunop(o, d, a),
   FBIN(o, h, s, d, a, b) => e_fbin(o, h, s, d, a, b),
   FMADD(h, s, d, a, b, c) => e_fmadd(h, s, d, a, b, c),
   RCP(s, d, a) => e_rcp(s, d, a),
+  FUNOP(o, s, d, a) => e_funop(o, s, d, a),
   CMPSEL(isf, cc, d, a, b, x, y) => e_cmpsel(isf, cc, d, a, b, x, y),
   STACKOP(k, isf, cc, a, b, n) => e_stack(k, isf, cc, a, b, n),
   POP_EXEC(n) => e_pop(n),
   JMP_EXEC(any, t) => e_jmp(any, t),
   BALLOT(isf, cc, d, a, b) => e_ballot(isf, cc, d, a, b),
   SHUFFLE(k, d, a, b) => e_shuf(k, d, a, b),
+  XLANE(k, o, d, a) => e_xlane(k, o, d, a),
+  STACKMEM(st, f, m, r, o, g) => e_stackmem(st, f, m, r, o, g),
+  STACK_ADJUST(n) => e_stackadj(n),
+  QSHUFFLE(k, d, a, b) => e_qshuf(k, d, a, b),
+  QBALLOT(isf, cc, d, a, b) => e_qballot(isf, cc, d, a, b),
   DEVMEM(st, f, m, r, p, i, sg, s, g, u6) => e_devmem(st, f, m, r, p, i, sg, s, g, u6),
   TGMEM(st, f, m, r, b, i, s) => e_tgmem(st, f, m, r, b, i, s),
   DEVATOM(op, d, p, i, sg, v, g, m) => e_devatom(op, d, p, i, sg, v, g, m),
@@ -940,6 +1153,9 @@ function agx_decode(win) = {
       else if k.cid == C_BITREV.cid then d_iunop(U_bitrev, w)
       else if k.cid == C_POPCOUNT.cid then d_iunop(U_popcount, w)
       else if k.cid == C_FFS.cid then d_iunop(U_ffs, w)
+      else if k.cid == C_EXTR.cid then d_extr(w)
+      else if k.cid == C_INTL.cid then d_intl(w)
+      else if k.cid == C_CONVERT.cid then d_convert(w)
       else if k.cid == C_FMADD32.cid then d_fmadd(false, w)
       else if k.cid == C_FMADD16.cid then d_fmadd(true, w)
       else if k.cid == C_FADD32.cid then d_fbin(FB_add, false, w)
@@ -947,6 +1163,7 @@ function agx_decode(win) = {
       else if k.cid == C_FMUL32.cid then d_fbin(FB_mul, false, w)
       else if k.cid == C_FMUL16.cid then d_fbin(FB_mul, true, w)
       else if k.cid == C_RCP.cid then d_rcp(w)
+      else if is_some(cid_funop(k.cid)) then match cid_funop(k.cid) { Some(o) => d_funop(o, w), None() => None() }
       else if k.cid == C_STOP.cid then Some(STOP())
       else if k.cid == C_JMPANY.cid then d_jmp(true, w)
       else if k.cid == C_JMPNONE.cid then d_jmp(false, w)
@@ -965,6 +1182,19 @@ function agx_decode(win) = {
       else if k.cid == C_SHUFDOWN.cid then d_shuf(SH_down, w)
       else if k.cid == C_SHUFUP.cid then d_shuf(SH_up, w)
       else if k.cid == C_SHUFXOR.cid then d_shuf(SH_xor, w)
+      else if k.cid == C_STACKLOAD.cid then d_stackmem(false, w)
+      else if k.cid == C_STACKSTORE.cid then d_stackmem(true, w)
+      else if k.cid == C_STACKADJ.cid then Some(STACK_ADJUST(sext_int(fget3(w, 20, 4, 32, 4, 56, 8), 16)))
+      else if k.cid == C_XQUAD.cid then d_xlane(XK_quad, w)
+      else if k.cid == C_XSIMD.cid then d_xlane(XK_simd, w)
+      else if k.cid == C_XQUADP.cid then d_xlane(XK_quad_prefix, w)
+      else if k.cid == C_XSIMDP.cid then d_xlane(XK_simd_prefix, w)
+      else if k.cid == C_QSHUF.cid then d_qshuf(SH_idx, w)
+      else if k.cid == C_QSHUFXOR.cid then d_qshuf(SH_xor, w)
+      else if k.cid == C_QSHUFUP.cid then d_qshuf(SH_up, w)
+      else if k.cid == C_QSHUFDOWN.cid then d_qshuf(SH_down, w)
+      else if k.cid == C_ICMPQBALLOT.cid then d_qballot(false, w)
+      else if k.cid == C_FCMPQBALLOT.cid then d_qballot(true, w)
       else if k.cid == C_WAIT.cid then Some(WAIT(fget(w, 8, 1)))
       else if k.cid == C_DEVLOAD.cid then d_devmem(false, w)
       else if k.cid == C_DEVSTORE.cid then d_devmem(true, w)
@@ -1007,6 +1237,15 @@ mapping clause encdec = forwards (ASR(_) as i) if is_some_int(agx_encode(i)) => 
 mapping clause encdec = forwards (IUNOP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (FBIN(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (FMADD(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (EXTR(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (INTL(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (CONVERT(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (STACKMEM(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (STACK_ADJUST(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (XLANE(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (QSHUFFLE(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (QBALLOT(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
+mapping clause encdec = forwards (FUNOP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (RCP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (CMPSEL(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))
 mapping clause encdec = forwards (STACKOP(_) as i) if is_some_int(agx_encode(i)) => w80(the_int(agx_encode(i)))

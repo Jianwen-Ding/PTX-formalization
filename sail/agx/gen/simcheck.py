@@ -75,30 +75,45 @@ def dev(st, fmt, mask, r, view, pair, idx, sg=0, s=0, g=0, u6=0):
     return ["DEVMEM", st, fmt, mask] + reg(0, r, view) + pair + idx + [sg, s, g, u6]
 
 
+# the reductions and prefixes agx_run models (applegpu's names; not quad_prefix and / or / xor / min / max and
+# simd_prefix min.f / max.f)
+SIM_XLANE = ["quad_" + o for o in agxgen.XOPS] + ["simd_" + o for o in agxgen.XOPS] + \
+    ["quad_prefix_" + o for o in ("iadd", "fadd", "fmul")] + \
+    ["simd_prefix_" + o for o in agxgen.XOPS if o not in ("min.f", "max.f")]
+
+
 class ProgGen:
     def __init__(self, rng, kinds, only=None):
         self.R = rng
         self.kinds = kinds
-        self.g = agxgen.Gen(rng, regs=DATA, uregs=UNI)
+        self.g = agxgen.Gen(rng, regs=DATA, uregs=UNI, odd=False)
         self.only = only
         self.depth = 0
         self.loops = 0
         alu = ["mov_imm", "mov", "get_sr", "iadd", "isub", "iadd.sat", "isub.sat", "imadd", "imsub", "imadd.sat", "imsub.sat", "bitop",
-               "bfi", "bfeil", "asr", "popcount", "bitrev", "ffs", "fadd32", "fadd16", "fmul32", "fmul16", "fmadd32", "fmadd16", "rcp",
+               "bfi", "bfeil", "extr", "intl", "convert", "asr", "popcount", "bitrev", "ffs", "fadd32", "fadd16", "fmul32", "fmul16", "fmadd32", "fmadd16", "rcp"] + agxgen.FUNOPS + [
                "icmpsel", "fcmpsel", "icmp_ballot", "fcmp_ballot", "simd_shuffle", "simd_shuffle_xor", "simd_shuffle_up",
-               "simd_shuffle_down"]
+               "simd_shuffle_down", "quad_shuffle", "quad_shuffle_xor", "quad_shuffle_up", "quad_shuffle_down", "icmp_quad_ballot",
+               "fcmp_quad_ballot"] + SIM_XLANE
         self.alu = [a for a in alu if only is None or a in only]
 
     # one data instruction, operands restricted to the data registers
     def alu_instr(self):
+        while True:
+            t = self.alu_instr1()
+            # forms the model leaves undefined (64-bit imadd multiplicands) are not run
+            if agxgen.unmeasured(t) is None:
+                return t
+
+    def alu_instr1(self):
         name = self.R.choice(self.alu)
         dims, build = agxgen.SCHEMAS[name]
         c = agxgen._choose(dims, self.R)
         if name == "get_sr":
             c["sr"] = self.R.choice(sorted(SRS))
         t = build(c, self.g)
-        if t[0] == "IADD" or t[0] == "IMADD":
-            pass
+        if t[0] == "FUNOP" and t[1] in ("floor", "ceil", "trunc", "rint"):
+            t[2] = 0   # agx_run ignores .sat on the roundings (sail/README.md)
         return t
 
     def fix_pairs(self, t):
@@ -111,7 +126,7 @@ class ProgGen:
         k = R.random()
         if k < 0.45:
             st = R.randrange(2)
-            fmt = R.choice(agxgen.FMTS)
+            fmt = R.choice(agxgen.FMTS * 2 + [f for f in agxgen.DEV_FMTS if f not in agxgen.PACKED_FMTS and f not in agxgen.FMTS])
             view = R.choice((0, 1, 2)) if fmt != "u32" else R.choice((0, 0, 1, 2))
             mask = R.randrange(1, 16)
             n = bin(mask).count("1")
@@ -126,7 +141,7 @@ class ProgGen:
                 out.append(iand(37, R.choice(DATA), 63))
                 idx = RG(37)
             g = R.randrange(2)
-            out.append(dev(st, fmt, mask, r, view, pair, idx, sg=R.randrange(2), s=R.randrange(3), g=g, u6=R.randrange(2) if st else 0))
+            out.append(dev(st, fmt, mask, r, view, pair, idx, sg=R.randrange(2), s=R.randrange(3), g=g, u6=R.randrange(4)))
             if not st:
                 out.append(["WAIT", g])
         elif k < 0.65:
@@ -147,6 +162,23 @@ class ProgGen:
             v = RG(R.choice(DATA[:-1]), 3) if op in agxgen.DEV_PAIR else RG(R.choice(DATA))
             out.append(["DEVATOM", op] + d + pair + idx + [R.randrange(2)] + v + [g, R.choice(agxgen.DEV_MODES[op])])
             out.append(["WAIT", g])
+        elif k < 0.75 and "stack" in self.kinds:
+            # stack accesses inside the prolog's allocation (STACK_WORDS words per lane)
+            st = R.randrange(2)
+            fmt = R.choice(agxgen.FMTS)
+            view = R.choice((0, 1, 2))
+            mask = R.randrange(1, 16)
+            n = bin(mask).count("1")
+            r = R.randrange(4, 36 - n + 1) if view == 0 else R.randrange(4, 36 - (n + 1) // 2)
+            if R.random() < 0.5:
+                off = ["I", R.randrange(0, 4 * STACK_WORDS - 16)]
+            else:
+                out.append(iand(37, R.choice(DATA), 4 * STACK_WORDS - 32 - 1))
+                off = RG(37)
+            g = R.randrange(2)
+            out.append(["STACKMEM", st, fmt, mask] + reg(0, r, view) + off + [g])
+            if not st:
+                out.append(["WAIT", g])
         elif k < 0.85:
             st = R.randrange(2)
             fmt = R.choice(agxgen.FMTS)
@@ -168,7 +200,7 @@ class ProgGen:
             if not st:
                 out.append(["WAIT", 0])
         else:
-            op = R.choice(agxgen.AOPS)
+            op = R.choice(agxgen.AOPS + ["cmpxchg"])
             if R.random() < 0.5:
                 base = ["I", 0]
             else:
@@ -180,7 +212,7 @@ class ProgGen:
                 out.append(iand(37, R.choice(DATA), 31, 1, 1))
                 idx = RG(37, 1)
             d = ["S"] + reg(0, R.choice(DATA), R.choice((0, 0, 1, 2))) if R.random() < 0.8 else ["N"]
-            out.append(["TGATOM", op] + d + base + idx + RG(R.choice(DATA)))
+            out.append(["TGATOM", op] + d + base + idx + (RG(R.choice(DATA[:-1]), 3) if op == "cmpxchg" else RG(R.choice(DATA))))
         if R.random() < 0.2:
             out.append(["TG_BARRIER"])
         return out
@@ -256,8 +288,11 @@ class ProgGen:
         return out
 
 
+STACK_WORDS = 64
+
+
 def prolog():
-    out = [["GET_SR"] + reg(0, 1) + [80]]
+    out = [["STACK_ADJUST", STACK_WORDS], ["GET_SR"] + reg(0, 1) + [80]]
     for k in range(NIN // 4):
         out.append(imadd(2, 1, NIN, 4 * k))
         out.append(dev(0, "u32", 15, 4 + 4 * k, 0, [1, 0, 1], RG(2)))
@@ -441,7 +476,7 @@ def main(argv=None):
     ap.add_argument("-n", type=int, default=100)
     ap.add_argument("-l", type=int, default=30)
     ap.add_argument("-j", type=int, default=3)
-    ap.add_argument("--kinds", default="alu,cf,mem")
+    ap.add_argument("--kinds", default="alu,cf,mem,stack")
     ap.add_argument("--only", help="comma-separated instruction schemas (ALU)")
     ap.add_argument("--keep")
     ap.add_argument("-v", action="store_true")
