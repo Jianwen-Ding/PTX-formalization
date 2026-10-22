@@ -387,9 +387,11 @@ function isaQual(o, ops) = {
     "mbarrier.check_layout: a .layout qualifier is required [PTX ISA 9.4 9.7.15.16.21]"
   else if b == "mbarrier" & has(m, "init") & isaBadImm(ops, 2, 1, 1, if has(m, "layout::v1") then 511 else 1048575, 1) then
     "mbarrier.init: count outside the range of the layout [PTX ISA 9.4 9.7.15.16.12]"
-  else if b == "mbarrier" & isaAny(m, [|"test_wait", "try_wait"|]) & has(m, "parity")
+  /* "So the valid values of phaseParity operand are 0 and 1" (9.3); 9.4 drops the sentence: "phaseParity, whose
+     integer parity denotes ..." (9.4 9.7.15.16.19), so only modules below PTX ISA 9.4 are held to 0 / 1 */
+  else if b == "mbarrier" & isaver < 94 & isaAny(m, [|"test_wait", "try_wait"|]) & has(m, "parity")
           & (isaBadImm(ops, 3, 2, 0, 1, 1) | isaBadImm(ops, 4, 2, 0, 1, 1) | isaBadImm(ops, 4, 3, 0, 1, 1) | isaBadImm(ops, 5, 3, 0, 1, 1)) then
-    "mbarrier.test_wait / try_wait.parity: the phase parity is 0 or 1 [PTX ISA 9.4 9.7.15.16.19]"
+    "mbarrier.test_wait / try_wait.parity: the phase parity is 0 or 1 [PTX ISA 9.3 9.7.14.16.19]"
   else if b == "tensormap" & has(m, "replace") & isaBadImm(ops, 3, 1, 0, 4, 1) then
     "tensormap.replace: the only valid values for ord are [0..4] [PTX ISA 9.4 9.7.10.29]"
   else if (b == "discard" | b == "applypriority") & isaBadImm(ops, 2, 1, 128, 128, 1) then

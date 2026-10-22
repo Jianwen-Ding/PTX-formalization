@@ -207,7 +207,7 @@ function atv(ds, l, op, t, vs) = match l {
   _ => match vs {
     [||] => (),
     v :: vr => {
-      let old = memop_do(l, AtOp(atOpG(l, op, t), t, v, 0));
+      let old = memop_do(l, AtOp(op, t, v, 0));
       if not_bool(stuck) then match ds {
         d :: dr => { ldwb(XS(d), t, old); atv(dr, loc_add(l, bytes(t)), op, t, vr) },
         [||] => atv([||], loc_add(l, bytes(t)), op, t, vr)
@@ -226,11 +226,11 @@ function exec_memq_prio(o, ops) = {
     /* a vector atom / red is one access of (elements x element size) bytes for the alignment rule (6.4.1) */
     ("atom", [|XV(ds), XB([|a|], [||]), XV(bs)|]) => {
       let t = ty1(o); let l = ea(a, spaceOf(m));
-      if vecAligned(l, sop_count(bs) * bytes(t)) then atv(ds, l, atomOp(m), t, rdList(bs, t)); true
+      if vecAligned(l, sop_count(bs) * bytes(t)) then atv(ds, l, atOpG(l, atomOp(m), t, has(m, "noftz")), t, rdList(bs, t)); true
     },
     ("red", [|XB([|a|], [||]), XV(bs)|]) => {
       let t = ty1(o); let l = ea(a, spaceOf(m));
-      if vecAligned(l, sop_count(bs) * bytes(t)) then atv([||], l, atomOp(m), t, rdList(bs, t)); true
+      if vecAligned(l, sop_count(bs) * bytes(t)) then atv([||], l, atOpG(l, atomOp(m), t, has(m, "noftz")), t, rdList(bs, t)); true
     },
     _ => false
   }

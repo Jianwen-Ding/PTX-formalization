@@ -323,13 +323,21 @@ function exec_mbar(o, ops) = {
       };
       true
     },
-    _ :: XB([|a|], [||]) :: rest if has(m, "arrive") & mc => {
+    /* arrive / arrive_drop .multicast::cluster::32b (PTX ISA 9.4 9.7.15.16.16, .17): the operation on the object at the
+       same offset in each CTA of ctaMask */
+    _ :: XB([|a|], [||]) :: rest if (has(m, "arrive") | has(m, "arrive_drop")) & mc => {
       let mk : int = match xlast(rest) { Some(x) => rdu32(x), None() => 0 };
       let args = xdrop_last(rest);
       let tx = mbTxArg(m, args);
       let cnt = mbCountArg(m, args);
       var ks = mbMcKeys(land_int(locOffA(ea(a, sp)), 16777215), mk);
-      while is_cons(ks) do { match ks { k :: rr => { if mbHas(k) then mbPut(k, mbArrive(mbTx(mbGet(k), tx), cnt)); ks = rr }, [||] => () } };
+      while is_cons(ks) do { match ks { k :: rr => {
+        if mbHas(k) then {
+          let (_, _, e0, _, _) = mbGet(k);
+          if has(m, "arrive_drop") & ub & e0 - cnt == 0 then fault("mbarrier.arrive_drop: the expected arrival count becomes zero", 0)
+          else mbPut(k, if has(m, "arrive_drop") then mbDrop(mbTx(mbGet(k), tx), cnt) else mbArrive(mbTx(mbGet(k), tx), cnt))
+        };
+        ks = rr }, [||] => () } };
       true
     },
     d :: XB([|a|], [||]) :: rest if (has(m, "arrive") | has(m, "arrive_drop")) & not_bool(mc) => {
@@ -342,6 +350,9 @@ function exec_mbar(o, ops) = {
         /* count "must be in the range" of Table 37, so at most the pending count; a .noComplete arrive "must not
            cause the mbarrier to complete its current phase" (9.7.14.16.16): under .ub strict */
         if ub & (n < 1 | n > q0) then fault("mbarrier.arrive: arrive count larger than the pending count", n)
+        /* arrive_drop: "If the decrement causes the expected arrivals count to be zero, the behavior is undefined"
+           (PTX ISA 9.4 9.7.15.16.17) */
+        else if ub & has(m, "arrive_drop") & e0 - n == 0 then fault("mbarrier.arrive_drop: the expected arrival count becomes zero", n)
         else if mbUbState("arrive", (p0, q0, e0, t1, l0)) then {
           let s2 = if has(m, "arrive_drop") then mbDrop((p0, q0, e0, t1, l0), n) else mbArrive((p0, q0, e0, t1, l0), n);
           let (p2, _, _, _, _) = s2;
@@ -439,6 +450,11 @@ function repHit(m, v, n) = {
   hit
 }
 
+/* the ctaMask of a .multicast::cluster form: "By default, ctaMask is assumed to be of 16-bit width"; ::32b uses 32 bits
+   (PTX ISA 9.4 9.7.10.28.4.1, 9.7.10.28.5.5, 9.7.18.12.1) */
+val mcMask : (list(string), int) -> int
+function mcMask(m, v) = if has(m, "multicast::cluster::32b") then land_int(v, 4294967295) else land_int(v, 65535)
+
 /* #bulkTx(Mb, N): complete-tx of N bytes on an existing mbarrier */
 val bulkTx : (loc, int) -> unit
 function bulkTx(mb, n) = {
@@ -493,10 +509,10 @@ function expandMask(mk, chunks) = {
   r
 }
 
-/* "The current implementation of cp.reduce.async.bulk.add.f32 flushes subnormal inputs and results to
- * sign-preserving zero" (ISA 9.7.9.26.4.2) */
+/* "The default behavior for cp.reduce.async.bulk.add.f32 is equivalent to specifying optional .noftz qualifier which
+ * preserves input and result subnormals, and does not flush them to zero" (PTX ISA 9.4 9.7.10.28.4.2; 9.3 flushed) */
 val bulkOp : (string, ty) -> string
-function bulkOp(op, t) = if op == "add" & ty_eq(t, mkty("f", 32)) then "add.ftz" else op
+function bulkOp(op, t) = op
 
 /* the PTX name of a type (.u32, .bf16, .f16x2, .e4m3x2, ...) */
 val tnm : ty -> string
@@ -505,7 +521,8 @@ function tnm(t) =
   else if string_length(t.k) > 2 then t.k else concat_str(t.k, dec_str(t.w))
 
 /* cp.reduce.async.bulk: "the valid combinations of .redOp and element type" (PTX ISA 9.3 ~16477-16486) and the .noftz
- * form: ".add.f16 and .add.bf16 operations require .noftz qualifier" (~16471), which is valid only for them (~16426-16437).
+ * form: ".add.f16 and .add.bf16 operations require .noftz qualifier" (~16471), valid for .add.f16 / .bf16 / .f32
+ * (PTX ISA 9.4 9.7.10.28.4.2: ".type = { .f16, .bf16, .f32 }" of the .add.noftz form).
  * "" when legal, else the error.  Reported by `.isacheck ;` (isaTables, ptx_mm.sail).  Without it the other combinations
  * run with the natural meaning of the operation on the type: integer operations on .b32 / .b64 as unsigned, .and / .or /
  * .xor on the bits of any type, .add / .min / .max on floats as in atom (.add.f16 / .bf16 without .noftz as with it, the
@@ -529,7 +546,7 @@ function bulkRedErr(glob, op, t, noftz) = {
   if not_bool(ok) then concat_str("cp.reduce.async.bulk: .", concat_str(op, concat_str(" with .", concat_str(n,
     if glob then " is not a valid .redOp / type combination for .global" else " is not a valid .redOp / type combination for .shared::cluster"))))
   else if half & not_bool(noftz) then concat_str("cp.reduce.async.bulk: .add.", concat_str(n, " requires .noftz"))
-  else if noftz & not_bool(half) then "cp.reduce.async.bulk: .noftz is only valid with .add.f16 / .add.bf16"
+  else if noftz & not_bool(half | (op == "add" & n == "f32")) then "cp.reduce.async.bulk: .noftz is only valid with .add.f16 / .add.bf16 / .add.f32"
   else ""
 }
 
@@ -614,7 +631,7 @@ function exec_async(o, ops) = {
         if not_bool(bulkUb("cp.async.bulk", n, ea(s, if has(m, "global") then "generic" else "shared"), ea(d, cl),
                            not_bool(has(m, "global")) & has(m, "shared::cluster"))) then return true;
         let v = memop_do(ea(s, if has(m, "global") then "generic" else "shared"), RdOp(n));
-        let mk = bulkMask(rest);
+        let mk = mcMask(m, bulkMask(rest));
         var ds = bulkLocs(ea(d, cl), mk, isMc(m));
         var ms : list(loc) = match bulkMbar(rest) { Some(a) => bulkLocs(ea(a, cl), mk, isMc(m)), None() => [||] };
         while is_cons(ds) & is_cons(ms) & not_bool(stuck) do {

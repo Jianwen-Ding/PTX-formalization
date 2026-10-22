@@ -202,11 +202,12 @@ function gx_alu(o, ops) = {
   }
 }
 
-/* "Current implementation of atom.add.f32 [red.add.f32] on global memory flushes subnormal inputs and results to
- * sign-preserving zero" (ISA 9.7.14.5, 9.7.14.6); shared memory keeps them */
-val atOpG : (loc, string, ty) -> string
-function atOpG(l, op, t) = match l {
-  Loc(s, _) => if s == "global" & op == "add" & ty_eq(t, mkty("f", 32)) then "add.ftz" else op,
+/* "The atom.add.f32 operation without .noftz, flushes subnormal inputs and results to sign-preserving zero on global
+ * memory but supports subnormal inputs and results and doesn't flush them to zero on shared memory" (PTX ISA 9.4
+ * 9.7.15.5; red 9.7.15.6); with .noftz (9.4) global memory keeps them too */
+val atOpG : (loc, string, ty, bool) -> string
+function atOpG(l, op, t, noftz) = match l {
+  Loc(s, _) => if s == "global" & op == "add" & ty_eq(t, mkty("f", 32)) & not_bool(noftz) then "add.ftz" else op,
   _ => op
 }
 
@@ -264,7 +265,7 @@ function exec_mem(o, ops) = {
           Some(a) => {
             let c = if n == 4 then rd(xop_nth(ops, 3), t) else 0;
             let l = ea(a, spaceOf(m));
-            let v = memop_do(l, AtOp(atOpG(l, atomOp(m), t), t, rd(xop_nth(ops, 2), t), c));
+            let v = memop_do(l, AtOp(atOpG(l, atomOp(m), t, has(m, "noftz")), t, rd(xop_nth(ops, 2), t), c));
             if not_bool(stuck) then ldwb(xop_nth(ops, 0), t, v);
             true
           },
@@ -277,7 +278,7 @@ function exec_mem(o, ops) = {
           Some(a) => {
             /* multimem.red (forwarded with its modifier "red") is not covered by the flushing note */
             let l = ea(a, spaceOf(m));
-            let op = if has(m, "red") then atomOp(m) else atOpG(l, atomOp(m), t);
+            let op = if has(m, "red") then atomOp(m) else atOpG(l, atomOp(m), t, has(m, "noftz"));
             let _ = memop_do(l, AtOp(op, t, rd(xop_nth(ops, 1), t), 0)) in ();
             true
           },

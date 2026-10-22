@@ -135,10 +135,10 @@ val isaTables : (string, list(string), list(ty)) -> string
 function isaTables(base, m, ts) = {
   let t = ty_nth(ts, 0);
   let (e, sec) : (string, string) =
-    if base == "sured" then (suredErr(has(m, "p"), atomOp(m), tnm(t)), "9.7.12.3")
+    if base == "sured" then (suredErr(has(m, "p"), atomOp(m), tnm(t)), "9.7.13.3")
     else if base == "cp" & has(m, "reduce") & has(m, "bulk") & not_bool(has(m, "tensor")) then
-      (bulkRedErr(has(m, "global"), atomOp(m), t, has(m, "noftz")), "9.7.9.26.4.2")
-    else if base == "multimem" & (has(m, "ld_reduce") | has(m, "st") | has(m, "red")) & not_bool(has(m, "cp")) then (mmErr(m, t), "9.7.9.15")
+      (bulkRedErr(has(m, "global"), atomOp(m), t, has(m, "noftz")), "9.7.10.28.4.2")
+    else if base == "multimem" & (has(m, "ld_reduce") | has(m, "st") | has(m, "red")) & not_bool(has(m, "cp")) then (mmErr(m, t), "9.7.10.15")
     else ("", "");
   if e == "" then "" else concat_str(e, concat_str(" [PTX ISA 9.4 ", concat_str(sec, "]")))
 }

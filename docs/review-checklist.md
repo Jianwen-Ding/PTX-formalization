@@ -494,3 +494,29 @@ is recorded in the list under "Second review pass".  The legality table is gener
       `dealloc.exclusive`; a dealloc whose `.exclusive` does not match the allocation is reported under `.ub strict`.
       Model scope: tensor memory is per CTA in the model, so "no other CTA may allocate" has no counterpart; non-exclusive
       allocations stay within 512 columns (tests/tc-alloc-exclusive.ptx, tests/neg/tc-ub-exclusive-dealloc.ptx)
+
+## Review of the 9.3 -> 9.4 text changes (section-by-section diff, four reviewers)
+
+- [x] atom / red `.add.noftz.f32` on global memory flushed subnormals (the model flushed every global `.add.f32`):
+      9.4 §9.7.15.5 / §9.7.15.6 "The atom.add.f32 operation without .noftz, flushes ..."; also the vector forms
+      (tests/atom-noftz-f32.ptx)
+- [x] cp.reduce.async.bulk `.add.f32` keeps subnormals in 9.4 ("The default behavior ... is equivalent to specifying
+      optional .noftz", §9.7.10.28.4.2; 9.3 flushed) and `.noftz` is legal with `.f32` (it was reported under
+      `.isacheck`).  tests/atom-f32-ftz.ptx expected the 9.3 flushing; updated
+- [x] mbarrier.arrive_drop `.multicast::cluster::32b` stopped as unsupported; now drops on every CTA of ctaMask
+      (tests/mbar-drop-mc.ptx).  New 9.4 UB "If the decrement causes the expected arrivals count to be zero" under
+      `.ub strict` (multicast and local)
+- [x] test_wait / try_wait `.parity` immediates outside 0 / 1: 9.4 drops "So the valid values of phaseParity operand
+      are 0 and 1"; the `.isacheck` report now applies below PTX ISA 9.4 only
+- [x] the generated row for fence `.alias` with `.acquire` / `.release` (9.4) no longer matches the 9.3 fabric proxy
+      kinds (`generic::fabric` ...), which were reported as needing 9.4
+- [x] cvt `.scaled::n1::ue8m0` from `.bf16x2` flushed inputs below 2^-14 (the f16 threshold); now below 2^-126
+- [x] the ctaMask of `.multicast::cluster` without `::32b` uses 16 bits ("By default, ctaMask is assumed to be of 16-bit
+      width"): cp.async.bulk, cp.async.bulk.tensor, tcgen05.commit
+- [x] tensor stores: "For sm_107f, starting co-ordinates ... can be negative for .tile::scatter4 mode" (no `.ub strict`
+      report there)
+- [x] padded sub-byte tensor types (§9.7.10.28.5.1, 9.4 rules 2, 3, 8-13): `.b4x16_p64` stores, sub-byte
+      `.shared::cluster.global` copies on sm_120a, 16B alignment for `.b6x16_p32` / `.b6p2x16` stores on sm_107f (rule 10,
+      taken over rule 8), the swizzle modes per type and target, under `.ub strict` (tests/neg/tma-ub-swz-b6.ptx).
+      Box-Size[0] / Tensor-Size[0] sizes stay unchecked (the byte layout question above)
+- [x] isaTables messages cited 9.3 section numbers under "PTX ISA 9.4"; renumbered

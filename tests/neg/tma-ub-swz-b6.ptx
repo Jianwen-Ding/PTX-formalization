@@ -1,0 +1,35 @@
+// expect: swizzle mode / atomicity not supported for the padded sub-byte type
+// .b6x16_p32 with 64B swizzling on sm_100a: only none or 128B there (PTX ISA 9.4 9.7.10.28.5.1, rule 12), under .ub strict
+.version 8.8
+.target sm_100a
+.address_size 64
+.ub strict ;
+
+.visible .entry k(.param .u64 ptm, .param .u64 pg2, .param .u64 po)
+{
+    .reg .b64 %tm, %o, %mb, %st, %t, %sa, %oo, %g2; .reg .b32 %tid, %buf32, %bar32, %x, %y, %z; .reg .b16 %u16; .reg .pred %q, %w;
+    .shared .align 1024 .b8 buf[1024];
+    .shared .align 8 .b64 bar;
+    ld.param.u64 %tm, [ptm]; ld.param.u64 %g2, [pg2];
+    mov.u32 %tid, %tid.x;
+    setp.eq.u32 %q, %tid, 0;
+    mov.u64 %mb, bar; mov.u32 %bar32, bar; mov.u32 %buf32, buf;
+    @%q mbarrier.init.shared.b64 [%mb], 1;
+    @%q tensormap.replace.tile.swizzle_mode.global.b1024.b32 [%tm], 2;
+    @%q tensormap.replace.tile.elemtype.global.b1024.b32 [%tm], 15;
+    bar.sync 0;
+    @%q mbarrier.arrive.expect_tx.shared.b64 %st, [%mb], 128;
+    @%q cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes [%buf32], [%tm, {0, 0}], [%bar32];
+    @%q mbarrier.try_wait.parity.shared.b64 %w, [%mb], 0;
+    bar.sync 0;
+    ld.param.u64 %o, [po];
+    mul.wide.u32 %t, %tid, 4;
+    mov.u64 %sa, buf; add.u64 %sa, %sa, %t; add.u64 %oo, %o, %t;
+    ld.shared.b32 %x, [%sa+0]; st.global.b32 [%oo+0], %x;
+    ret;
+}
+.buffer G .u8 = { 226, 95, 193, 220, 171, 216, 171, 77, 187, 106, 78, 131, 152, 101, 180, 45, 161, 146, 39, 2, 233, 255, 197, 72, 116, 170, 44, 124, 106, 186, 90, 215, 97, 21, 11, 36, 150, 241, 29, 228, 218, 69, 135, 163, 22, 47, 196, 112, 198, 128, 211, 186, 23, 99, 94, 132, 44, 91, 117, 75, 178, 15, 206, 92, 184, 194, 67, 239, 19, 93, 11, 213, 170, 33, 94, 167, 240, 213, 126, 208, 90, 245, 230, 231, 55, 214, 55, 44, 81, 175, 0, 199, 210, 189, 40, 174, 82, 228, 200, 49, 60, 245, 131, 241, 168, 89, 16, 87, 55, 160, 217, 132, 92, 9, 249, 214, 253, 93, 56, 158, 83, 189, 168, 250, 126, 97, 187, 158 };
+.buffer G2 .u8 [8];
+.tensormap TM .u8 G .dims { 32, 4 } .strides { 32 } .box { 32, 4 } .swizzle 0 ;
+.buffer O .u32 [32];
+.launch k <<< 1, 32 >>> (TM, G2, O);

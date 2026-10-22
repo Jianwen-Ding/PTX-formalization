@@ -914,7 +914,7 @@ function exec_tc(o, ops) = {
     XB([|a|], [||]) :: _ if not_bool(winUb("tcgen05.commit", "mbar", ea(a, spaceOf(m)), [|"shared", "cluster"|])) => true,
     [|XB([|a|], [||])|] => { mbArriveKey(mbKey(ea(a, spaceOf(m)))); true },
     [|XB([|a|], [||]), mk|] if has(m, "multicast") => {
-      var ks = mbMcKeys(land_int(locOffA(ea(a, spaceOf(m))), 16777215), rdu32(mk));
+      var ks = mbMcKeys(land_int(locOffA(ea(a, spaceOf(m))), 16777215), mcMask(m, rdu32(mk)));
       while is_cons(ks) do { match ks { k :: rest => { mbArriveKey(k); ks = rest }, [||] => () } };
       true
     },

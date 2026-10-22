@@ -308,10 +308,30 @@ function tmUb(m, b, cs, store) =
     let c = tmEtc(b);
     let padded = c == 14 | c == 15;
     let c0 : int = match cs { x :: _ => x, [||] => 0 };
+    /* PTX ISA 9.4 9.7.10.28.5.1, rules 8-10: 32B alignment of the global address and the strides, except for
+       .b6x16_p32 / .b6p2x16 stores (.global.shared::cta) on sm_107f, which need 16B (rule 10, the more specific) */
+    let s107 = isasm == 107;
+    let algn = if c == 15 & s107 & store then 16 else 32;
+    let swz = tmSwz(b);
+    let atm = tmAtom(b);
+    /* rules 11-13: .b4x16_p64 takes no swizzling or 128B swizzling with any atomicity but 32B + 8B flip;
+       .b6x16_p32 / .b6p2x16 take no swizzling, on sm_107f 64B with 16B atomicity or 128B with 16B / 32B / 64B, on
+       sm_100f 128B with any atomicity but 32B + 8B flip, and never 32B with 16B or 128B with 32B + 8B flip */
+    let swzOk = if c == 14 then swz == 0 | (swz == 3 & atm != 2)
+                else if c == 15 then not_bool((swz == 1 & atm == 0) | (swz == 3 & atm == 2))
+                     & (swz == 0 | (if s107 then (swz == 2 & atm == 0) | (swz == 3 & (atm == 0 | atm == 1 | atm == 3))
+                                    else swz == 3 & atm != 2))
+                else true;
     var e : string =
       if tmSub(b) & tmFillMode(b) == 1 then "OOB-NaN fill mode does not support the sub-byte types"
+      /* rule 2: "cp.async.bulk.tensor with the direction .global.shared::cta doesn't support the type .b4x16_p64";
+         rule 3: ".shared::cluster.global doesn't support the sub-byte types on sm_120a" */
+      else if store & c == 14 then "the .global.shared::cta direction does not support .b4x16_p64"
+      else if not_bool(store) & tmSub(b) & isasm == 120 & isaarch == "a" & has(m, "shared::cluster") then
+        "the .shared::cluster.global direction does not support the sub-byte types on sm_120a"
       else if padded & tmod_int(c0, 128) != 0 then "the first coordinate must be a multiple of 128 for the padded sub-byte types"
-      else if padded & tmod_int(tmAddrOf(b), 32) != 0 then "the global address must be 32B aligned for the padded sub-byte types"
+      else if padded & tmod_int(tmAddrOf(b), algn) != 0 then concat_str("the global address must be ", concat_str(dec_str(algn), "B aligned for the padded sub-byte types"))
+      else if padded & swz != 4 & not_bool(swzOk) then "swizzle mode / atomicity not supported for the padded sub-byte type"
       else if tmSwz(b) == 4 & tmAtom(b) != 0 then "the 96B swizzle mode needs .swizzle_atomicity 16B"
       else if tmSwz(b) == 4 & padded then "the 96B swizzle mode does not support the padded sub-byte types"
       else if tmSwz(b) == 4 & not_bool(tmSub(b)) & tmBox(b, 0) * tmEb(b) > 96 then "the 96B swizzle mode needs Box-Size[0] <= 96B"
@@ -319,11 +339,13 @@ function tmUb(m, b, cs, store) =
       else if tmSwz(b) == 3 & tmAtom(b) == 2 & store then "128B swizzle with 32B atomicity and 8B flip only for copies into shared memory"
       else if tmSwz(b) == 3 & tmAtom(b) == 2 & (has(m, "im2col::w") | has(m, "im2col::w::128")) then "128B swizzle with 32B atomicity and 8B flip does not support .im2col::w modes"
       else "";
-    if padded then foreach (i from 1 to (tmRank(b) - 1)) if e == "" & tmod_int(tmStride(b, i), 32) != 0 then e = "tensor strides must be 32B aligned for the padded sub-byte types";
+    if padded then foreach (i from 1 to (tmRank(b) - 1)) if e == "" & tmod_int(tmStride(b, i), algn) != 0 then e = concat_str("tensor strides must be ", concat_str(dec_str(algn), "B aligned for the padded sub-byte types"));
     /* .global.shared::cta: "Starting co-ordinates for Bounding Box (tensorCoords) must be non-negative".  The second
        rule, "The bounding box along the D, W and H dimensions must stay within the tensor boundaries", names the im2col
        dimensions; tile-mode stores past the boundary keep the clipping of 5.5 */
-    if store & e == "" then {
+    /* 9.4: "For sm_107f, starting co-ordinates for Bounding Box (tensorCoords) can be negative for .tile::scatter4 mode" */
+    let negOk = has(m, "tile::scatter4") & (isaarch == "a" | isaarch == "f") & isasm >= 107 & isasm < 110;
+    if store & e == "" & not_bool(negOk) then {
       var x = cs;
       while is_cons(x) do { match x { v :: rest => { if e == "" & v < 0 then e = "the starting coordinates of a .global.shared::cta copy must be non-negative"; x = rest }, [||] => () } }
     };
@@ -366,7 +388,7 @@ function tm_load(m, d, b, cs, mb, rest) = {
   let eb = tmEb(b);
   let i2c = isI2c(m);
   let sub = tmSub(b);
-  let mk = bulkMask(XB([|mb|], [||]) :: (if i2c | sub then xnovec(rest) else rest));
+  let mk = mcMask(m, bulkMask(XB([|mb|], [||]) :: (if i2c | sub then xnovec(rest) else rest)));
   let bases = tmBases(ea(d, dsp), mk, isMc(m));
   let g = has(m, "gather4") | has(m, "tile::gather4");
   let inf = tmInfo(rest);

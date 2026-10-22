@@ -1,6 +1,7 @@
 // PTX ISA 9.3 9.7.14.5 / 9.7.14.6: "Current implementation of atom.add.f32 [red.add.f32] on global memory flushes
 // subnormal inputs and results to sign-preserving zero; whereas atom.add.f32 on shared memory supports subnormal inputs
-// and results"; 9.7.9.26.4.2: cp.reduce.async.bulk.add.f32 flushes subnormal inputs and results.
+// and results" (9.4 9.7.15.5: "without .noftz"); cp.reduce.async.bulk.add.f32 flushed in 9.3 (9.7.9.26.4.2) but keeps
+// subnormals in 9.4: "The default behavior ... is equivalent to specifying optional .noftz qualifier" (9.7.10.28.4.2).
 // The values without flushing are given in the comments.
 .version 8.6
 .target sm_90
@@ -42,8 +43,8 @@
                    0x00000001, 0x01000000, 0x3F800000, 0x80000002 };
 .buffer O .u32 [5];
 .launch k <<< 1, 1 >>> (G, O);
-// G[8..11]: +0 (0x00000003), +0 (0x00400000), 1.0, -0 + +0 = +0 (0x80000002)
+// G[8..11] (PTX ISA 9.4, no flushing): 0x00000003, 0x00400000, 1.0, 0x80000002 (9.3 flushed them to +0, +0, 1.0, +0)
 .expect G .u32 = { 0x00000000, 0x00000000, 0x80000000, 0x00800000, 0x00000000, 0x80800000, 0, 0,
-                   0x00000000, 0x00000000, 0x3F800000, 0x00000000 };
+                   0x00000003, 0x00400000, 0x3F800000, 0x80000002 };
 // atom returns the old memory words
 .expect O .u32 = { 0x00000001, 0x80000005, 0x00800000, 0x00000001, 0x00000003 };

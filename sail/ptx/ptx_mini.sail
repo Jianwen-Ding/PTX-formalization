@@ -121,6 +121,10 @@ function scMul(x, s) = if s == 255 then FV_NaN() else scaleP2(x, s - 127)
 val flushIn : (bool, fv, int) -> fv
 function flushIn(b, x, mn) =
   if b & not_bool(fv_is_nan(x)) & not_bool(fv_is_inf(x)) & fv_cmp(fv_abs(x), FV_Fin(false, 1, mn)) < 0 then FV_Fin(false, 0, 0) else x
+/* the smallest normal exponent of a .f16x2 / .bf16x2 source lane: .scaled::n1::ue8m0 "subnormal values for inputs a
+   and b are flushed to zero before conversion" (PTX ISA 9.4 9.7.10.24) at the source's own subnormal range */
+val halfMin : ty -> int
+function halfMin(st) = if st.k == "bf16x2" then -126 else -14
 val mrnd : list(string) -> int
 function mrnd(m) = if has(m, "rz") then 1 else if has(m, "rp") then 2 else if has(m, "rm") then 4 else 0
 val pzoFix : (bool, string, int) -> int
@@ -241,8 +245,8 @@ function exec_mini(o, ops) = {
         } else if isMiniX2(dt) & isHalfPair(st) then {
           let s = rd(b, B16);
           let v = rd(a, st);
-          wr(d, miniPack(dt, miniCvt(m, miniKind(dt), flushIn(isN1(m), decodeF(lane16(v, 1), fw(laneTyH(st))), -14), scHi(m, s)),
-                             miniCvt(m, miniKind(dt), flushIn(isN1(m), decodeF(lane16(v, 0), fw(laneTyH(st))), -14), scLo(m, s)))); true
+          wr(d, miniPack(dt, miniCvt(m, miniKind(dt), flushIn(isN1(m), decodeF(lane16(v, 1), fw(laneTyH(st))), halfMin(st)), scHi(m, s)),
+                             miniCvt(m, miniKind(dt), flushIn(isN1(m), decodeF(lane16(v, 0), fw(laneTyH(st))), halfMin(st)), scLo(m, s)))); true
         } else if isHalfPair(dt) & isMiniX2(st) then {
           let s = rd(b, B16);
           let v = rd(a, st);
@@ -274,8 +278,8 @@ function exec_mini(o, ops) = {
           wr(d, pack16(encodeF(miniDecF("ue5m3", miniElem(st, v, 0)), fw(laneTyH(dt))), encodeF(miniDecF("ue5m3", miniElem(st, v, 1)), fw(laneTyH(dt))))); true
         } else if isMiniX2(dt) & isHalfPair(st) then {
           let v = rd(a, st);
-          wr(d, miniPack(dt, miniCvt(m, miniKind(dt), flushIn(isN1(m), decodeF(lane16(v, 1), fw(laneTyH(st))), -14), 127),
-                             miniCvt(m, miniKind(dt), flushIn(isN1(m), decodeF(lane16(v, 0), fw(laneTyH(st))), -14), 127))); true
+          wr(d, miniPack(dt, miniCvt(m, miniKind(dt), flushIn(isN1(m), decodeF(lane16(v, 1), fw(laneTyH(st))), halfMin(st)), 127),
+                             miniCvt(m, miniKind(dt), flushIn(isN1(m), decodeF(lane16(v, 0), fw(laneTyH(st))), halfMin(st)), 127))); true
         } else if isS2F6(dt) & isHalfPair(st) then {
           let v = rd(a, st);
           wr(d, lor_int(shl_int(s2f6Enc(m, decodeF(lane16(v, 1), fw(laneTyH(st))), 127), 8), s2f6Enc(m, decodeF(lane16(v, 0), fw(laneTyH(st))), 127))); true

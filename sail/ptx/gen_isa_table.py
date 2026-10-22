@@ -997,11 +997,12 @@ OVERRIDES = [
     # 9.7.11.5.7-9 fabric.*.async.tensor "Requires sm_107f or higher in the same family." (L20671 ...)
     *[(n, "Requires sm_107f or higher in the same family", [("fabric", "", "0:107f")]) for n in (
         "9.7.11.5.7", "9.7.11.5.8", "9.7.11.5.9")],
-    # 9.7.15.4 fence.proxy.alias with .acquire/.release (L23286, L23309)
+    # 9.7.15.4 fence.proxy.alias with .acquire/.release (L23286, L23309); the fabric proxy kinds (.alias .acquire /
+    # .release .sys) have been 9.3 forms (".to_proxykind::from_proxykind_fabric qualifier introduced in ... 9.3")
     ("9.7.15.4", ".acquire and .release qualifiers with .alias qualifier introduced",
-     [("fence", "m=alias m=acquire/release", "94:")]),
+     [("fence", "m=alias m=acquire/release !m=generic::fabric/fabric::generic/fabric::fabric", "94:")]),
     ("9.7.15.4", ".acquire and .release qualifiers with .alias qualifier require sm_90",
-     [("fence", "m=alias m=acquire/release", "0:90")]),
+     [("fence", "m=alias m=acquire/release !m=generic::fabric/fabric::generic/fabric::fabric", "0:90")]),
     # 9.7.16.5.15/16: the "Requires sm_N or higher." statement follows a figure caption (L30278, L30469)
     ("9.7.16.5.15", "Requires sm_75 or higher", [("ldmatrix", "", "0:75")]),
     ("9.7.16.5.16", "Requires sm_90 or higher", [("stmatrix", "", "0:90")]),
