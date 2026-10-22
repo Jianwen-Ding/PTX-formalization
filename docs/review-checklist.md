@@ -258,6 +258,11 @@ Open:
       or 0) and metadata index values that are not meaningful (tf32: 0b1110 / 0b0100; ordered_metadata and the f8f6f4 /
       mx kinds: 0b0100 0b1000 0b1001 0b1100 0b1101 0b1110; otherwise not 0b0000 0b0101 0b1010 0b1111)
       (tests/neg/mma-sp-ub-*.ptx); the generated sp / sp-bs / wgsp / tcsp tests pass under `.ub strict`
+- [x] wgmma ordering (§9.7.16.7.1, §9.7.16.7.3) under `.ub strict`: a `wgmma.mma_async` before any `wgmma.fence`, and an
+      instruction other than wgmma naming an accumulator or A register of an mma_async before a `wait_group` covers its
+      group (wait_group N leaves the N most recent groups pending) (tests/neg/wgmma-ub-*.ptx); the 37 generated wgmma
+      tests pass under `.ub strict`.  Not checked: the fence required between other register accesses and a later
+      mma_async
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 
