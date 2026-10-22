@@ -282,6 +282,11 @@ Open:
       (tests/neg/tcgen05-ub-taddr.ptx); the 35 tcgen05 ld / st tests pass under `.ub strict`
 - [x] wmma.load / wmma.store "the same values of p and stride" in every thread (§9.7.15.4.3-4) under `.ub strict`, with
       one warp-uniform-operand helper (warpUniform, ptx_coll.sail) shared with tcgen05.ld / st (tests/neg/wmma-ub-uniform.ptx)
+- [x] tcgen05: one `.cta_group` value for all tcgen05 instructions of a kernel (§9.7.17.7.1, checked per CTA) under
+      `.isacheck` (tests/neg/isa-tc-ctagroup.ptx); `tcgen05.alloc` nCols warp-uniform under `.ub strict`
+      (tests/neg/tc-alloc-ub-ncols.ptx).  Under `.isacheck` three existing tcgen05 tests declare a lower `.version` than
+      the forms they use, and under `.ub strict` one leaves tensor memory allocated at exit; the tests run in the default
+      mode and are kept as they are
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

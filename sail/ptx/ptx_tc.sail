@@ -606,6 +606,14 @@ function tcFirstAddr(l) = match l { [||] => None(), XB(a :: _, _) :: _ => Some(a
 val tcUniform : (string, list(xop)) -> unit
 function tcUniform(op, ops) = match tcFirstAddr(ops) { Some(a) => { let _ = warpUniform(op, "taddr", tcAddr(a)); () }, None() => () }
 
+val tcCgOk : (int, int) -> bool
+function tcCgOk(c, g) = {
+  let mp = c_misc[cchk(c)];
+  if smap_has(mp, "tccg") & smap_get(mp, "tccg") != g then {
+    fault("tcgen05: instructions of the kernel specify different .cta_group values [PTX ISA 9.3 9.7.17.7.1]", g); false
+  } else { smap_set(mp, "tccg", g); true }
+}
+
 val exec_tc : (opcode, list(xop)) -> bool
 function exec_tc(o, ops) = {
   let m = o.mods;
@@ -614,9 +622,13 @@ function exec_tc(o, ops) = {
   let tl = fmod_int(t_tid[t], 32);
   let full : int = 4294967295;
   if o.base != "tcgen05" then false
+  /* "All tcgen05 instructions within a kernel must specify the same value for the .cta_group qualifier" (9.7.17.7.1):
+     reported under .isacheck, per CTA ("tccg" in the CTA's misc map holds the first value seen) */
+  else if isachk & (has(m, "cta_group::1") | has(m, "cta_group::2")) & not_bool(tcCgOk(c, if has(m, "cta_group::2") then 2 else 1)) then true
   else if has(m, "relinquish_alloc_permit") then { smap_set(c_misc[cchk(c)], "tcrelinq", 1); true }
   else if has(m, "wait") | has(m, "fence") then true
   else if has(m, "alloc") then match ops {
+    [|XB([|d|], [||]), n|] if not_bool(warpUniform("tcgen05.alloc", "nCols", rdu32(n))) => true,
     [|XB([|d|], [||]), n|] => {
       t_post[t] = P_tcalloc(ea(d, if has(m, "shared::cta") | has(m, "shared") then "shared" else "generic"), rdu32(n));
       do_coll("tcgen05.alloc", full, [||], [|0|], [||]);
