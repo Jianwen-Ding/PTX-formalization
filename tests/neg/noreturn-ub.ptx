@@ -1,0 +1,19 @@
+// expect: return from the .noreturn function nr
+// "If a function with .noreturn directive returns to the caller function at runtime, then the behavior is undefined" (11.4.6), under .ub strict
+.version 8.6
+.target sm_90
+.address_size 64
+.ub strict ;
+.global .align 8 .u32 a[4];
+.func nr () .noreturn { ret; }
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %x; .reg .b32 %r<4>;
+    ld.param.u64 %o, [po];
+    call nr;
+    st.global.u32 [%o], 1;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);
+.expect O .u32 = { 1 };

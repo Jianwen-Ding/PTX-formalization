@@ -450,6 +450,9 @@ function do_ret() = {
   let t = tchk(cur);
   match t_stack[t] {
     [||] => do_exit(),
+    /* "If a function with .noreturn directive returns to the caller function at runtime, then the behavior is
+       undefined" (11.4.6): under .ub strict */
+    _ if ub & f_noret[fchk(t_fn[t])] => fault(concat_str("return from the .noreturn function ", f_name[fchk(t_fn[t])]), 0),
     (f, pc, regs, env, lt, sp, outs) :: rest => {
       let cr = t_regs[t];
       /* parameters whose address was taken (paramToLocal): copy them back to the arguments */

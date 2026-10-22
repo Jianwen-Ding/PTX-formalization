@@ -313,6 +313,7 @@ function read_func() = {
       let f = fchk(nfuncs);
       nfuncs = nfuncs + 1;
       f_name[f] = name; f_kind[f] = kind; f_rets[f] = rets; f_params[f] = params;
+      f_noret[f] = hasPerfN(pd, "noreturn");
       f_base[f] = base; f_len[f] = nc; f_rw[f] = rw; f_lab[f] = lab;
       let fs = new_space();
       f_syms[f] = fs;

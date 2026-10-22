@@ -211,6 +211,8 @@ class Parser:
         kk, ss = self.peek(k)
         if self.lit_at(k):
             return self.binop_at(k + 1) or (kk == "hex" and ss[:1] in "+-")   # -0x10
+        if kk == "punct" and ss == "(" and k == 0 and getattr(self, "in_call", False):
+            return False
         if kk == "punct" and ss == "(":
             # not a list such as (a, b) or the launch arguments (0f40000000, X)
             d, j = 0, k
@@ -383,6 +385,21 @@ class Parser:
         while self.at(","):
             self.next(); ns.append(self.take_name())
         return ns
+
+    def target_names(self):
+        """a .branchtargets / .calltargets list; "The list of labels may use the compact, shorthand syntax for
+        enumerating a range of labels having a common prefix" (11.3.1): N<5> is N0, .., N4"""
+        ns = []
+        while True:
+            n = self.take_name()
+            if self.at("<"):
+                self.next(); cnt = self.take_int(); self.expect(">")
+                ns.extend(n + str(i) for i in range(cnt))
+            else:
+                ns.append(n)
+            if not self.at(","):
+                return ns
+            self.next()
 
     def ints(self):
         xs = [self.take_int()]
@@ -613,7 +630,7 @@ class Parser:
                 return ("skip",)
             if self.at(".calltargets") or self.at(".branchtargets"):
                 kw = self.next()[1]
-                ns = self.names(); self.expect(";")
+                ns = self.target_names(); self.expect(";")
                 return ("targets", kw, name, ns)
             return ("label", name)
         if k in ("name", "qname"):
@@ -624,6 +641,8 @@ class Parser:
 
     def instr(self):
         k, opc = self.next()
+        # call's parenthesized operands are argument / return lists, also with one constant: (21) (9.7.13.5)
+        self.in_call = opc.split(".")[0] == "call"
         ops = []
         if not self.at(";"):
             ops.append(self.operand())
@@ -639,6 +658,7 @@ class Parser:
             ops[ai] = ("mem", [("anamereg", ops[ai][1], ops[ai][2], ops[ai][3])])
         if any(o[0] == "nameidx" for o in ops):
             raise PtxError("a register-indexed array element is supported as a memory operand only (%s)" % opc)
+        self.in_call = False
         return opc, ops
 
     # -------------------------------------------------------------- operands
@@ -1074,6 +1094,8 @@ class Loader:
             raise PtxError("unexpected statement %r" % (k,))
 
     def pp_decl(self, sp, st, al, ty, items):
+        if sp != "reg":
+            items = expand_ranges(items)
         while items:
             it = items.pop(0)
             if sp == "reg":
@@ -1119,9 +1141,20 @@ def iv_list(vs):
             out.append(v)
     return out
 
-def sdecls(st, al, ty, items, init):
+def expand_ranges(items):
+    """parameterized names: "This shorthand syntax may be used with any of the fundamental types and with any state
+    space" (PTX ISA 5.4.6): name<N> declares name0 .. name(N-1)"""
     out = []
     for it in items:
+        if it[0] == "range":
+            out.extend(("plain", it[1], it[2] + str(i)) for i in range(it[3]))
+        else:
+            out.append(it)
+    return out
+
+def sdecls(st, al, ty, items, init):
+    out = []
+    for it in expand_ranges(items):
         dims = item_dims(it, st)
         vals = []
         if init is not None:

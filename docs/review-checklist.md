@@ -328,6 +328,14 @@ Open:
 - [x] mandatory `.sync` / `.aligned` qualifiers (ldmatrix, stmatrix, movmatrix, mma, wmma (.aligned from 6.3), wgmma,
       setmaxnreg, tensormap.cp_fenceproxy, tcgen05 alloc / dealloc / relinquish / ld / st / wait, elect) under
       `.isacheck` (tests/neg/isa-ldmatrix-sync.ptx); no report over tests/ and ZLUDA
+- [x] declarations / directives review (chapters 5-7, 11): parameterized names in every state space (`.global .u32
+      g<3>` declared one variable `g`; §5.4.6) (tests/decl-param-names.ptx); a one-element call argument list holding a
+      constant, `(21)`, was read as a constant expression (§9.7.13.5) (tests/call-const-arg.ptx); `.branchtargets N<3>`
+      label ranges (§11.3.1) (tests/brx-label-range.ptx); a `.noreturn` function that returns, under `.ub strict`
+      (§11.4.6) (tests/neg/noreturn-ub.ptx)
+- [ ] declarations, not reported under `.isacheck`: an initializer on `.extern`, `.v4 .f64` (over 128 bits), `.f16` /
+      `.pred` initializers, `.pred` in `.global`, an address in a `.u8` without `mask()`, an initializer on a
+      parameterized name, `.align` not a power of two, a label as a `mov` operand, `0f` literals in constant expressions
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

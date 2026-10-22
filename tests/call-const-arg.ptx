@@ -1,0 +1,19 @@
+// "Arguments may be registers, immediate constants, or variables in .param space" (9.7.13.5): a one-element argument
+// list holding a constant, (21), is a list, also in an indirect call through a prototype
+.version 8.6
+.target sm_90
+.address_size 64
+.func (.reg .u32 r) add1 (.reg .u32 a) { add.u32 r, a, 1; ret; }
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %fp; .reg .b32 %r<4>;
+    ld.param.u64 %o, [po]; mov.u64 %fp, add1;
+    P1: .callprototype (.reg .u32 _) _ (.reg .u32 _);
+    call (%r1), add1, (21);
+    call (%r2), %fp, (40), P1;
+    st.global.v2.u32 [%o], {%r1, %r2};
+    ret;
+}
+.buffer O .u32 [2];
+.launch k <<< 1, 1 >>> (O);
+.expect O .u32 = { 22, 41 };

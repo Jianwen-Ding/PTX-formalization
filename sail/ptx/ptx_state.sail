@@ -91,6 +91,9 @@ register bufs : list((string, int, ty, int)) = [||]
 register dyn_names : list(string) = [||]
 /* performance directives per kernel */
 register perfd : list((string, list((string, list(int))))) = [||]
+register f_noret : vector(4096, bool) = vector_init(false)    /* the function has .noreturn */
+val hasPerfN : (list((string, list(int))), string) -> bool
+function hasPerfN(p, d) = match p { [||] => false, (n, _) :: rest => n == d | hasPerfN(rest, d) }
 /* .branchtargets / .calltargets lists: (function, label, targets) */
 register tgts : list((int, string, list(string))) = [||]
 
