@@ -1,0 +1,19 @@
+// expect: type .u8 holds an address only with the mask() operator
+// 5.4.4 (reported under .isacheck)
+.version 9.4
+.target sm_90
+.address_size 64
+.isacheck ;
+.global .u32 gx;
+.global .u8 gb = gx;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r;
+
+    ld.param.u64 %o, [po];
+    mov.u32 %r, 1;
+    st.global.u32 [%o], %r;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

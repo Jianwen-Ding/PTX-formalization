@@ -1,0 +1,15 @@
+// expect: ld.global.f32: operand %u of type .u32 does not agree
+// an operand whose declared type does not agree with the instruction type (9.4, Table 28), reported under .isacheck
+.version 8.0
+.target sm_80
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .f32 %f; .reg .u32 %u; .reg .u8 %c; .reg .b64 %o;
+    ld.param.u64 %o, [po];
+    ld.global.f32 %u, [%o];
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

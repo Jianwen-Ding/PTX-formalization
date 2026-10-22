@@ -1,0 +1,21 @@
+// expect: deadlock
+// tcgen05.alloc that can never be satisfied blocks for ever (PTX ISA 9.3 9.7.17.5): warp 0 keeps all 512 columns
+.version 8.8
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %r<4>; .reg .pred %p;
+    .shared .align 16 .b32 slot[2];
+    mov.u32 %r0, %tid.x; shr.u32 %r1, %r0, 5; setp.eq.u32 %p, %r1, 0;
+    @!%p bra W1;
+    tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [slot], 512;
+    bar.sync 0;
+    ret;
+W1:
+    tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [slot+4], 256;
+    bar.sync 0;
+    ret;
+}
+.buffer O .u32 [2];
+.launch k <<< 1, 64 >>> (O);

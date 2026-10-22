@@ -1,0 +1,13 @@
+// expect: createpolicy: fraction outside (0.0, 1.0]
+// "The valid range of values for the operand fraction is (0.0,.., 1.0]" (9.7.9.19), reported under .isacheck
+.version 8.0
+.target sm_80
+.address_size 64
+.isacheck ;
+.visible .entry k()
+{
+    .reg .b64 %p;
+    createpolicy.fractional.L2::evict_last.b64 %p, 1.5;
+    ret;
+}
+.launch k <<< 1, 1 >>> ();

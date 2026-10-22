@@ -123,8 +123,8 @@ against an independent Python model in `scripts/gen_tcgen05_*.py`):
   its mbarrier (multicast: one arrive per CTA in the mask).  `.cta_group::2` makes both CTAs of the pair copy from their own
   shared memory (same descriptor / taddr) or shift their own tensor memory.
 * `tcgen05.cp` decompression (`.b8x16.b6x16_p32`, `.b8x16.b4x16_p64`): groups of four source words (16 elements of 6 / 4 bits
-  followed by padding) become four words of 8-bit elements; an element's value is placed in the low bits of its byte
-  (assumption: the bit mapping is in figures).
+  followed by padding) become four words of 8-bit elements; a 4-bit value lands in bits 2–5 of its byte (Figure 195)
+  and a 6-bit value in bits 0–5.
 * `tcgen05.ld.red` reduces the values a thread loaded (f32 min/max with `.abs`/`.NaN`, or u32/s32).
   `tcgen05.ld[.red].spcompress` keeps, in each group of four loaded f32 values, two (by `.min`/`.max`, optionally `.abs`),
   writes them in index order to `cdata` and their 2-bit indices (packed LSB first) to `mdata`.  Ties keep the lowest index,
@@ -274,7 +274,7 @@ Not modelled: the conditional phase / payload report of `.layout::v1` mbarriers 
 * Not covered: shared-memory bounds (the declared extent is not tracked at run time), reads of uninitialised memory or registers (would need a shadow map), `.aligned` convergence violations, per-object (rather than whole-heap) global bounds.
 
 ## Independent thread scheduling (`.convergence its;`)
-* Threads are always interleaved independently (collectives rendezvous through `<colls>`, `bar.warp.sync` and `.sync` instructions wait for their membermask, mismatched masks deadlock as on hardware).  What the default mode idealises is `activemask`: it returns every lane of the warp that has not exited, i.e. it assumes a converged warp.
+* Threads are always interleaved independently (collectives rendezvous through `<colls>`, `bar.warp.sync` and `.sync` instructions wait for their membermask, mismatched masks deadlock as on hardware).  What the default mode idealises is `activemask`: it returns the lanes that execute that `activemask` together (the lanes of the current path after a divergent branch; exited and predicated-off lanes excluded), i.e. a warp converged within each path (Sail model: `actGroup` in sail/ptx/ptx_coll.sail, tests/activemask-div.ptx).
 * `.convergence its;` drops that assumption: `activemask` returns the lanes that have already executed the same instruction instance (same function, pc and visit count), the caller included.  Over all schedules (`krun --search`) every arrival prefix is observable (`examples/its-activemask.ptx`: lane 0 sees mask 1 or the full mask; `tests/its-activemask.ptx` checks the invariants).  This is an under-approximation of what hardware may report (it never includes a lane that has not yet arrived) and a sound one for programs that must not depend on convergence.
 * Not modelled: warp reconvergence points (`bra.uni` assertions, `.aligned` violations), the convergence barrier implementation of `sm_70+`, and `exit`/`ret` effects on later activemask results beyond the arrival record.
 

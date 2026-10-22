@@ -1,0 +1,17 @@
+// expect: rounds only with .rn
+// a half-precision form outside the 9.7.4 syntax, reported under .isacheck (the default mode runs it)
+.version 9.0
+.target sm_100
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b16 %h<4>; .reg .b64 %o;
+    ld.param.u64 %o, [po];
+    mov.b16 %h1, 0x3C00; mov.b16 %h2, 0x3C00; mov.b16 %h3, 0;
+    add.rz.f16 %h0, %h1, %h2;
+    st.global.b16 [%o], %h0;
+    ret;
+}
+.buffer O .u16 [1];
+.launch k <<< 1, 1 >>> (O);

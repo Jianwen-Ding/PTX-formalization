@@ -1,0 +1,18 @@
+// expect: access to a multimem address by a non-multimem operation
+// "Accessing a multimem address with ld, st or any other memory operations results in undefined behavior" (9.7.9.15),
+// reported under .ub strict
+.version 8.6
+.target sm_100a
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 p_mm)
+{
+    .reg .b64 %mm; .reg .b32 %r;
+    ld.param.u64 %mm, [p_mm];
+    ld.global.u32 %r, [%mm];
+    ret;
+}
+.buffer D0 .u32 [16];
+.buffer D1 .u32 [16];
+.multimem MM .size 64 { D0, D1 } ;
+.launch k <<< 1, 1 >>> (MM);

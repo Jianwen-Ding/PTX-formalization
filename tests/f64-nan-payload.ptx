@@ -1,0 +1,38 @@
+// PTX ISA 9.3 9.7.3: "NaN payloads are supported for double-precision instructions"; the result of an f64 operation
+// with NaN operands is the (first) NaN operand; 9.7.3.9: "For abs.f64, NaN input is passed through unchanged".
+.version 8.0
+.target sm_80
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .f64 %d<20>; .reg .b64 %o;
+    ld.param.u64 %o, [po];
+    mov.b64 %d1, 0x3FF0000000000000;          // 1.0
+    mov.b64 %d2, 0x7FF8000000000123;
+    add.rn.f64 %d3, %d2, %d1;
+    mov.b64 %d4, 0xFFF8000000000ABC;
+    sub.f64 %d5, %d1, %d4;
+    mov.b64 %d6, 0x7FF8000000000001; mov.b64 %d7, 0x7FF8000000000002;
+    mul.rn.f64 %d8, %d6, %d7;
+    mov.b64 %d9, 0x7FF8000000000456;
+    div.rn.f64 %d10, %d1, %d9;
+    mov.b64 %d11, 0x7FF8000000000007; mov.b64 %d12, 0xFFF8000000000008;
+    fma.rn.f64 %d13, %d1, %d11, %d12;
+    mov.b64 %d14, 0xFFF8000000000009;
+    sqrt.rn.f64 %d15, %d14;
+    mov.b64 %d16, 0x7FF800000000000A;
+    rcp.rn.f64 %d17, %d16;
+    mov.b64 %d18, 0xFFF800000000000B;
+    abs.f64 %d19, %d18;
+    mad.rn.f64 %d0, %d12, %d1, %d11;
+    st.global.v2.f64 [%o], {%d3, %d5};
+    st.global.v2.f64 [%o+16], {%d8, %d10};
+    st.global.v2.f64 [%o+32], {%d13, %d15};
+    st.global.v2.f64 [%o+48], {%d17, %d19};
+    st.global.f64 [%o+64], %d0;
+    ret;
+}
+.buffer OUT .u64 [9];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u64 = { 0x7FF8000000000123, 0xFFF8000000000ABC, 0x7FF8000000000001, 0x7FF8000000000456, 0x7FF8000000000007,
+                     0xFFF8000000000009, 0x7FF800000000000A, 0xFFF800000000000B, 0xFFF8000000000008 };

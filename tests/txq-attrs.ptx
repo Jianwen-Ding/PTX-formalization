@@ -1,0 +1,63 @@
+// txq (PTX ISA 9.3): ".array_size: For a texture array, number of textures in array, 0 otherwise"; ".num_mipmap_levels:
+// For a mipmapped texture, number of levels of details (LOD), 0 otherwise"; in independent mode "sampler attributes are
+// accessed via a separate .samplerref argument" (.filter_mode, .addr_mode_*, .force_unnormalized_coords); "txq.level
+// requires an additional 32bit integer argument, lod, which specifies LOD and queries requested attribute for the
+// specified LOD" (the extent of level l is max(1, extent >> l)).
+// .addr_mode_N is an "Integer from enum { wrap, mirror, clamp_ogl, clamp_to_edge, clamp_to_border }" (0..4): the harness
+// address modes 1 (clamp) and 2 (border) are clamp_to_edge (3) and clamp_to_border (4).
+// O: TA (2d, 1 level, 1 layer, clamp): num_mipmap_levels 0, array_size 0, filter_mode 0, addr_mode_0 3;
+//    SMP (filter 1, border, normalized): filter_mode 1, addr_mode_0 4, force_unnormalized_coords 0;
+//    SMU (not normalized): force_unnormalized_coords 1;
+//    TM (4x4, 3 levels): num_mipmap_levels 3, level 1 width 2, level 2 height 1, level 0 width 4;
+//    TL (2d array of 3 layers): array_size 3; TC (cubemap, 6 layers): array_size 0; TCA (cubemap array, 12 layers): 2.
+.version 8.6
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 p_t, .param .u64 p_s, .param .u64 p_u, .param .u64 p_m, .param .u64 p_l, .param .u64 p_c,
+                  .param .u64 p_ca, .param .u64 p_o)
+{
+    .reg .b64 %t, %s, %u, %m, %l, %c, %ca, %o; .reg .u32 %q<16>;
+    ld.param.u64 %t, [p_t];
+    ld.param.u64 %s, [p_s];
+    ld.param.u64 %u, [p_u];
+    ld.param.u64 %m, [p_m];
+    ld.param.u64 %l, [p_l];
+    ld.param.u64 %c, [p_c];
+    ld.param.u64 %ca, [p_ca];
+    ld.param.u64 %o, [p_o];
+    txq.num_mipmap_levels.b32 %q0, [%t];
+    txq.array_size.b32 %q1, [%t];
+    txq.filter_mode.b32 %q2, [%t];
+    txq.addr_mode_0.b32 %q3, [%t];
+    st.global.v4.b32 [%o], {%q0, %q1, %q2, %q3};
+    txq.filter_mode.b32 %q4, [%s];
+    txq.addr_mode_0.b32 %q5, [%s];
+    txq.force_unnormalized_coords.b32 %q6, [%s];
+    txq.force_unnormalized_coords.b32 %q7, [%u];
+    st.global.v4.b32 [%o+16], {%q4, %q5, %q6, %q7};
+    txq.num_mipmap_levels.b32 %q8, [%m];
+    mov.u32 %q15, 1;
+    txq.level.width.b32 %q9, [%m], %q15;
+    mov.u32 %q15, 2;
+    txq.level.height.b32 %q10, [%m], %q15;
+    mov.u32 %q15, 0;
+    txq.level.width.b32 %q11, [%m], %q15;
+    st.global.v4.b32 [%o+32], {%q8, %q9, %q10, %q11};
+    txq.array_size.b32 %q12, [%l];
+    txq.array_size.b32 %q13, [%c];
+    txq.array_size.b32 %q14, [%ca];
+    st.global.v2.b32 [%o+48], {%q12, %q13};
+    st.global.b32 [%o+56], %q14;
+    ret;
+}
+.buffer TEXBUF .f32 [128];
+.buffer O .u32 [15];
+.texture TA .f32 TEXBUF .dims { 4, 4, 1 } .attrs { 1, 0, 1, 0, 0, 1 } ;
+.texture TM .f32 TEXBUF .dims { 4, 4, 1 } .attrs { 1, 0, 1, 1, 0, 1, 3, 0, 0 } ;
+.texture TL .f32 TEXBUF .dims { 4, 4, 1 } .attrs { 1, 0, 1, 1, 0, 3 } ;
+.texture TC .f32 TEXBUF .dims { 2, 2, 1 } .attrs { 1, 0, 1, 1, 0, 6, 1, 2, 0 } ;
+.texture TCA .f32 TEXBUF .dims { 2, 2, 1 } .attrs { 1, 0, 1, 1, 0, 12, 1, 2, 0 } ;
+.sampler SMP .attrs { 1, 2, 1, 0, 0, 256 } ;
+.sampler SMU .attrs { 0, 1, 0 } ;
+.launch k <<< 1, 1 >>> (TA, SMP, SMU, TM, TL, TC, TCA, O);
+.expect O .u32 = { 0, 0, 0, 3, 1, 4, 0, 1, 3, 2, 1, 4, 3, 0, 2 };

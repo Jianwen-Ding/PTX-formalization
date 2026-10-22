@@ -1,0 +1,19 @@
+// expect: tex.2dms on a texture that is not multi-sample
+// tex.2dms reads "from sample number given by first element of the operand c" of a multi-sample texture (PTX ISA 9.3
+// ~18859); the harness texture has no samples (attribute 10), so there is no sample to read
+.version 8.6
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 pA, .param .u64 po)
+{
+  .reg .b64 %t, %o; .reg .f32 %a, %b, %c, %d; .reg .s32 %z;
+  ld.param.u64 %t, [pA]; ld.param.u64 %o, [po];
+  mov.s32 %z, 0;
+  tex.2dms.v4.f32.s32 {%a, %b, %c, %d}, [%t, {%z, %z, %z, %z}];
+  st.global.f32 [%o], %a;
+  ret;
+}
+.buffer TB .f32 = { 1.0, 2.0, 3.0, 4.0 };
+.texture TA .f32 TB .dims { 2, 2, 1 } .attrs { 1, 0, 1, 0, 0, 1 } ;
+.buffer O .f32 [1];
+.launch k <<< 1, 1 >>> (TA, O);

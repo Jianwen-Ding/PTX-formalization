@@ -1,0 +1,13 @@
+// expect: bad operand
+// d|p takes a register or name after the bar, not a literal
+.version 8.0
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %r; .reg .pred %p;
+    elect.sync %r|5, 0xffffffff;
+    ret;
+}
+.buffer OUT .u32 [4];
+.launch k <<< 1, 32 >>> (OUT);

@@ -1,0 +1,18 @@
+// PTX ISA 9.3 9.7.9.23: cvt.pack.sat.{u16,s16}.s32 d, a, b: a and b saturated to the 16-bit type, d = ta << 16 | tb.
+.version 8.0
+.target sm_80
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %r<8>; .reg .b64 %o;
+    ld.param.u64 %o, [po];
+    cvt.pack.sat.u16.s32 %r1, 70000, -5;
+    cvt.pack.sat.s16.s32 %r2, -40000, 1234;
+    cvt.pack.sat.s16.s32 %r3, 100, -100;
+    cvt.pack.sat.u16.s32 %r4, 0xABCD, 0x7FFFFFFF;
+    st.global.v4.u32 [%o], {%r1, %r2, %r3, %r4};
+    ret;
+}
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 0xFFFF0000, 0x800004D2, 0x0064FF9C, 0xABCDFFFF };

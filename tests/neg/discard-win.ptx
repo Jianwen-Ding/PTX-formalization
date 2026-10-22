@@ -1,0 +1,15 @@
+// expect: discard: address outside the .global window
+// discard (9.7.9.18): an address outside the .global window is undefined (.ub strict)
+.version 8.0
+.target sm_80
+.address_size 64
+.ub strict ;
+.global .align 256 .b8 g[512];
+.shared .align 16 .b8 s[16];
+.visible .entry k()
+{
+    .reg .b64 %a;
+    cvta.shared.u64 %a, s; discard.L2 [%a], 128;
+    ret;
+}
+.launch k <<< 1, 1 >>> ();

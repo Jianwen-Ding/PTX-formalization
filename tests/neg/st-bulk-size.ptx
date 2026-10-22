@@ -1,0 +1,13 @@
+// expect: st.bulk: size is not a multiple of 8
+// st.bulk: "size must be a multiple of 8. If the value is not a multiple of 8, then the behavior is undefined" (9.7.9.14)
+.version 8.6
+.target sm_100
+.address_size 64
+.ub strict ;
+.visible .entry k()
+{
+    .shared .align 16 .b8 buf[32];
+    st.bulk.weak.shared::cta [buf], 12, 0;
+    ret;
+}
+.launch k <<< 1, 1 >>> ();

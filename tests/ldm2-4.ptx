@@ -12,7 +12,7 @@
     mov.u64 %rd2, buf; add.u64 %rd2, %rd2, %rd1;
     st.shared.b32 [%rd2], %r1; st.shared.b32 [%rd2+4], %r2; st.shared.b32 [%rd2+8], %r3; st.shared.b32 [%rd2+12], %r4;
     bar.sync 0;
-    ldmatrix.sync.aligned.m8n16.x1.b8x16.b4x16_p64 {%d0}, [%rd2];
+    ldmatrix.sync.aligned.m8n16.x1.shared.b8x16.b4x16_p64 {%d0}, [%rd2];
     ld.param.u64 %rd3, [po]; mul.wide.u32 %rd4, %r0, 4; add.u64 %rd3, %rd3, %rd4;
     st.global.b32 [%rd3+0], %d0;
     ret;

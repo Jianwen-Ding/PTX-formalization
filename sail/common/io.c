@@ -5,6 +5,12 @@
 #include <string.h>
 #include <stdint.h>
 
+/* allocation failures stop the run (the memories cannot drop data silently) */
+static void *chk(void *p) {
+  if (!p) { fprintf(stderr, "out of memory\n"); exit(3); }
+  return p;
+}
+
 static FILE *tok_in = NULL;
 static char tokbuf[1 << 20];
 
@@ -21,7 +27,7 @@ static const char *next_tok(void) {
 void sail_tok_str(sail_string *rop, const unit u) {
   const char *t = next_tok();
   size_t n = strlen(t);
-  *rop = realloc(*rop, n + 1);
+  *rop = chk(realloc(*rop, n + 1));
   memcpy(*rop, t, n + 1);
 }
 
@@ -44,11 +50,11 @@ static uint64_t hsh(uint64_t s, uint64_t a) {
 static cell *find(uint64_t s, uint64_t a, int create) {
   if (cap == 0) {
     if (!create) return NULL;
-    cap = 1 << 16; tab = calloc(cap, sizeof(cell));
+    cap = 1 << 16; tab = chk(calloc(cap, sizeof(cell)));
   }
   if (create && (cnt + 1) * 2 > cap) {
     cell *old = tab; uint64_t oc = cap;
-    cap *= 2; tab = calloc(cap, sizeof(cell)); cnt = 0;
+    cap *= 2; tab = chk(calloc(cap, sizeof(cell))); cnt = 0;
     for (uint64_t i = 0; i < oc; i++) if (old[i].used) { cell *c = find(old[i].space, old[i].addr, 1); c->val = old[i].val; }
     free(old);
   }
@@ -139,17 +145,17 @@ static uint64_t shash(uint64_t s, const char *k) {
 }
 
 static spc *getspc(uint64_t id, int create) {
-  if (!sb) { snb = 1024; sb = calloc(snb, sizeof(spc *)); }
+  if (!sb) { snb = 1024; sb = chk(calloc(snb, sizeof(spc *))); }
   uint64_t i = (id * 0x9E3779B97F4A7C15ULL >> 20) & (snb - 1);
   for (spc *p = sb[i]; p; p = p->next) if (p->id == id) return p;
   if (!create) return NULL;
-  spc *p = calloc(1, sizeof(spc)); p->id = id; p->next = sb[i]; sb[i] = p;
+  spc *p = chk(calloc(1, sizeof(spc))); p->id = id; p->next = sb[i]; sb[i] = p;
   return p;
 }
 
 static void hrehash(void) {
   uint64_t nnb = hnb ? hnb * 2 : 4096;
-  ent **nb = calloc(nnb, sizeof(ent *));
+  ent **nb = chk(calloc(nnb, sizeof(ent *)));
   for (uint64_t i = 0; i < hnb; i++) {
     ent *e = hb[i];
     while (e) { ent *nx = e->hnext; uint64_t j = shash(e->space, e->key) & (nnb - 1); e->hnext = nb[j]; nb[j] = e; e = nx; }
@@ -163,7 +169,7 @@ static ent *sfind(uint64_t s, const char *k, int create) {
   for (ent *e = hb[i]; e; e = e->hnext) if (e->space == s && strcmp(e->key, k) == 0) return e;
   if (!create) return NULL;
   if (hcnt + 1 > 2 * hnb) { hrehash(); i = shash(s, k) & (hnb - 1); }
-  ent *e = calloc(1, sizeof(ent)); e->space = s; e->key = strdup(k); mpz_init(e->val);
+  ent *e = chk(calloc(1, sizeof(ent))); e->space = s; e->key = chk(strdup(k)); mpz_init(e->val);
   e->hnext = hb[i]; hb[i] = e; hcnt++;
   spc *p = getspc(s, 1);
   e->sprev = p->tail; if (p->tail) p->tail->snext = e; else p->head = e; p->tail = e; p->n++;
@@ -202,7 +208,7 @@ void sail_smap_key(sail_string *rop, const sail_int sp, const sail_int idx) {
   while (e && i > 0) { e = e->snext; i--; }
   const char *k = e ? e->key : "";
   size_t n = strlen(k);
-  *rop = realloc(*rop, n + 1); memcpy(*rop, k, n + 1);
+  *rop = chk(realloc(*rop, n + 1)); memcpy(*rop, k, n + 1);
 }
 unit sail_smap_copy(const sail_int dst, const sail_int src) {
   uint64_t d = mpz_get_ui(dst);

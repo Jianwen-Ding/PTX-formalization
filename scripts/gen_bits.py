@@ -46,13 +46,16 @@ def fns(mask, base, offset):          # offset is signed
     return d
 
 def bmsk(a, b, mode):
-    a1 = a & 0xff; b1 = b & 0xff
-    if mode == 'clamp': pos = min(a1, 32); ln = min(b1, 32)
-    else: pos = a1 & 31; ln = b1 & 31
-    m = 0
-    for i in range(ln):
-        if pos + i < 32: m |= 1 << (pos + i)
-    return m
+    # the Semantics pseudo-code of bmsk (PTX ISA 9.3, 9.7.1)
+    a1 = a & 0x1f; mask0 = (M32 << a1) & M32
+    b1 = b & 0x1f; s = a1 + b1; mask1 = (M32 << s) & M32
+    sum_ovf = s >= 32; pos_ovf = False; wid_ovf = False
+    if mode == 'clamp':
+        if a >= 32: pos_ovf = True; mask0 = 0
+        if b >= 32: wid_ovf = True
+    if sum_ovf or pos_ovf or wid_ovf: mask1 = 0
+    elif b1 == 0: mask1 = M32
+    return mask0 & ~mask1 & M32
 
 def szext(a, b, mode, signed):
     if mode == 'clamp' and b >= 32: return a

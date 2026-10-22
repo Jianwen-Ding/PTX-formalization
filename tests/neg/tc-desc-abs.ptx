@@ -1,0 +1,30 @@
+// expect: absolute leading-dimension address mode (descriptor bit 52) is not modelled
+// ISA 9.7.17.3.1 / Table 45: bit 52 of the shared memory descriptor selects an absolute leading-dimension address
+// (9.7.17.3.1.2); the ISA does not define which part of a row the second chunk holds, so the model must not read the
+// field as a relative offset.  B's descriptor here is tc-1's with bit 52 set.
+.version 8.6
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %r<8>, %idesc, %tl; .reg .b64 %rd<8>; .reg .b64 %dA, %dB; .reg .pred %p, %q;
+    .shared .align 1024 .b8 buf[2048];
+    .shared .align 16 .b32 slot[2];
+    mov.u32 %tl, %tid.x;
+    mov.u64 %rd5, slot;
+    setp.lt.u32 %p, %tl, 32;
+    setp.eq.u32 %q, %tl, 0;
+    @%p tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%rd5], 512;
+    bar.sync 0;
+    mov.u32 %r3, 0;
+    mov.b64 %dA, 4611756662049538048;
+    mov.b64 %dB, 4616260261676909568;
+    mov.b32 %idesc, 134348816;
+    @%q tcgen05.mma.cta_group::1.kind::f16 [%r3], %dA, %dB, %idesc, 1;
+    tcgen05.fence::after_thread_sync;
+    bar.sync 0;
+    @%p tcgen05.dealloc.cta_group::1.sync.aligned.b32 %r3, 512;
+    ret;
+}
+.buffer OUT .u32 [4];
+.launch k <<< 1, 128 >>> (OUT);

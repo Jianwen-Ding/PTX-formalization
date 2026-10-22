@@ -1,0 +1,24 @@
+// atom / red .add.noftz.f32 on global memory (PTX ISA 9.4 9.7.15.5, 9.7.15.6): "The atom.add.f32 operation without
+// .noftz, flushes subnormal inputs and results ... on global memory"; with .noftz the subnormals are kept, also for the
+// vector form (.add{.noftz}.vec_32_bit.f32).  Without .noftz the same additions flush (last word).
+.version 9.4
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 pg, .param .u64 po)
+{
+    .reg .b64 %g, %o; .reg .f32 %f<4>; .reg .b32 %x<4>;
+    ld.param.u64 %g, [pg]; ld.param.u64 %o, [po];
+    mov.b32 %x0, 0x00000002;
+    atom.global.add.noftz.f32 %f0, [%g], %x0;          // G[0] 1 + 2 = 0x00000003, returns 0x00000001
+    red.global.add.noftz.f32 [%g+4], %x0;               // G[1] 0x00400000 + 2 = 0x00400002
+    mov.b32 %x1, 0x00000001; mov.b32 %x2, 0x80000003;
+    atom.global.v2.f32.add.noftz {%f1, %f2}, [%g+8], {%x1, %x2};   // G[2..3] 0x00000002, 0x80000002
+    red.global.add.f32 [%g+16], %x0;                    // G[4] flushed: +0
+    st.global.v2.f32 [%o], {%f0, %f1};
+    ret;
+}
+.buffer G .u32 = { 0x00000001, 0x00400000, 0x00000001, 0x00000001, 0x00000001 };
+.buffer O .u32 [2];
+.launch k <<< 1, 1 >>> (G, O);
+.expect G .u32 = { 0x00000003, 0x00400002, 0x00000002, 0x80000002, 0x00000000 };
+.expect O .u32 = { 0x00000001, 0x00000001 };

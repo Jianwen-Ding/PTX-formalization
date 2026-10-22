@@ -79,6 +79,9 @@ module PTX-EXEC-TEX
   rule adIdx(3, I, N) => mirrorIdx(((I %Int (2 *Int N)) +Int 2 *Int N) %Int (2 *Int N), N)
   rule adIdx(2, I, N) => #if I >=Int 0 andBool I <Int N #then I #else 0 -Int 1 #fi
   rule adIdx(_, I, N) => minInt(maxInt(I, 0), N -Int 1) [owise]
+  // wrap and mirror need normalized coordinates: unnormalized coordinates clamp
+  syntax Int ::= amEff(Int, Int) [function, total]          // mode, normalized
+  rule amEff(AM, NM) => #if NM =/=Int 1 andBool (AM ==Int 0 orBool AM ==Int 3) #then 1 #else AM #fi
   syntax Int ::= mirrorIdx(Int, Int) [function, total]
   rule mirrorIdx(M, N) => #if M <Int N #then M #else 2 *Int N -Int M -Int 1 #fi
   // raw channel c of the texel at integer coordinates (already resolved), as an exact Float
@@ -164,9 +167,9 @@ module PTX-EXEC-TEX
   // sample at (x, y, z) floats with layer l in the level of Q
   syntax List ::= sample(Bytes, Int, List, Int, Int, Int, Float, Float, Float, Int, Int) [function, total]   // gmem, blob, Q, filter, addrmode, norm, x,y,z, layer, rank
   rule sample(GM, B, Q, 0, AM, NM, X, Y, Z, L, R) =>
-       texel(GM, B, Q, adIdx(AM, flo(pos(X, lvD(B, qi(Q, 0), 0), NM)) +Int qi(Q, 1), lvD(B, qi(Q, 0), 0)),
-                    #if R >=Int 2 #then adIdx(AM, flo(pos(Y, lvD(B, qi(Q, 0), 1), NM)) +Int qi(Q, 2), lvD(B, qi(Q, 0), 1)) #else 0 #fi,
-                    #if R >=Int 3 #then adIdx(AM, flo(pos(Z, lvD(B, qi(Q, 0), 2), NM)) +Int qi(Q, 3), lvD(B, qi(Q, 0), 2)) #else 0 #fi, L)
+       texel(GM, B, Q, adIdx(amEff(AM, NM), flo(pos(X, lvD(B, qi(Q, 0), 0), NM)) +Int qi(Q, 1), lvD(B, qi(Q, 0), 0)),
+                    #if R >=Int 2 #then adIdx(amEff(AM, NM), flo(pos(Y, lvD(B, qi(Q, 0), 1), NM)) +Int qi(Q, 2), lvD(B, qi(Q, 0), 1)) #else 0 #fi,
+                    #if R >=Int 3 #then adIdx(amEff(AM, NM), flo(pos(Z, lvD(B, qi(Q, 0), 2), NM)) +Int qi(Q, 3), lvD(B, qi(Q, 0), 2)) #else 0 #fi, L)
   rule sample(GM, B, Q, 1, AM, NM, X, Y, Z, L, R) =>
        lerp4(lerp4(lerp4(tl(GM, B, Q, AM, NM, X, Y, Z, L, R, 0, 0, 0), tl(GM, B, Q, AM, NM, X, Y, Z, L, R, 1, 0, 0), wx(B, Q, NM, X)),
                    lerp4(tl(GM, B, Q, AM, NM, X, Y, Z, L, R, 0, 1, 0), tl(GM, B, Q, AM, NM, X, Y, Z, L, R, 1, 1, 0), wx(B, Q, NM, X)), wy(B, Q, NM, Y, R)),
@@ -179,9 +182,9 @@ module PTX-EXEC-TEX
   rule sample(GM, B, Q, _, AM, NM, X, Y, Z, L, R) => sample(GM, B, Q, 0, AM, NM, X, Y, Z, L, R) [owise]
   // linear-filter helpers: lower/upper texel index (with offset), and weights
   syntax Int ::= ix(Int, List, Int, Int, Float, Int) [function, total] | jy(Int, List, Int, Int, Float, Int, Int) [function, total] | kz(Int, List, Int, Int, Float, Int, Int) [function, total]
-  rule ix(B, Q, AM, NM, X, D) => adIdx(AM, flo(pos(X, lvD(B, qi(Q, 0), 0), NM) -Float half()) +Int D +Int qi(Q, 1), lvD(B, qi(Q, 0), 0))
-  rule jy(B, Q, AM, NM, Y, D, R) => #if R >=Int 2 #then adIdx(AM, flo(pos(Y, lvD(B, qi(Q, 0), 1), NM) -Float half()) +Int D +Int qi(Q, 2), lvD(B, qi(Q, 0), 1)) #else 0 #fi
-  rule kz(B, Q, AM, NM, Z, D, R) => #if R >=Int 3 #then adIdx(AM, flo(pos(Z, lvD(B, qi(Q, 0), 2), NM) -Float half()) +Int D +Int qi(Q, 3), lvD(B, qi(Q, 0), 2)) #else 0 #fi
+  rule ix(B, Q, AM, NM, X, D) => adIdx(amEff(AM, NM), flo(pos(X, lvD(B, qi(Q, 0), 0), NM) -Float half()) +Int D +Int qi(Q, 1), lvD(B, qi(Q, 0), 0))
+  rule jy(B, Q, AM, NM, Y, D, R) => #if R >=Int 2 #then adIdx(amEff(AM, NM), flo(pos(Y, lvD(B, qi(Q, 0), 1), NM) -Float half()) +Int D +Int qi(Q, 2), lvD(B, qi(Q, 0), 1)) #else 0 #fi
+  rule kz(B, Q, AM, NM, Z, D, R) => #if R >=Int 3 #then adIdx(amEff(AM, NM), flo(pos(Z, lvD(B, qi(Q, 0), 2), NM) -Float half()) +Int D +Int qi(Q, 3), lvD(B, qi(Q, 0), 2)) #else 0 #fi
   syntax Float ::= wx(Int, List, Int, Float) [function, total] | wy(Int, List, Int, Float, Int) [function, total] | wz(Int, List, Int, Float, Int) [function, total]
   rule wx(B, Q, NM, X) => qw(pos(X, lvD(B, qi(Q, 0), 0), NM) -Float half())
   rule wy(B, Q, NM, Y, R) => #if R >=Int 2 #then qw(pos(Y, lvD(B, qi(Q, 0), 1), NM) -Float half()) #else zF() #fi

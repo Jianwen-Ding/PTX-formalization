@@ -1,0 +1,31 @@
+// cp.async with a cache_policy operand (PTX ISA 9.3, cp.async: "cp-size{, src-size}{, cache_policy}"; "When the optional
+// argument cache_policy is specified, the qualifier .level::cache_hint is required").  With .L2::cache_hint a single operand
+// after cp-size is the cache policy, not src-size: the whole cp-size bytes are copied whatever the policy's value.
+.version 8.0
+.target sm_80
+.address_size 64
+.visible .entry k(.param .u64 pi, .param .u64 po)
+{
+    .reg .b64 %i, %o, %pol, %pol2; .reg .b32 %s, %r1, %r2, %r3, %r4, %sz;
+    .shared .align 16 .b32 buf[8];
+    ld.param.u64 %i, [pi];
+    ld.param.u64 %o, [po];
+    mov.u32 %s, buf;
+    createpolicy.fractional.L2::evict_last.L2::evict_unchanged.b64 %pol, 0.25;
+    mov.b64 %pol2, 0;
+    mov.u32 %sz, 2;
+    st.shared.v4.b32 [%s], {99, 99, 99, 99};
+    cp.async.ca.shared.global.L2::cache_hint [%s], [%i], 4, %pol;               // cache_policy only
+    cp.async.ca.shared.global.L2::cache_hint [%s+4], [%i+4], 4, %pol2;          // cache_policy only, value 0
+    cp.async.ca.shared.global.L2::cache_hint [%s+8], [%i+8], 4, %sz, %pol;      // src-size 2 and cache_policy
+    cp.async.ca.shared.global [%s+12], [%i+12], 4, 0;                           // src-size 0
+    cp.async.commit_group;
+    cp.async.wait_all;
+    ld.shared.v4.b32 {%r1, %r2, %r3, %r4}, [%s];
+    st.global.v4.b32 [%o], {%r1, %r2, %r3, %r4};
+    ret;
+}
+.buffer I .u32 = { 11, 22, 0x11223344, 55 };
+.buffer O .u32 [4];
+.launch k <<< 1, 1 >>> (I, O);
+.expect O .u32 = { 11, 22, 0x3344, 0 };

@@ -1,0 +1,39 @@
+// .report_mechanism on cp.async.bulk.tensor (PTX ISA 9.4 9.7.10.28.1.3): the inspection covers the source global
+// memory the copy reads.  .per_16bytes::80 samples the first byte of each aligned 16-byte global chunk that holds a read
+// element (the model's choice of the "sampled element"); .per_element::ff matches a read 0xff byte.
+// G (32 x 2 bytes): 1 everywhere except G[16] = 0x80 and G[60] = 0xff; the box is 16 x 2.
+.version 9.4
+.target sm_107f
+.address_size 64
+.visible .entry k(.param .u64 ptm, .param .u64 po)
+{
+    .reg .b64 %tm, %o, %st; .reg .b32 %r<6>; .reg .pred %c<3>, %p<3>;
+    .shared .align 128 .b8 buf[64];
+    .shared .align 8 .b64 bar;
+    ld.param.u64 %tm, [ptm]; ld.param.u64 %o, [po];
+    mbarrier.init.layout::v1.shared::cta.b64 [bar], 1;
+    // x 8..23: chunk G[16..31] starts with 0x80
+    mbarrier.arrive.expect_tx.shared::cta.b64 %st, [bar], 32;
+    cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes.mbarrier::report::validity::per_16bytes::80 [buf], [%tm, {8, 0}], [bar];
+    mbarrier.try_wait.parity.phase_type::primary.shared::cta.b64 %c0|%p0, [bar], 0;
+    // x 0..15: chunks G[0..15], G[32..47] start with 1
+    mbarrier.arrive.expect_tx.shared::cta.b64 %st, [bar], 32;
+    cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes.mbarrier::report::validity::per_16bytes::80 [buf], [%tm, {0, 0}], [bar];
+    mbarrier.try_wait.parity.phase_type::primary.shared::cta.b64 %c1|%p1, [bar], 1;
+    // x 16..31 reads G[60] = 0xff
+    mbarrier.arrive.expect_tx.shared::cta.b64 %st, [bar], 32;
+    cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes.mbarrier::report::validity::per_element::ff [buf], [%tm, {16, 0}], [bar];
+    mbarrier.try_wait.parity.phase_type::primary.shared::cta.b64 %c2|%p2, [bar], 0;
+    selp.u32 %r0, 1, 0, %c0; selp.u32 %r1, 1, 0, %p0;
+    selp.u32 %r2, 1, 0, %c1; selp.u32 %r3, 1, 0, %p1;
+    selp.u32 %r4, 1, 0, %c2; selp.u32 %r5, 1, 0, %p2;
+    st.global.v4.b32 [%o], {%r0, %r1, %r2, %r3};
+    st.global.v2.b32 [%o+16], {%r4, %r5};
+    ret;
+}
+.buffer G .u8 = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 128, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 255, 1, 1, 1 };
+.tensormap TM .u8 G .dims { 32, 2 } .strides { 32 } .box { 16, 2 } .swizzle 0 ;
+.buffer O .u32 [6];
+.launch k <<< 1, 1 >>> (TM, O);
+.expect O .u32 = { 1, 1, 1, 0, 1, 1 };

@@ -37,7 +37,7 @@
     subc.cc.u32  %r22, %r3, %r7;
     subc.cc.u32  %r23, %r4, %r8;
     subc.u32     %r24, 0, 0;
-    st.global.v4.u32 [%rd10+20], {%r20, %r21, %r22, %r23};
+    st.global.u32 [%rd10+20], %r20; st.global.v2.u32 [%rd10+24], {%r21, %r22}; st.global.u32 [%rd10+32], %r23;
     st.global.u32 [%rd10+36], %r24;
 
     // ---- 64x64 -> 128 multiply with a mad.cc/madc chain
@@ -50,7 +50,7 @@
     madc.hi.u32    %r33, %r2, %r6, 0;
     mad.lo.cc.u32  %r32, %r2, %r6, %r32;
     addc.u32       %r33, %r33, 0;
-    st.global.v4.u32 [%rd10+40], {%r30, %r31, %r32, %r33};
+    st.global.v2.u32 [%rd10+40], {%r30, %r31}; st.global.v2.u32 [%rd10+48], {%r32, %r33};
 
     // ---- two 64-bit limbs: (a0:a1) + (b0:b1) and (a2:a3) + (b2:b3) + carry
     mov.b64      %rd11, {%r1, %r2};

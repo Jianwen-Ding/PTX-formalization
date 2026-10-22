@@ -1,0 +1,40 @@
+// mapa / getctarank without .shared::cluster: a and d are generic addresses (cvta.shared of the own slot,
+// mapped into the peer's part of the cluster window, then accessed with generic ld/st)
+.version 8.6
+.target sm_90
+.address_size 64
+
+.visible .entry k(.param .u64 po) .reqnctapercluster 2, 1, 1
+{
+    .reg .b64 %o, %oo, %g, %pg; .reg .pred %p0; .reg .b32 %r<8>, %rank, %peer, %v, %tid;
+    .shared .align 4 .b32 slot[2];
+    ld.param.u64 %o, [po];
+    mov.u32 %tid, %tid.x;
+    mov.u32 %rank, %cluster_ctarank;
+    setp.eq.u32 %p0, %tid, 0;
+    xor.b32 %peer, %rank, 1;
+    add.u32 %v, %rank, 40;
+    cvta.shared.u64 %g, slot;
+    mapa.u64 %pg, %g, %peer;
+    @%p0 st.b32 [%pg+4], %v;
+    barrier.cluster.arrive.release.aligned;
+    barrier.cluster.wait.acquire.aligned;
+    ld.shared.b32 %r1, [slot+4];
+    getctarank.u64 %r2, %pg;
+    getctarank.u64 %r3, %g;
+    ld.b32 %r4, [%pg+4];
+    mov.u32 %r6, %ctaid.x;
+    mul.wide.u32 %oo, %r6, 16;
+    add.u64 %oo, %oo, %o;
+    @%p0 st.global.b32 [%oo], %r1;
+    @%p0 st.global.b32 [%oo+4], %r2;
+    @%p0 st.global.b32 [%oo+8], %r3;
+    @%p0 st.global.b32 [%oo+12], %r4;
+    ret;
+}
+.buffer O .u32 [8];
+.launch k <<< 2, 2 >>> (O);
+// cta r receives 40 + (r^1) from its peer; getctarank of the mapped address is the peer, of its own address r;
+// a generic load through the mapped address reads the peer's slot[1] (40 + r)
+.expect O .u32 = { 41, 1, 0, 40,
+                   40, 0, 1, 41 };

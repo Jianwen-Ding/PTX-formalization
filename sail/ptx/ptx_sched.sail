@@ -17,6 +17,7 @@ val exec_dispatch : (opcode, list(xop)) -> unit
 /* other modules' blocking continuations */
 val ext_wait_ready : unit -> bool
 val ext_wait_ready2 : unit -> bool
+val ext_timeout : unit -> bool
 val mkCtas : (int, int) -> unit
 
 val isVisible : item -> bool
@@ -25,7 +26,7 @@ function isVisible(it) = match it {
     let op = o.base;
     let m = o.mods;
     (has([|"ld", "st", "atom", "red", "multimem", "fabric"|], op) & not_bool(spaceOf(m) == "param" | spaceOf(m) == "local"))
-    | isBar(op, m) | isBarRed(op, m) | isBarWarp(op, m) | isBarCluster(op, m) | op == "exit" | isCollective(op)
+    | isBar(op, m) | isBarRed(op, m) | isBarWarp(op, m) | isBarCluster(op, m) | op == "exit" | isCollective(op) | op == "activemask"
   },
   _ => false
 }
@@ -50,7 +51,16 @@ function do_exit() = {
   let wl = c_wlive[c];
   smap_set(wl, w, land_int(smap_get(wl, w), lnot_int(pow2(fmod_int(t_tid[t], 32)))));
   c_live[c] = c_live[c] - 1;
-  foreach (b from 0 to 15) barCheck(t_cta[t], b);
+  /* #barCheckAll(keys_list(BC)): every barrier with arrivals (ids beyond 15 included), collected before checking */
+  let bs = c_bars[cchk(t_cta[t])];
+  var ids : list(int) = [||];
+  foreach (i from 0 to (smap_size(bs) - 1)) {
+    let k = smap_key(bs, i);
+    if string_startswith(k, "cnt:") then ids = str2base(sdrop(k, 4), 10) :: ids
+  };
+  while is_cons(ids) do match ids { b :: rest => { barCheck(t_cta[t], b); ids = rest }, [||] => () };
+  /* warp collectives that wait only for the non-exited lanes of their mask */
+  collRecheck(t_cta[t], tdiv_int(t_tid[t], 32));
   cluster_exit();
   t_alive[t] = false;
   t_status[t] = 2;
@@ -141,12 +151,19 @@ function run_grid() = {
     };
     /* finished CTAs leave; with an occupancy limit the next CTA starts */
     foreach (c from 0 to (ncta_slots - 1)) {
-      if c_alive[cchk(c)] & c_live[cchk(c)] == 0 then { c_alive[cchk(c)] = false; resident = resident - 1 }
+      if c_alive[cchk(c)] & c_live[cchk(c)] == 0 then {
+        /* "All of the Tensor Memory that was allocated using tcgen05.alloc instruction in a kernel, must be explicitly
+           deallocated using tcgen05.dealloc before the kernel exits" (9.7.17.7.1): reported under .ub strict */
+        let mp = c_misc[cchk(c)];
+        if ub & smap_has(mp, "sp:al") then { if smap_size(smap_get(mp, "sp:al")) > 0 then fault("tcgen05: tensor memory still allocated when the CTA exits", c) };
+        c_alive[cchk(c)] = false; resident = resident - 1
+      }
     };
     if not_bool(any_alive()) then {
       if nextcta >= vol(gridDim) then go = false
       else if occ > 0 & resident < occ then { mkCtas(nextcta, nextcta + 1); progress = true }
     } else if occ > 0 & resident < occ & nextcta < vol(gridDim) then { mkCtas(nextcta, nextcta + 1); progress = true };
+    if go & not_bool(progress) & not_bool(stuck) then { if ext_timeout() then progress = true };
     if go & not_bool(progress) then { fault("deadlock: no thread can make progress", 0); go = false }
   };
   turn = -2
@@ -201,14 +218,27 @@ function mk_sregs(sp, c, t, g, b, cd) = {
   sreg_set(sp, "%cluster_nctaid.z", cd.z);
   sreg_set(sp, "%cluster_ctarank", clRank(c, g, cd));
   sreg_set(sp, "%cluster_nctarank", cd.x * cd.y * cd.z);
-  sreg_set(sp, "%is_explicit_cluster", 0);
+  sreg_set(sp, "%is_explicit_cluster", b2i(explcl));
   sreg_set(sp, "%smid", 0); sreg_set(sp, "%nsmid", 1); sreg_set(sp, "%gridid", 0);
   sreg_set(sp, "%clock", 0); sreg_set(sp, "%clock64", 0); sreg_set(sp, "%warpsize", 32);
-  sreg_set(sp, "%total_smem_size", 233472); sreg_set(sp, "%aggr_smem_size", 233472);
-  sreg_set(sp, "%dynamic_smem_size", 0); sreg_set(sp, "%current_graph_exec", 0);
-  sreg_set(sp, "%reserved_smem_offset_begin", 0); sreg_set(sp, "%reserved_smem_offset_end", 1024);
-  sreg_set(sp, "%reserved_smem_offset_cap", 1024);
-  sreg_set(sp, "%reserved_smem_offset_0", 0); sreg_set(sp, "%reserved_smem_offset_1", 0);
+  /* shared memory of the CTA (PTX ISA 10.30-10.32): static (the kernel's .shared variables: module-scope ones used by it and its own) and dynamic
+     (the launch's size); %total_smem_size in multiples of the allocation unit (256 bytes for sm_3x - sm_7x,
+     128 bytes otherwise); %aggr_smem_size is that allocated user size plus the reserved region
+     (%reserved_smem_offset_end - _begin): "the size of user shared memory allocated ... and the size of shared memory
+     region which is reserved for the NVIDIA system software use" (10.31) */
+  let unit = if isasm >= 30 & isasm < 80 then 256 else 128;
+  sreg_set(sp, "%total_smem_size", alignUp(stop + dynsmem, unit)); sreg_set(sp, "%aggr_smem_size", alignUp(stop + dynsmem, unit) + 1024);
+  sreg_set(sp, "%dynamic_smem_size", dynsmem); sreg_set(sp, "%current_graph_exec", 0);
+  /* per-CTA global memory (PTX ISA 9.4 10.34, 10.35): "the 64-bit address of the current CTA's memory slice", slices
+     in CTA order at the pitch %perctamemorysize; both 0 for a kernel without .minperctamemory (no allocation) */
+  sreg_set(sp, "%perctamemoryoffset", if pcmSize > 0 then pcmBase + c * pcmSize else 0);
+  sreg_set(sp, "%perctamemorysize", pcmSize);
+  /* the region reserved for system software (PTX ISA 10.29) must not overlap user shared memory: 1024 bytes placed
+     after the CTA's static and dynamic shared memory (its size and place are the implementation's choice) */
+  let rb = alignUp(stop + dynsmem, unit);
+  sreg_set(sp, "%reserved_smem_offset_begin", rb); sreg_set(sp, "%reserved_smem_offset_end", rb + 1024);
+  sreg_set(sp, "%reserved_smem_offset_cap", 1024);    /* "Total size of the reserved shared memory region" (10.29) */
+  sreg_set(sp, "%reserved_smem_offset_0", rb); sreg_set(sp, "%reserved_smem_offset_1", rb + 512);
   foreach (i from 0 to 7) {
     sreg_set(sp, concat_str("%pm", dec_str(i)), 0);
     sreg_set(sp, concat_str("%pm", concat_str(dec_str(i), "_64")), 0)
@@ -255,6 +285,7 @@ function mkCtas(c0, n) = {
       t_ptop[s] = kptop;
       t_lmem[s] = new_space();
       t_ltop[s] = 0;
+      t_lsp[s] = LSTACK;
       t_cseq[s] = new_space();
       t_misc[s] = new_space();
       t_cont[s] = K_none();

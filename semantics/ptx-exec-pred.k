@@ -13,7 +13,7 @@ module PTX-EXEC-PRED
 
   // flush a subnormal float input when .ftz
   syntax Int ::= ftzSrc(Set, Ty, Int) [function, total]
-  rule ftzSrc(M, T, V) => flushB(V, fw(T)) requires "ftz" in M andBool isF(T)
+  rule ftzSrc(M, T, V) => flushB(V, fw(T)) requires "ftz" in M andBool isF(T) andBool fw(T) =/=Int 64   // .ftz applies only to .f32
   rule ftzSrc(_, _, V) => V [owise]
 
   // ---------------------------------------------------------------- set

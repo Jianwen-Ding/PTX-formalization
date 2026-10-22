@@ -1,0 +1,21 @@
+// expect: report mechanism on an mbarrier object that is not .layout::v1
+// "when the .report_mechanism is specified for data inspection, the associated mbarrier operand must have been
+// initialized with the layout .layout::v1, otherwise the behavior is undefined" (PTX ISA 9.4 9.7.10.28.1.3)
+.version 9.4
+.target sm_107f
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 po, .param .u64 pg)
+{
+    .reg .b64 %o, %g, %st; .reg .pred %c;
+    .shared .align 8 .b64 bar; .shared .align 16 .b8 buf[16];
+    ld.param.u64 %o, [po]; ld.param.u64 %g, [pg];
+    mbarrier.init.shared::cta.b64 [bar], 1;
+    mbarrier.arrive.expect_tx.shared::cta.b64 %st, [bar], 16;
+    cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes.mbarrier::report::validity::per_element::ff [buf], [%g], 16, [bar];
+    mbarrier.try_wait.parity.shared::cta.b64 %c, [bar], 0;
+    ret;
+}
+.buffer O .u32 [1];
+.buffer G .u8 = { 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+.launch k <<< 1, 1 >>> (O, G);

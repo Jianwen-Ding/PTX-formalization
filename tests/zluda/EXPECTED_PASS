@@ -163,7 +163,6 @@ stateful_ld_st_simple
 stateful_neg_offset
 sub
 sub_extended
-subc_cc_s32
 tanh
 tid
 uint_to_fp_bf16
@@ -174,8 +173,10 @@ vector8_extract
 vector_extract
 vector_operand
 vote_all
+vote_all_sub
 vote_any
 vote_ballot
+vote_ballot_nosync
 vshr_clamp
 warp_sz
 xor

@@ -302,6 +302,11 @@ with run-time meaning (linking, static allocation, buffers, launches, `.print` /
 every instruction) is done by the Sail model (`ptx_main.sail` reads the stream).  `ptxtest.py`
 runs a test and compares stdout with the `.out` file (exit code from the model's `EXIT n` line).
 
+**Reference.**  The K semantics (`semantics/`, `agx/agx.k`) is obsolete for now; these Sail models are the maintained
+ones.  The PTX model was written as a re-expression of the K semantics in `semantics/`, and has since been
+corrected against the public PTX ISA (Release 9.3, and 9.4 since) wherever the two differ; `docs/review-checklist.md` lists each
+correction with its ISA section and every place where this model and the K rules now disagree.
+
 Instructions keep K's representation: `opc(base, modifiers, types)` from `decodeOpc` and operands as
 in `ptx-syntax.k`, layered because Sail has no recursive types (simple operands, addresses, bracket
 items, instruction operands).  Each K module is a Sail file with the same rules, in K's order of
@@ -365,7 +370,7 @@ of programs the K semantics passes).
 |---|---|---|---|
 | `tests/*.ptx` | 285 | 281 | 4 (`ldm2-1` .. `ldm2-4`, see below) |
 | `tests/neg/*.ptx` | 21 | 21 | 0 |
-| `tests/zluda/*.ptx` | 184 (181 expected to pass) | 181 of 181 | 0 (the 3 others also fail in K: `reg_local`, `vote_all_sub`, `vote_ballot_nosync`) |
+| `tests/zluda/*.ptx` | 184 (182 expected to pass) | 182 of 182 | 0 (`reg_local` also fails in K; `subc_cc_s32` records the hardware's carry polarity of `sub.cc`, the model follows the ISA's borrow) |
 
 `tests/*.ptx` by subsystem:
 

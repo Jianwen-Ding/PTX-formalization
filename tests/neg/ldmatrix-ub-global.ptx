@@ -1,0 +1,16 @@
+// expect: ldmatrix: the address is not in the .shared window
+// ldmatrix without .shared: "If the generic address doesn't fall in .shared state space, then the behavior is
+// undefined" (9.7.15.5.15); a global address, under .ub strict
+.version 8.0
+.target sm_90
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 pa)
+{
+    .reg .b64 %a; .reg .b32 %r;
+    ld.param.u64 %a, [pa];
+    ldmatrix.sync.aligned.m8n8.x1.b16 {%r}, [%a];
+    ret;
+}
+.buffer A .u32 [64];
+.launch k <<< 1, 32 >>> (A);

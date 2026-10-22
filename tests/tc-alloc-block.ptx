@@ -1,0 +1,29 @@
+// tcgen05.alloc blocks until the requested columns are available (PTX ISA 9.3 9.7.17.5: "unblocks as soon as the
+// requested amount of Tensor Memory becomes available"): warp 0 holds all 512 columns while warp 1 asks for 256; warp 1
+// waits for warp 0's dealloc and then gets column 0 (before: "tensor memory exhausted")
+.version 8.8
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %r<4>, %ta; .reg .pred %p, %q; .reg .b64 %o;
+    .shared .align 16 .b32 slot[2];
+    ld.param.u64 %o, [po];
+    mov.u32 %r0, %tid.x; shr.u32 %r1, %r0, 5; setp.eq.u32 %p, %r1, 0; and.b32 %r2, %r0, 31; setp.eq.u32 %q, %r2, 0;
+    @!%p bra W1;
+    tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [slot], 512;
+    ld.shared.b32 %ta, [slot];
+    tcgen05.dealloc.cta_group::1.sync.aligned.b32 %ta, 512;
+    @%q st.global.b32 [%o], %ta;
+    bra DONE;
+W1:
+    tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [slot+4], 256;
+    ld.shared.b32 %ta, [slot+4];
+    tcgen05.dealloc.cta_group::1.sync.aligned.b32 %ta, 256;
+    @%q st.global.b32 [%o+4], %ta;
+DONE:
+    ret;
+}
+.buffer O .u32 = { 7, 7 };
+.launch k <<< 1, 64 >>> (O);
+.expect O .u32 = { 0, 0 };

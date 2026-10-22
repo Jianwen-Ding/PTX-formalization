@@ -1,0 +1,15 @@
+// expect: cvt to .e4m3x2 rounds only with .rn
+// a rounding mode outside the 9.7.9.21 syntax for an f8 target, reported under .isacheck
+.version 9.0
+.target sm_100a
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b16 %h0; .reg .f32 %f1;
+    mov.f32 %f1, 0fBFF33333;
+    cvt.rp.satfinite.e4m3x2.f32 %h0, %f1, %f1;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

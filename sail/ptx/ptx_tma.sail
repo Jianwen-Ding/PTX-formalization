@@ -48,9 +48,12 @@ function tmTyOf(c) = match c {
 val tmTy : int -> ty
 function tmTy(b) = tmTyOf(tmEtc(b))
 
+/* the swizzle of the shared-memory addresses (swizzle of ptx_wg.sail) for the tensor map's swizzle mode (Table 33:
+ * 0 none, 1 32B, 2 64B, 3 128B, 4 96B).  The 96B mode has the pattern of the 32B mode ("0 1 2 3 4 5 6 7 / 1 0 3 2 5 4 7 6 /
+ * ... Pattern repeats" from a 256-byte boundary, PTX ISA 9.3 section 5.5.7, and Figure 31). */
 val tmEffMode : int -> int
 function tmEffMode(b) =
-  if tmSwz(b) == 1 then 3 else if tmSwz(b) == 2 then 2
+  if tmSwz(b) == 1 | tmSwz(b) == 4 then 3 else if tmSwz(b) == 2 then 2
   else if tmSwz(b) == 3 then (match tmAtom(b) { 0 => 1, 1 => 4, 2 => 5, 3 => 6, _ => 0 })
   else 0
 
@@ -58,19 +61,25 @@ val tmFill : int -> int
 function tmFill(b) =
   if tmFillMode(b) == 0 then 0
   else if tmEb(b) == 4 then 2143289344
-  else if tmEtc(b) == 6 then 32256
-  else if tmEtc(b) == 10 then 32704
+  else if tmEtc(b) == 6 then oobNaN(16)
+  else if tmEtc(b) == 10 then oobNaN(116)
   else if tmEtc(b) == 9 then 9221120237041090560
   else 0
 
 /* ---------------------------------------------------------------- element addresses */
+/* tiled mode: the traversal stride "specifies the exact number of elements to be skipped" while the bounding box iterates
+ * a dimension (PTX ISA 9.3 section 5.5.3.2, ~3036), and it reduces the number of elements accessed, "unlike the tiled
+ * mode" in im2col mode (~3258-3259): dimension i holds ceil(boxDim[i] / elementStride[i]) elements, at coordinates
+ * c + k * elementStride[i] */
+val tmN : (int, int) -> int
+function tmN(b, i) = { let e = max_int(1, tmEst(b, i)); tdiv_int(tmBox(b, i) + e - 1, e) }
 val tmVol : (int, int) -> int
-function tmVol(b, i0) = { var a : int = 1; var i : int = i0; while i < tmRank(b) do { a = a * tmBox(b, i); i = i + 1 }; a }
+function tmVol(b, i0) = { var a : int = 1; var i : int = i0; while i < tmRank(b) do { a = a * tmN(b, i); i = i + 1 }; a }
 val tmCount : (int, bool) -> int
 function tmCount(b, g) = if g then 4 * tmBox(b, 0) else tmVol(b, 0)
 
 val gcoord : (int, list(int), int, int, int) -> int
-function gcoord(b, cs, e, i, dv) = nth(cs, i) + tmod_int(tdiv_int(e, dv), tmBox(b, i)) * tmEst(b, i)
+function gcoord(b, cs, e, i, dv) = nth(cs, i) + tmod_int(tdiv_int(e, dv), tmN(b, i)) * tmEst(b, i)
 
 val tmAddrT : (int, list(int), int) -> int
 function tmAddrT(b, cs, e) = {
@@ -81,7 +90,7 @@ function tmAddrT(b, cs, e) = {
   while i < tmRank(b) & not_bool(bad) do {
     let g = gcoord(b, cs, e, i, dv);
     if g < 0 | g >= tmDim(b, i) then bad = true
-    else { acc = acc + (if i == 0 then g * tmEb(b) else g * tmStride(b, i)); dv = dv * tmBox(b, i); i = i + 1 }
+    else { acc = acc + (if i == 0 then g * tmEb(b) else g * tmStride(b, i)); dv = dv * tmN(b, i); i = i + 1 }
   };
   if bad then -1 else tmAddrOf(b) + acc
 }
@@ -187,9 +196,9 @@ function tmGrpAddr(b, cs, q0) = {
     var acc : int = tmAddrOf(b) + tdiv_int(c0 * tmNb(b), 8);
     var bad : bool = false;
     while i < tmRank(b) & not_bool(bad) do {
-      let v = nth(cs, i) + tmod_int(q, tmBox(b, i)) * tmEst(b, i);
+      let v = nth(cs, i) + tmod_int(q, tmN(b, i)) * tmEst(b, i);
       if v < 0 | v >= tmDim(b, i) then bad = true
-      else { acc = acc + v * tmStride(b, i); q = tdiv_int(q, tmBox(b, i)); i = i + 1 }
+      else { acc = acc + v * tmStride(b, i); q = tdiv_int(q, tmN(b, i)); i = i + 1 }
     };
     if bad then -1 else acc
   }
@@ -289,8 +298,97 @@ function xnovec(l) = match l { [||] => [||], x :: rest => if isVec(x) then xnove
 val tmInfo : list(xop) -> list(int)
 function tmInfo(l) = match l { [||] => [||], XV(v) :: _ => tmCoords(IV(v)), _ :: rest => tmInfo(rest) }
 
+/* the restrictions on tensor copies (9.7.9.26.5.1) that the tensor map and the coordinates decide, under .ub strict
+ * (codes of Table 33: element type 13 .b4x16, 14 .b4x16_p64, 15 .b6x16_p32 / .b6p2x16; swizzle 4 96B; atomicity 0 16B,
+ * 2 32B + 8B flip; fill 1 OOB-NaN) */
+val tmUb : (list(string), int, list(int), bool) -> bool
+function tmUb(m, b, cs, store) =
+  if not_bool(ub) then true
+  else {
+    let c = tmEtc(b);
+    let padded = c == 14 | c == 15;
+    let c0 : int = match cs { x :: _ => x, [||] => 0 };
+    /* PTX ISA 9.4 9.7.10.28.5.1, rules 8-10: 32B alignment of the global address and the strides, except for
+       .b6x16_p32 / .b6p2x16 stores (.global.shared::cta) on sm_107f, which need 16B (rule 10, the more specific) */
+    let s107 = isasm == 107;
+    let algn = if c == 15 & s107 & store then 16 else 32;
+    let swz = tmSwz(b);
+    let atm = tmAtom(b);
+    /* rules 11-13: .b4x16_p64 takes no swizzling or 128B swizzling with any atomicity but 32B + 8B flip;
+       .b6x16_p32 / .b6p2x16 take no swizzling, on sm_107f 64B with 16B atomicity or 128B with 16B / 32B / 64B, on
+       sm_100f 128B with any atomicity but 32B + 8B flip, and never 32B with 16B or 128B with 32B + 8B flip */
+    let swzOk = if c == 14 then swz == 0 | (swz == 3 & atm != 2)
+                else if c == 15 then not_bool((swz == 1 & atm == 0) | (swz == 3 & atm == 2))
+                     & (swz == 0 | (if s107 then (swz == 2 & atm == 0) | (swz == 3 & (atm == 0 | atm == 1 | atm == 3))
+                                    else swz == 3 & atm != 2))
+                else true;
+    var e : string =
+      if tmSub(b) & tmFillMode(b) == 1 then "OOB-NaN fill mode does not support the sub-byte types"
+      /* rule 2: "cp.async.bulk.tensor with the direction .global.shared::cta doesn't support the type .b4x16_p64";
+         rule 3: ".shared::cluster.global doesn't support the sub-byte types on sm_120a" */
+      else if store & c == 14 then "the .global.shared::cta direction does not support .b4x16_p64"
+      else if not_bool(store) & tmSub(b) & isasm == 120 & isaarch == "a" & has(m, "shared::cluster") then
+        "the .shared::cluster.global direction does not support the sub-byte types on sm_120a"
+      else if padded & tmod_int(c0, 128) != 0 then "the first coordinate must be a multiple of 128 for the padded sub-byte types"
+      else if padded & tmod_int(tmAddrOf(b), algn) != 0 then concat_str("the global address must be ", concat_str(dec_str(algn), "B aligned for the padded sub-byte types"))
+      else if padded & swz != 4 & not_bool(swzOk) then "swizzle mode / atomicity not supported for the padded sub-byte type"
+      else if tmSwz(b) == 4 & tmAtom(b) != 0 then "the 96B swizzle mode needs .swizzle_atomicity 16B"
+      else if tmSwz(b) == 4 & padded then "the 96B swizzle mode does not support the padded sub-byte types"
+      else if tmSwz(b) == 4 & not_bool(tmSub(b)) & tmBox(b, 0) * tmEb(b) > 96 then "the 96B swizzle mode needs Box-Size[0] <= 96B"
+      else if tmSwz(b) == 4 & has(m, "im2col::w::128") then "the 96B swizzle mode does not support .im2col::w::128"
+      /* 9.4 5.5.5: "for these modes, the legal Swizzling Modes is required. In other words, swizzling mode must not be
+         set to (i) no swizzle and (ii) 128-byte swizzle mode with 32-byte atomicity with 8-byte flip" */
+      else if (has(m, "im2col::w") | has(m, "im2col::w::128") | has(m, "im2col_no_offs::w")) & swz == 0 then
+        "the im2col::w modes need a swizzling mode"
+      /* 9.4 5.5.5.1: for im2col_no_offs::w "Lower-Corner-W must be non-negative while the value for Upper-Corner-W must
+         be non-positive" */
+      else if has(m, "im2col_no_offs::w") & (tmLo(b, 0) < 0 | tmUp(b, 0) > 0) then
+        "im2col_no_offs::w: the bounding box must stay within the tensor (Lower-Corner-W >= 0, Upper-Corner-W <= 0)"
+      else if tmSwz(b) == 3 & tmAtom(b) == 2 & store then "128B swizzle with 32B atomicity and 8B flip only for copies into shared memory"
+      else if tmSwz(b) == 3 & tmAtom(b) == 2 & (has(m, "im2col::w") | has(m, "im2col::w::128") | has(m, "im2col_no_offs::w")) then "128B swizzle with 32B atomicity and 8B flip does not support .im2col::w modes"
+      else "";
+    if padded then foreach (i from 1 to (tmRank(b) - 1)) if e == "" & tmod_int(tmStride(b, i), algn) != 0 then e = concat_str("tensor strides must be ", concat_str(dec_str(algn), "B aligned for the padded sub-byte types"));
+    /* .global.shared::cta: "Starting co-ordinates for Bounding Box (tensorCoords) must be non-negative".  The second
+       rule, "The bounding box along the D, W and H dimensions must stay within the tensor boundaries", names the im2col
+       dimensions; tile-mode stores past the boundary keep the clipping of 5.5 */
+    /* 9.4: "For sm_107f, starting co-ordinates for Bounding Box (tensorCoords) can be negative for .tile::scatter4 mode" */
+    let negOk = has(m, "tile::scatter4") & (isaarch == "a" | isaarch == "f") & isasm >= 107 & isasm < 110;
+    if store & e == "" & not_bool(negOk) then {
+      var x = cs;
+      while is_cons(x) do { match x { v :: rest => { if e == "" & v < 0 then e = "the starting coordinates of a .global.shared::cta copy must be non-negative"; x = rest }, [||] => () } }
+    };
+    if e != "" then { fault(concat_str("cp.async.bulk.tensor: ", e), 0); false } else true
+  }
+
+/* the .report_mechanism inspection of a tensor load (PTX ISA 9.4 9.7.10.28.1.3) over the source global memory that the
+ * copy reads (elements out of bounds are filled, not read): .per_element::ff matches a 0xff byte of a read element;
+ * .per_16bytes samples the first element of each aligned 16-byte global chunk containing a read element (the model's
+ * choice, as for cp.async.bulk).  The sub-byte types (.b4x16 ...) are not inspected. */
+val tmRepHit : (list(string), int, list(int), list(int), int, bool, bool) -> bool
+function tmRepHit(m, b, cs, inf, imd, i2c, g) = {
+  let (w, pat) = repPat(m);
+  if w == 0 | tmSub(b) then false
+  else {
+    let eb = tmEb(b);
+    let cnt = if i2c then tmPix(b, inf, imd) * tmBox(b, 0) else tmCount(b, g);
+    var hit : bool = false;
+    foreach (e from 0 to (cnt - 1)) {
+      let a = if i2c then tmAddrI(b, cs, inf, imd, e) else tmAddr(b, cs, e, g);
+      if a >= 0 & not_bool(hit) then {
+        if w == -1 then { foreach (j from 0 to (eb - 1)) if mem_rdn(SP_GMEM, a + j, 1) == 255 then hit = true }
+        else {
+          let c = a - tmod_int(a, 16);
+          if land_int(mem_rdn(SP_GMEM, c, max_int(1, tdiv_int(w, 8))), mask(w)) == pat then hit = true
+        }
+      }
+    };
+    hit
+  }
+}
+
 val tm_load : (list(string), addr, int, list(int), addr, list(xop)) -> unit
 function tm_load(m, d, b, cs, mb, rest) = {
+  if not_bool(tmUb(m, b, cs, false)) then return ();
   let cl = has(m, "shared::cluster");
   let sp = if cl then "cluster" else "shared";
   let dsp = if cl then "shared_cluster" else "shared";
@@ -298,7 +396,7 @@ function tm_load(m, d, b, cs, mb, rest) = {
   let eb = tmEb(b);
   let i2c = isI2c(m);
   let sub = tmSub(b);
-  let mk = bulkMask(XB([|mb|], [||]) :: (if i2c | sub then xnovec(rest) else rest));
+  let mk = mcMask(m, bulkMask(XB([|mb|], [||]) :: (if i2c | sub then xnovec(rest) else rest)));
   let bases = tmBases(ea(d, dsp), mk, isMc(m));
   let g = has(m, "gather4") | has(m, "tile::gather4");
   let inf = tmInfo(rest);
@@ -331,8 +429,9 @@ function tm_load(m, d, b, cs, mb, rest) = {
   };
   let n = if i2c then tmPix(b, inf, imd) * tmBox(b, 0) * eb else if sub then tmGroups(b) * tmSB(b)
           else tmCount(b, has(m, "tile::gather4")) * eb;
+  let rh = not_bool(stuck) & tmRepHit(m, b, cs, inf, imd, i2c, g);
   var ms = tmBarLocs(ea(mb, dsp), mk, isMc(m), has(m, "cta_group::2"), rreg("%cluster_ctarank"));
-  while is_cons(ms) & not_bool(stuck) do { match ms { l :: mr => { bulkTx(l, n); ms = mr }, [||] => () } }
+  while is_cons(ms) & not_bool(stuck) do { match ms { l :: mr => { if rh then mbReportOn(mbKey(l)); bulkTx(l, n); ms = mr }, [||] => () } }
 }
 
 /* ---------------------------------------------------------------- stores / reductions */
@@ -346,8 +445,38 @@ function tmBad(b, cs, cnt) = {
   q
 }
 
+/* cp.reduce.async.bulk.tensor: "the valid combinations of .redOp and element type" (PTX ISA 9.3 ~17375-17380):
+ * .add .u32 .s32 .u64 .f32 .f16 .bf16; .min/.max .u32 .s32 .u64 .s64 .f16 .bf16; .inc/.dec .u32; .and/.or/.xor .b32 .b64.
+ * The tensor map gives the element type (tensormap.replace.elemtype values); f32 includes the .ftz variant (8), and the
+ * bit-size types .b32 / .b64 are taken as the 32- and 64-bit integer element types. */
+val tmRedOk : (string, int) -> bool
+function tmRedOk(op, c) = match op {
+  "add" => has([|"2", "3", "4", "7", "8", "6", "10"|], dec_str(c)),
+  "min" => has([|"2", "3", "4", "5", "6", "10"|], dec_str(c)),
+  "max" => has([|"2", "3", "4", "5", "6", "10"|], dec_str(c)),
+  "inc" => c == 2,
+  "dec" => c == 2,
+  "and" => c >= 2 & c <= 5,
+  "or" => c >= 2 & c <= 5,
+  "xor" => c >= 2 & c <= 5,
+  _ => false
+}
+
+/* the element type is known only when the instruction runs, so the table is checked then, under `.isacheck ;`; without it
+ * the other combinations run with the natural meaning (as for cp.reduce.async.bulk, bulkRedErr in ptx_async.sail):
+ * integer operations on the bits of integer types, .and / .or / .xor on the bits of any type, .add / .min / .max on
+ * floats; .inc / .dec on a floating-point element type stop with an error */
+val tmRedFloat : int -> bool
+function tmRedFloat(c) = c >= 6 & c <= 12
+
 val tm_store : (list(string), int, list(int), addr) -> unit
-function tm_store(m, b, cs, s) = {
+function tm_store(m, b, cs, s) = if has(m, "reduce") & isachk & not_bool(tmRedOk(atomOp(m), tmEtc(b))) then
+  fault(concat_str("cp.reduce.async.bulk.tensor: .", concat_str(atomOp(m),
+    " is not a valid combination with the tensor-map element type (PTX ISA 9.3 9.7.9.26.5.3), element type")), tmEtc(b))
+else if has(m, "reduce") & (atomOp(m) == "inc" | atomOp(m) == "dec") & tmRedFloat(tmEtc(b)) then
+  fault(concat_str("cp.reduce.async.bulk.tensor: .", concat_str(atomOp(m), " on a floating-point tensor-map element type")), tmEtc(b))
+else if not_bool(tmUb(m, b, cs, true)) then ()
+else {
   let base = locOff(ea(s, "shared"));
   let op = if has(m, "reduce") then atomOp(m) else "";
   let t = tmTy(b);
@@ -374,7 +503,13 @@ function tm_store(m, b, cs, s) = {
       let _ = memop_do(Loc("global", a), if op == "" then WrOp(eb, v) else BulkRedOp(op, t, eb, v));
       ws = rest
     }, [||] => () }
-  }
+  };
+  /* im2col_no_offs::w: "the negative values for tensor coordinates would result in illegal out-of-bounds access and
+     runtime error is raised in such cases. Additionally, note that once out of boundary access is detected, subsequent
+     pixel operations would not be performed" (PTX ISA 9.4 5.5.5.1): the pixels before the first out-of-bounds one are
+     written, then the run stops */
+  if not_bool(stuck) & has(m, "im2col_no_offs::w") & tmBad(b, cs, tmBox(b, 1)) < tmBox(b, 1) then
+    fault("cp.async.bulk.tensor.im2col_no_offs::w: out-of-bounds access (runtime error)", tmBad(b, cs, tmBox(b, 1)))
 }
 
 /* ---------------------------------------------------------------- tensormap.replace */
@@ -421,6 +556,9 @@ function exec_tma(o, ops) = {
     let f = tmField(m);
     let ordf = f == "box_dim" | f == "global_dim" | f == "global_stride" | f == "element_stride";
     match ops {
+      /* "If the address specified by addr does not fall within the address window of .global or .shared::cta state space
+         then the behavior is undefined" (9.7.9.27) */
+      XB([|a|], _) :: _ if has(m, "replace") & not_bool(winUb("tensormap.replace", "addr", ea(a, sp), [|"global", "shared"|])) => true,
       [|XB([|a|], [||]), n|] if has(m, "replace") & not_bool(ordf) => {
         let l = ea(a, sp);
         let b = memop_do(l, RdOp(128));

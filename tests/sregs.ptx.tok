@@ -1,0 +1,67 @@
+VERSION 4621030987654181683
+TARGET 1 sm_90
+ASZ 64
+FUNC k entry 1 visible PERF 0  RETS 0  PARAMS 1 po u 64 8 8 RW 40 %o 64 %oo 64 %c1 64 %c2 64 %c3 64 %g1 64 %g2 64 %v0 32 %v1 32 %v2 32 %v3 32 %w0 32 %w1 32 %w2 32 %w3 32 %u0 32 %u1 32 %u2 32 %u3 32 %u4 32 %u5 32 %u6 32 %u7 32 %u8 32 %u9 32 %u10 32 %u11 32 %u12 32 %u13 32 %u14 32 %u15 32 %u16 32 %u17 32 %u18 32 %u19 32 %t1 32 %t2 32 %p 1 %q 1 %is 1 LABELS 0  TARGETS 0  CODE 58
+IN G0 ld 1 param 1 u 64 2 S R %o B 1 AN po 0 
+IN G0 mov 0  1 u 32 2 S R %u0 S R %tid.x
+IN G0 mov 0  1 u 32 2 S R %u1 S R %ctaid.x
+IN G0 setp 1 eq 1 u 32 3 S R %p S R %u0 S I 0
+IN G0 setp 1 eq 1 u 32 3 S R %q S R %u1 S I 1
+IN G0 and 0  1 p 1 3 S R %is S R %p S R %q
+IN G0 mov 1 v4 1 u 32 2 V 4 R %v0 R %v1 R %v2 R %v3 S R %tid
+IN G0 mov 1 v4 1 u 32 2 V 4 R %w0 R %w1 R %w2 R %w3 S R %nctaid
+IN G0 mov 0  1 u 64 2 S R %c1 S R %clock64
+IN G0 mov 0  1 u 64 2 S R %c2 S R %clock64
+IN G0 mov 0  1 u 64 2 S R %c3 S R %clock64
+IN G0 mov 0  1 u 64 2 S R %g1 S R %globaltimer
+IN G0 mov 0  1 u 64 2 S R %g2 S R %globaltimer
+IN G0 setp 1 lt 1 u 64 3 S R %p S R %c1 S R %c2
+IN G0 setp 1 lt 1 u 64 3 S R %q S R %c2 S R %c3
+IN G0 and 0  1 p 1 3 S R %p S R %p S R %q
+IN G0 selp 0  1 u 32 4 S R %u2 S I 1 S I 0 S R %p
+IN G0 setp 1 lt 1 u 64 3 S R %p S R %g1 S R %g2
+IN G0 selp 0  1 u 32 4 S R %u3 S I 1 S I 0 S R %p
+IN G0 mov 0  1 u 32 2 S R %u4 S R %ntid.x
+IN G0 mov 0  1 u 32 2 S R %u5 S R %nctaid.x
+IN G0 mov 0  1 u 32 2 S R %u6 S R %nwarpid
+IN G0 mov 0  1 u 32 2 S R %u7 S R %warpsize
+IN G0 mov 0  1 u 32 2 S R %u8 S R %laneid
+IN G0 mov 0  1 u 32 2 S R %u9 S R %clusterid.x
+IN G0 mov 0  1 u 32 2 S R %u10 S R %nclusterid.x
+IN G0 mov 0  1 u 32 2 S R %u11 S R %cluster_ctarank
+IN G0 mov 0  1 u 32 2 S R %u12 S R %cluster_nctarank
+IN G0 mov 0  1 u 32 2 S R %u13 S R %cluster_ctaid.x
+IN G0 mov 0  1 u 32 2 S R %u14 S R %cluster_nctaid.x
+IN G0 mov 0  1 u 32 2 S R %u15 S R %is_explicit_cluster
+IN G0 mov 0  1 u 32 2 S R %u16 S R %envreg0
+IN G0 mov 0  1 u 32 2 S R %u17 S R %pm0
+IN G0 mov 0  1 u 32 2 S R %u18 S R %nsmid
+IN G0 setp 1 ge 1 u 32 3 S R %p S R %u18 S I 1
+IN G0 selp 0  1 u 32 4 S R %u18 S I 1 S I 0 S R %p
+IN G0 mov 0  1 u 32 2 S R %u19 S R %lanemask_lt
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 AR %o 0  S R %v0
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 4 0  S R %w0
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 8 0  S R %u2
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 12 0  S R %u3
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 16 0  S R %u4
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 20 0  S R %u5
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 24 0  S R %u6
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 28 0  S R %u7
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 32 0  S R %u8
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 36 0  S R %u9
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 40 0  S R %u10
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 44 0  S R %u11
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 48 0  S R %u12
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 52 0  S R %u13
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 56 0  S R %u14
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 60 0  S R %u15
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 64 0  S R %u16
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 68 0  S R %u17
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 72 0  S R %u18
+IN G1 %is 0 st 1 global 1 b 32 2 B 1 ARO %o 76 0  S R %u19
+IN G0 ret 0  0  0 
+STATICS 0 
+BUFFER O u 32 20 0 
+LAUNCH k 2 1 1 64 1 1 0 1 N O
+EXPECT O u 32 0 20 I 0 I 2 I 1 I 1 I 64 I 2 I 2 I 32 I 0 I 1 I 2 I 0 I 1 I 0 I 1 I 0 I 0 I 0 I 1 I 0
+END

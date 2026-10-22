@@ -85,8 +85,9 @@ for name in FMTS:
 # ue8m0
 def ue(x, mode):
     if math.isnan(x): return 255
-    if x <= 0 or x == 0: return 0
-    if math.isinf(x): return 254
+    # .satfinite: |x| > MAX_NORM (2^127), -Inf and large negatives included, gives MAX_NORM 0xfe (PTX ISA 9.3 cvt)
+    if math.isinf(x) or abs(x) > 2.0 ** 127: return 254
+    if x <= 0: return 0
     a = Fraction(x); e = a.numerator.bit_length() - a.denominator.bit_length()
     if Fraction(2) ** e > a: e -= 1
     if mode == 'rp' and Fraction(2) ** e != a: e += 1

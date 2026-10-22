@@ -1,0 +1,45 @@
+// mbarrier.arrive_drop .multicast::cluster::32b (PTX ISA 9.4 9.7.15.16.17): an arrive-on that also decrements the
+// expected count, on the object at the same offset of every CTA in ctaMask.  Count 3; CTA 0 drops on CTAs 0 and 2
+// (mask 5), then arrives twice on CTAs 0-2 (mask 7): CTAs 0 and 2 complete phase 0, CTA 1 does not.  Two more arrivals
+// on CTAs 0 and 2 complete their phase 1, whose expected count is now 2: a final local arrive shows the pending counts
+// 2 (CTAs 0, 2: phase 2 of 2), 1 (CTA 1: phase 0, 3 - 2), 3 (CTA 3: untouched).
+.version 9.4
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 po) .reqnctapercluster 4, 1, 1
+{
+    .reg .b64 %o, %mb, %oo, %t, %st; .reg .b32 %tid, %cta, %bar32, %m5, %m7, %w0, %w1; .reg .pred %q, %q0, %p0, %p1;
+    .shared .align 8 .b64 bar;
+    ld.param.u64 %o, [po];
+    mov.u32 %tid, %tid.x; mov.u32 %cta, %ctaid.x;
+    setp.eq.u32 %q, %tid, 0;
+    setp.eq.u32 %q0, %cta, 0;
+    and.pred %q0, %q0, %q;
+    mov.u64 %mb, bar; mov.u32 %bar32, bar;
+    mov.u32 %m5, 5; mov.u32 %m7, 7;
+    @%q mbarrier.init.shared.b64 [%mb], 3;
+    fence.mbarrier_init.release.cluster;
+    barrier.cluster.arrive.release.aligned;
+    barrier.cluster.wait.acquire.aligned;
+    @%q0 mbarrier.arrive_drop.relaxed.cluster.shared::cluster.multicast::cluster::32b.b64 _, [%bar32], %m5;
+    @%q0 mbarrier.arrive.relaxed.cluster.shared::cluster.multicast::cluster::32b.b64 _, [%bar32], %m7;
+    @%q0 mbarrier.arrive.relaxed.cluster.shared::cluster.multicast::cluster::32b.b64 _, [%bar32], %m7;
+    barrier.cluster.arrive.release.aligned;
+    barrier.cluster.wait.acquire.aligned;
+    @%q mbarrier.test_wait.parity.shared.b64 %p0, [%mb], 0;
+    barrier.cluster.arrive.release.aligned;
+    barrier.cluster.wait.acquire.aligned;
+    @%q0 mbarrier.arrive.relaxed.cluster.shared::cluster.multicast::cluster::32b.b64 _, [%bar32], %m5;
+    @%q0 mbarrier.arrive.relaxed.cluster.shared::cluster.multicast::cluster::32b.b64 _, [%bar32], %m5;
+    barrier.cluster.arrive.release.aligned;
+    barrier.cluster.wait.acquire.aligned;
+    @%q mbarrier.arrive.shared.b64 %st, [%mb];
+    mbarrier.pending_count.b64 %w1, %st;
+    selp.u32 %w0, 1, 0, %p0;
+    mul.wide.u32 %t, %cta, 8; add.u64 %oo, %o, %t;
+    @%q st.global.v2.b32 [%oo], {%w0, %w1};
+    ret;
+}
+.buffer O .u32 [8];
+.launch k <<< 4, 32 >>> (O);
+.expect O .u32 = { 1, 2, 0, 1, 1, 2, 0, 3 };

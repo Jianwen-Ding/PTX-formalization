@@ -40,13 +40,92 @@ function unpack(l, w, v) = match l { [||] => (), d :: rest => { wr_sop(d, trunc(
 
 val clToGeneric : (int, int) -> int
 function clToGeneric(a, own) =
-  CLBASE + shl_int(if asr_int(a, 24) == 0 then own else asr_int(a, 24) - 1, 24) + land_int(a, 16777215)
+  winBase("cluster") + shl_int(if asr_int(a, 24) == 0 then own else asr_int(a, 24) - 1, 24) + land_int(a, 16777215)
 val clFromGeneric : (int, int) -> int
 function clFromGeneric(a, own) = {
-  if a >= CLBASE then lor_int(shl_int(asr_int(a - CLBASE, 24) + 1, 24), land_int(a - CLBASE, 16777215))
-  else if a >= SHBASE & a < LOCBASE then lor_int(shl_int(own + 1, 24), a - SHBASE)
+  if genWin(a) == "cluster" then lor_int(shl_int(asr_int(a - winBase("cluster"), 24) + 1, 24), land_int(a - winBase("cluster"), 16777215))
+  else if genWin(a) == "shared" then lor_int(shl_int(own + 1, 24), a - winBase("shared"))
   else 0
 }
+
+/* type of the formal parameter N of a parameter list */
+val pdTy : (list(pdecl), string) -> option(ty)
+function pdTy(l, n) = match l { [||] => None(), p :: rest => if p.pname == n then Some(p.pty) else pdTy(rest, n) }
+
+/* size and alignment of the formal parameter N of a parameter list */
+val pdFind : (list(pdecl), string) -> option((int, int))
+function pdFind(l, n) = match l { [||] => None(), p :: rest => if p.pname == n then Some((p.psize, p.palign)) else pdFind(rest, n) }
+
+/* mov of the address of a device-function parameter: the parameter is copied onto the stack frame and its
+ * address is in the .local state space (PTX ISA 5.1 note 3, mov).  The name is bound to the copy, so that
+ * ld.param / st.param see the same bytes; ret copies it back to the argument ("@cpy:" entries of the frame). */
+val paramToLocal : string -> unit
+function paramToLocal(n) = {
+  let t = tchk(cur);
+  let f = fchk(t_fn[t]);
+  let s = smap_get(t_env[t], n);
+  let (sz, al) : (int, int) = match pdFind(f_params[f], n) {
+    Some(x) => x,
+    None() => match pdFind(f_rets[f], n) { Some(x) => x, None() => (0, 1) }
+  };
+  let a = alignUp(t_ltop[t], max_int(al, 1));
+  t_ltop[t] = a + sz;
+  mem_copy(t_lmem[t], a, t_pmem[t], sym_addr(s), sz);
+  smap_set(t_env[t], n, mksym("local", a));
+  smap_set(t_env[t], concat_str("@cpy:", n), s);
+  smap_set(t_env[t], concat_str("@cpysz:", n), sz)
+}
+
+/* is N a .param formal of the executing device function (not yet copied to the stack) */
+val isFuncParam : string -> bool
+function isFuncParam(n) = {
+  let t = tchk(cur);
+  let e = t_env[t];
+  f_kind[fchk(t_fn[t])] == "func" & not_bool(isRegName(n)) & smap_has(e, n) & not_bool(smap_has(e, concat_str("@cpy:", n)))
+  & sym_space(smap_get(e, n)) == "param"
+  & (is_some(pdFind(f_params[fchk(t_fn[t])], n)) | is_some(pdFind(f_rets[fchk(t_fn[t])], n)))
+}
+
+/* "For ld.param::entry instruction, operand a must be a kernel parameter address, otherwise behavior is undefined. For
+ * ld.param::func instruction, operand a must be a device function parameter address" (9.7.9.8); checked under .ub
+ * strict for a named address: ::entry needs a parameter of the executing kernel, ::func must not name one */
+val paramUb : (opcode, list(xop)) -> unit
+function paramUb(o, ops) =
+  if ub & o.base == "ld" & (has(o.mods, "param::entry") | has(o.mods, "param::func")) then {
+    let n : string = match ops { _ :: XB([|AN(x)|], _) :: _ => x, _ :: XB([|ANO(x, _)|], _) :: _ => x, _ => "" };
+    let f = fchk(t_fn[tchk(cur)]);
+    let kparam = f_kind[f] == "entry" & is_some(pdFind(f_params[f], n));
+    if n != "" & has(o.mods, "param::entry") & not_bool(kparam) then fault(concat_str("ld.param::entry: not a kernel parameter: ", n), 0)
+    else if n != "" & has(o.mods, "param::func") & kparam then fault(concat_str("ld.param::func: a kernel parameter: ", n), 0)
+  }
+
+/* "The state space specified by memory instructions must match the state space of the address operand, otherwise the
+ * behavior is undefined" (PTX ISA 9.4 6.4.1): under .ub strict, for ld / ldu / st / atom / red with an explicit state
+ * space and a variable as the address ([var], [var+off], var[...]).  A .shared variable matches .shared::cluster
+ * (that window contains it).  An address in a register has no recorded space and is not checked. */
+val spaceUb : (opcode, list(xop)) -> unit
+function spaceUb(o, ops) =
+  if ub & has([|"ld", "ldu", "st", "atom", "red"|], o.base) & spaceOf(o.mods) != "generic" then {
+    let s = spaceOf(o.mods);
+    var x = ops;
+    while is_cons(x) do { match x {
+      XB(a :: _, _) :: rest => {
+        let n : string = match a { AN(v) => v, ANO(v, _) => v, ANR(v, _, _) => v, _ => "" };
+        if n != "" & not_bool(isRegName(n)) & not_bool(stuck) then {
+          let sy = lookupSym(n);
+          let vs = if sy < 0 then "" else sym_space(sy);
+          let f = fchk(t_fn[tchk(cur)]);
+          /* a device-function parameter whose address is taken lives in .local (5.1.6.2) and stays a .param operand */
+          let fparam = vs == "local" & s == "param" & (is_some(pdFind(f_params[f], n)) | is_some(pdFind(f_rets[f], n)));
+          if vs != "" & vs != "nosym" & vs != "func" & vs != s & not_bool(s == "shared_cluster" & vs == "shared") & not_bool(fparam) then
+            fault(concat_str(o.base, concat_str(": the instruction's state space .", concat_str(s, concat_str(" does not match the variable's .", concat_str(vs, concat_str(" (", concat_str(n, ")"))))))), 0)
+        };
+        x = rest
+      },
+      _ :: rest => x = rest,
+      [||] => ()
+    } }
+  }
 
 val exec_alu : (opcode, list(xop)) -> bool
 function exec_alu(o, ops) = {
@@ -57,8 +136,8 @@ function exec_alu(o, ops) = {
       if ntys(o) != 1 then false
       else {
         let t = ty1(o);
-        /* .ftz: subnormal float inputs compare as sign-preserving zeros */
-        let fz = has(m, "ftz") & isF(t);
+        /* .ftz: subnormal float inputs compare as sign-preserving zeros (ISA: .ftz applies only to .f32 comparisons) */
+        let fz = has(m, "ftz") & isF(t) & fw(t) != 64;
         let x = if fz then flushB(rd(xop_nth(ops, 1), t), fw(t)) else rd(xop_nth(ops, 1), t);
         let y = if fz then flushB(rd(xop_nth(ops, 2), t), fw(t)) else rd(xop_nth(ops, 2), t);
         if n == 3 then { wrP(xop_nth(ops, 0), cmp(cmpOp(m), t, x, y), "none", 0); true }
@@ -74,6 +153,11 @@ function exec_alu(o, ops) = {
         let t = ty1(o);
         let d = xop_nth(ops, 0);
         let a = xop_nth(ops, 1);
+        match a {
+          XS(SN(nm)) => if isFuncParam(nm) then paramToLocal(nm),
+          XS(SNP(nm, _)) => if isFuncParam(nm) then paramToLocal(nm),
+          _ => ()
+        };
         match (d, a) {
           (XV(ds), XV(vs)) => { movv(ds, vs, t); true },
           (XV(ds), _) => { let v = rd(a, t); unpack(ds, tdiv_int(wid(t), sop_count(ds)), v); true },
@@ -100,7 +184,11 @@ function exec_alu(o, ops) = {
         if has(m, "shared::cluster") then {
           let own = rreg("%cluster_ctarank");
           wr(xop_nth(ops, 0), trunc(if has(m, "to") then clFromGeneric(a, own) else clToGeneric(a, own), wid(t)))
-        } else
+        } else if ub & has(m, "to") & genWin(a) != spaceOf(m) then
+          /* "the resulting address is undefined in cases where the generic address does not fall within the address
+             window of the specified state space" (9.7.9.21): under .ub strict */
+          fault(concat_str("cvta.to.", concat_str(spaceOf(m), ": generic address outside the window of the state space")), a)
+        else
           wr(xop_nth(ops, 0), trunc(if has(m, "to") then a - winBase(spaceOf(m)) else a + winBase(spaceOf(m)), wid(t)));
         true
       }
@@ -134,14 +222,36 @@ function gx_alu(o, ops) = {
       wr(xop_nth(ops, 0), bin(op, m, t, rd(xop_nth(ops, 1), t), rd(xop_nth(ops, 2), src2Ty(op, t)))); true
     } else if has(UNOPS, op) & not_bool(isPacked(t)) & n == 2 then {
       wr(xop_nth(ops, 0), un(op, m, t, rd(xop_nth(ops, 1), t))); true
+    } else if (op == "min" | op == "max") & isF(t) & n == 4 then {
+      wr(xop_nth(ops, 0), minmax3(op, m, t, rd(xop_nth(ops, 1), t), rd(xop_nth(ops, 2), t), rd(xop_nth(ops, 3), t))); true
     } else if has(TERNOPS, op) & not_bool(has(m, "cc")) & not_bool(isPacked(t)) & n == 4 then {
       wr(xop_nth(ops, 0), tern(op, m, t, rd(xop_nth(ops, 1), t), rd(xop_nth(ops, 2), t), rd(xop_nth(ops, 3), src3Ty(op, m, t)))); true
     } else false
   }
 }
 
+/* "The atom.add.f32 operation without .noftz, flushes subnormal inputs and results to sign-preserving zero on global
+ * memory but supports subnormal inputs and results and doesn't flush them to zero on shared memory" (PTX ISA 9.4
+ * 9.7.15.5; red 9.7.15.6); with .noftz (9.4) global memory keeps them too */
+val atOpG : (loc, string, ty, bool) -> string
+function atOpG(l, op, t, noftz) = match l {
+  Loc(s, _) => if s == "global" & op == "add" & ty_eq(t, mkty("f", 32)) & not_bool(noftz) then "add.ftz" else op,
+  _ => op
+}
+
 /* ---------------------------------------------------------------- memory (PTX-EXEC-MEM) */
 val exec_mem : (opcode, list(xop)) -> bool
+/* "The access size of a memory instruction is the total number of bytes accessed in memory. For example, the access
+ * size of ld.v4.b32 is 16 bytes ... The address must be naturally aligned to a multiple of the access size" (6.4.1):
+ * a vector ld / st is checked as one access under .ub strict (its elements are accessed one by one) */
+val vecAligned : (loc, int) -> bool
+function vecAligned(l, total) = match l {
+  Loc(sp, a) => if ub & total > 0 & tmod_int(a, total) != 0 then {
+      fault(concat_str("misaligned ", concat_str(sp, concat_str(" vector access of ", concat_str(dec_str(total), " bytes")))), a); false
+    } else true,
+  _ => true
+}
+
 function exec_mem(o, ops) = {
   let m = o.mods;
   let n = xop_count(ops);
@@ -155,7 +265,7 @@ function exec_mem(o, ops) = {
           Some(a) => {
             let l = ea(a, spaceOf(m));
             match xop_nth(ops, 0) {
-              XV(ds) => ldv(ds, l, t),
+              XV(ds) => if vecAligned(l, sop_count(ds) * bytes(t)) then ldv(ds, l, t),
               d => { let v = memop_do(l, RdOp(bytes(t))); if not_bool(stuck) then ldwb(d, t, v) }
             };
             true
@@ -169,7 +279,7 @@ function exec_mem(o, ops) = {
           Some(a) => {
             let l = ea(a, spaceOf(m));
             match xop_nth(ops, 1) {
-              XV(vs) => stv(vs, l, t),
+              XV(vs) => if vecAligned(l, sop_count(vs) * bytes(t)) then stv(vs, l, t),
               v => { let _ = memop_do(l, WrOp(bytes(t), rd(v, t))) in () }
             };
             true
@@ -182,7 +292,8 @@ function exec_mem(o, ops) = {
         else match mem_addr(xop_nth(ops, 1)) {
           Some(a) => {
             let c = if n == 4 then rd(xop_nth(ops, 3), t) else 0;
-            let v = memop_do(ea(a, spaceOf(m)), AtOp(atomOp(m), t, rd(xop_nth(ops, 2), t), c));
+            let l = ea(a, spaceOf(m));
+            let v = memop_do(l, AtOp(atOpG(l, atomOp(m), t, has(m, "noftz")), t, rd(xop_nth(ops, 2), t), c));
             if not_bool(stuck) then ldwb(xop_nth(ops, 0), t, v);
             true
           },
@@ -192,7 +303,13 @@ function exec_mem(o, ops) = {
       "red" => {
         if n != 2 | not_bool(is_mem1(xop_nth(ops, 0))) then false
         else match mem_addr(xop_nth(ops, 0)) {
-          Some(a) => { let _ = memop_do(ea(a, spaceOf(m)), AtOp(atomOp(m), t, rd(xop_nth(ops, 1), t), 0)) in (); true },
+          Some(a) => {
+            /* multimem.red (forwarded with its modifier "red") is not covered by the flushing note */
+            let l = ea(a, spaceOf(m));
+            let op = if has(m, "red") then atomOp(m) else atOpG(l, atomOp(m), t, has(m, "noftz"));
+            let _ = memop_do(l, AtOp(op, t, rd(xop_nth(ops, 1), t), 0)) in ();
+            true
+          },
           None() => false
         }
       },
@@ -248,11 +365,23 @@ function enter_func(f, env, outs) = {
     let k = smap_key(env, i);
     if string_startswith(k, "@in:") then smap_set(regs, sdrop(k, 4), sym_addr(smap_get(env, k)))
   };
-  t_stack[t] = (t_fn[t], t_pc[t], t_regs[t], t_env[t], t_ltop[t], outs) :: t_stack[t];
+  t_stack[t] = (t_fn[t], t_pc[t], t_regs[t], t_env[t], t_ltop[t], t_lsp[t], outs) :: t_stack[t];
   t_fn[t] = f;
   t_pc[t] = 0;
   t_regs[t] = regs;
+  smap_copy(env, f_syms[fchk(f)]);   /* the function's own static variables */
   t_env[t] = env
+}
+
+/* the caller's .param variable named by an argument (PTX ISA 7.1: arguments and return values may be .param or
+ * .reg variables, for .reg as well as for .param formals) */
+val paramVar : sop -> option(int)
+function paramVar(a) = match a {
+  SN(nm) => {
+    let s = lookupSym(nm);
+    if not_bool(isRegName(nm)) & s >= 0 & sym_space(s) == "param" then Some(s) else None()
+  },
+  _ => None()
 }
 
 val do_call : (string, list(sop), list(sop)) -> unit
@@ -268,8 +397,13 @@ function do_call(fname, rs, args) = match lookup_func(fname) {
     while ok & is_cons(ps) do {
       match (ps, aa) {
         (p :: pr, a :: ar) => {
-          if p.palign < 0 then smap_set(env, concat_str("@in:", p.pname), mksym("regin", rd_sop(a, p.pty)))
-          else match a {
+          if p.palign < 0 then {
+            let v : int = match paramVar(a) {
+              Some(s) => mem_rdn(t_pmem[t], sym_addr(s), bytes(p.pty)),
+              None() => rd_sop(a, p.pty)
+            };
+            smap_set(env, concat_str("@in:", p.pname), mksym("regin", v))
+          } else match a {
             SN(nm) => { let s = lookupSym(nm); smap_set(env, p.pname, if s < 0 then mksym("nosym", 0) else s) },
             _ => {
               let addr = alignUp(t_ptop[t], p.palign);
@@ -280,6 +414,12 @@ function do_call(fname, rs, args) = match lookup_func(fname) {
           };
           ps = pr; aa = ar
         },
+        /* an unsized last .param .b8 array may be omitted from the call when nothing is passed through it
+           (PTX ISA 11.2.2) */
+        ([|p|], [||]) => {
+          if p.palign >= 0 & p.psize == 0 then { smap_set(env, p.pname, mksym("param", alignUp(t_ptop[t], p.palign))); ps = [||] }
+          else { ok = false; fault(concat_str("call to ", concat_str(fname, ": too few arguments")), 0) }
+        },
         _ => { ok = false; fault(concat_str("call to ", concat_str(fname, ": too few arguments")), 0) }
       }
     };
@@ -288,19 +428,45 @@ function do_call(fname, rs, args) = match lookup_func(fname) {
     var outs : list((string, string)) = [||];
     var rps = f_rets[fchk(f)];
     var rr = rs;
-    while ok & is_cons(rps) do {
+    var rok : bool = true;
+    /* a call without a return list ("return values are optional", ISA 9.7.13): the results are discarded; each
+       .param return value gets a fresh slot for the callee to store into */
+    if not_bool(is_cons(rs)) then {
+      var x = rps;
+      while is_cons(x) do {
+        match x { p :: pr => {
+          if p.palign >= 0 then { let addr = alignUp(t_ptop[t], p.palign); t_ptop[t] = addr + p.psize; smap_set(env, p.pname, mksym("param", addr)) };
+          x = pr
+        }, [||] => () }
+      };
+      rps = [||]
+    };
+    while ok & rok & is_cons(rps) do {
       match (rps, rr) {
         (p :: pr, d :: dr) => {
-          if p.palign < 0 then outs = (p.pname, sop_name(d)) :: outs
-          else match d {
+          /* a .reg return value into a .param variable: "@retp:" entry of the callee's frame, stored at ret;
+             a .param return value into a register: a fresh .param slot, read at ret (outs entry "@p:" formal) */
+          let rg = sop_name(d);
+          let isReg : bool = match d { SR(_) => true, SN(nm) => isRegName(nm), _ => false };
+          if p.palign < 0 then match paramVar(d) {
+            Some(s) => smap_set(env, concat_str("@retp:", p.pname), s),
+            None() => outs = (p.pname, rg) :: outs
+          } else if isReg then {
+            let addr = alignUp(t_ptop[t], p.palign);
+            t_ptop[t] = addr + p.psize;
+            smap_set(env, p.pname, mksym("param", addr));
+            outs = (concat_str("@p:", p.pname), rg) :: outs
+          } else match d {
             SN(nm) => { let s = lookupSym(nm); smap_set(env, p.pname, if s < 0 then mksym("nosym", 0) else s) },
-            _ => ()
+            _ => { rok = false }
           };
           rps = pr; rr = dr
         },
-        _ => { rps = [||] }
+        _ => { rok = false }
       }
     };
+    /* K has no #bindRets rule for a count mismatch or a .param return that is not a name: the call is stuck there */
+    if ok & (not_bool(rok) | is_cons(rr)) then { ok = false; fault(concat_str("call to ", concat_str(fname, ": return values do not match the declaration")), 0) };
     if ok then enter_func(f, env, outs)
   }
 }
@@ -313,11 +479,44 @@ function do_ret() = {
   let t = tchk(cur);
   match t_stack[t] {
     [||] => do_exit(),
-    (f, pc, regs, env, lt, outs) :: rest => {
+    /* "If a function with .noreturn directive returns to the caller function at runtime, then the behavior is
+       undefined" (11.4.6): under .ub strict */
+    _ if ub & f_noret[fchk(t_fn[t])] => fault(concat_str("return from the .noreturn function ", f_name[fchk(t_fn[t])]), 0),
+    (f, pc, regs, env, lt, sp, outs) :: rest => {
       let cr = t_regs[t];
+      /* parameters whose address was taken (paramToLocal): copy them back to the arguments */
+      let e = t_env[t];
+      foreach (i from 0 to (smap_size(e) - 1)) {
+        let k = smap_key(e, i);
+        if string_startswith(k, "@cpy:") then {
+          let n = sdrop(k, 5);
+          let s = smap_get(e, k);
+          mem_copy(t_pmem[t], sym_addr(s), t_lmem[t], sym_addr(smap_get(e, n)), smap_get(e, concat_str("@cpysz:", n)))
+        }
+      };
+      let fd = fchk(t_fn[t]);
+      foreach (i from 0 to (smap_size(e) - 1)) {
+        let k = smap_key(e, i);
+        if string_startswith(k, "@retp:") then {
+          let n = sdrop(k, 6);
+          let w : int = match pdTy(f_rets[fd], n) { Some(ty) => bytes(ty), None() => 4 };
+          mem_wrn(t_pmem[t], sym_addr(smap_get(e, k)), w, smap_get(cr, n))
+        }
+      };
       var l = outs;
       while is_cons(l) do {
-        match l { (p, d) :: lr => { smap_set(regs, d, smap_get(cr, p)); l = lr }, [||] => () }
+        match l {
+          (p, d) :: lr => {
+            if string_startswith(p, "@p:") then {
+              let n = sdrop(p, 3);
+              let s = if smap_has(e, concat_str("@cpy:", n)) then smap_get(e, concat_str("@cpy:", n)) else smap_get(e, n);
+              let w : int = match pdFind(f_rets[fd], n) { Some((sz, _)) => sz, None() => 4 };
+              smap_set(regs, d, mem_rdn(t_pmem[t], sym_addr(s), w))
+            } else smap_set(regs, d, smap_get(cr, p));
+            l = lr
+          },
+          [||] => ()
+        }
       };
       smap_clear(cr);
       smap_clear(t_env[t]);
@@ -326,7 +525,8 @@ function do_ret() = {
       t_pc[t] = pc;
       t_regs[t] = regs;
       t_env[t] = env;
-      t_ltop[t] = lt
+      t_ltop[t] = lt;
+      t_lsp[t] = sp
     }
   }
 }
@@ -359,6 +559,8 @@ function exec_ctrl(o, ops) = {
     "ret" => if n == 0 then { do_ret(); true } else false,
     "exit" => if n == 0 then { do_exit(); true } else false,
     "trap" => { fault("trap", 0); true },
+    /* "Suspends execution" (9.7.20.1): with no debugger to resume it, the run stops at the breakpoint */
+    "brkpt" => { fault("brkpt: execution suspended", 0); true },
     "call" => match ops {
       [|XP(rs), XS(SN(f)), XP(xs)|] => { do_call(f, rs, xs); true },
       [|XP(rs), XS(SN(f))|] => { do_call(f, rs, [||]); true },
@@ -394,7 +596,7 @@ function icall(a, rs, xs) = {
 
 /* fences and hints: no-ops under sequential consistency */
 val gx_ctrl : (opcode, list(xop)) -> bool
-function gx_ctrl(o, ops) = has([|"membar", "fence", "nanosleep", "brkpt", "pmevent", "prefetch", "prefetchu"|], o.base)
+function gx_ctrl(o, ops) = has([|"membar", "fence", "nanosleep", "pmevent", "prefetch", "prefetchu"|], o.base)
 
 /* ---------------------------------------------------------------- barriers (PTX-EXEC-SYNC) */
 val isBar : (string, list(string)) -> bool
@@ -413,22 +615,65 @@ function bar_get(k, b, d) = { let sp = c_bars[cchk(cur_cta())]; if smap_has(sp, 
 val bar_set : (string, int, int) -> unit
 function bar_set(k, b, v) = smap_set(c_bars[cchk(cur_cta())], bkey(k, b), v)
 
-/* #barCheck(B): complete the barrier when the expected number of threads have arrived */
+/* #barCheck(B).  "barrier{.cta} instruction causes executing thread to wait for all non-exited threads from its warp
+ * and marks warps' arrival at barrier" and the thread count "must be a multiple of the warp size" (PTX ISA 9.3,
+ * bar / barrier): the arrivals are counted per warp.  "am<W>:B" holds the lanes of warp W that have arrived; a warp
+ * has arrived once every non-exited lane has.  The barrier completes when count / 32 warps (rounded up), or without a
+ * count every warp with a non-exited thread, have arrived.  Lanes of a warp that has not arrived when the barrier
+ * completes belong to the next generation. */
+val amKey : int -> string
+function amKey(w) = concat_str("am", concat_str(dec_str(w), ":"))
+
 val barCheck : (int, int) -> unit
 function barCheck(c, b) = {
   let sp = c_bars[cchk(c)];
   if smap_has(sp, bkey("cnt:", b)) then {
-    let cnt = smap_get(sp, bkey("cnt:", b));
     let x = if smap_has(sp, bkey("exp:", b)) then smap_get(sp, bkey("exp:", b)) else -1;
-    let need = if x < 0 then c_live[cchk(c)] else x;
-    if cnt >= need then {
-      smap_del(sp, bkey("cnt:", b));
+    let nw = tdiv_int(vol(blockDim) + 31, 32);
+    var arrived : int = 0;
+    var livew : int = 0;
+    foreach (w from 0 to (nw - 1)) {
+      let am = smap_get(sp, bkey(amKey(w), b));
+      let lv = smap_get(c_wlive[cchk(c)], dec_str(w));
+      if lv != 0 then livew = livew + 1;
+      if am != 0 & land_int(lv, lnot_int(am)) == 0 then arrived = arrived + 1
+    };
+    let need = if x < 0 then livew else tdiv_int(x + 31, 32);
+    if arrived >= need then {
+      let g = if smap_has(sp, bkey("gen:", b)) then smap_get(sp, bkey("gen:", b)) else 0;
+      /* lanes of warps that have not arrived carry over to the next generation */
+      var carry : int = 0;
+      foreach (w from 0 to (nw - 1)) {
+        let am = smap_get(sp, bkey(amKey(w), b));
+        let lv = smap_get(c_wlive[cchk(c)], dec_str(w));
+        if am != 0 & land_int(lv, lnot_int(am)) == 0 then smap_del(sp, bkey(amKey(w), b))
+        else if am != 0 then {
+          carry = carry + popc_int(am);
+          foreach (t from 0 to (nthreads - 1)) {
+            let s = tchk(t);
+            if t_alive[s] & t_cta[s] == c & tdiv_int(t_tid[s], 32) == w & bit_int(am, fmod_int(t_tid[s], 32)) & t_status[s] == 1
+               & t_wbar[s] == b & t_wgen[s] == g then {
+              t_wgen[s] = g + 1;
+              match t_cont[s] { K_barwaitred(bb, _, d) => t_cont[s] = K_barwaitred(bb, g + 1, d), _ => () }
+            }
+          }
+        }
+      };
+      if carry > 0 then smap_set(sp, bkey("cnt:", b), carry) else smap_del(sp, bkey("cnt:", b));
       let v = if smap_has(sp, bkey("val:", b)) then smap_get(sp, bkey("val:", b)) else 0;
       smap_del(sp, bkey("val:", b));
       smap_set(sp, bkey("res:", b), v);
-      smap_set(sp, bkey("gen:", b), (if smap_has(sp, bkey("gen:", b)) then smap_get(sp, bkey("gen:", b)) else 0) + 1)
+      smap_set(sp, bkey("gen:", b), g + 1)
     }
   }
+}
+
+/* the executing lane's arrival at barrier B */
+val barArrive : int -> unit
+function barArrive(b) = {
+  let w = tdiv_int(cur_tid(), 32);
+  bar_set("cnt:", b, bar_get("cnt:", b, 0) + 1);
+  bar_set(amKey(w), b, lor_int(bar_get(amKey(w), b, 0), pow2(fmod_int(cur_tid(), 32))))
 }
 
 register yielded : bool = false
@@ -439,7 +684,7 @@ function do_bar(b, x, w) = {
   let t = tchk(cur);
   let g = bar_get("gen:", b, 0);
   if w then { t_status[t] = 1; t_wbar[t] = b; t_wgen[t] = g };
-  bar_set("cnt:", b, bar_get("cnt:", b, 0) + 1);
+  barArrive(b);
   bar_set("exp:", b, x);
   barCheck(cur_cta(), b);
   if w then yielded = true
@@ -458,7 +703,7 @@ function do_barred(b, x, k, v, d) = {
   let t = tchk(cur);
   let g = bar_get("gen:", b, 0);
   t_status[t] = 1; t_wbar[t] = b; t_wgen[t] = g;
-  bar_set("cnt:", b, bar_get("cnt:", b, 0) + 1);
+  barArrive(b);
   bar_set("exp:", b, x);
   bar_set("val:", b, redStep(k, bar_get("val:", b, -1), v));
   t_cont[t] = K_barwaitred(b, g, d);
@@ -466,16 +711,25 @@ function do_barred(b, x, k, v, d) = {
   yielded = true
 }
 
+/* "Each CTA instance has sixteen barriers numbered 0..15"; a thread count "must be a multiple of the warp size"
+ * (PTX ISA 9.3 9.7.14.1).  An id outside 0..15 names no barrier; a count that is not a multiple of 32 is rounded up to
+ * whole warps, and reported under .ub strict. */
+val barOk : (int, int) -> bool
+function barOk(b, x) =
+  if b < 0 | b > 15 then { fault("barrier id outside 0..15", b); false }
+  else if ub & x >= 0 & tmod_int(x, 32) != 0 then { fault("barrier thread count is not a multiple of the warp size", x); false }
+  else true
+
 val gx_sync : (opcode, list(xop)) -> bool
 function gx_sync(o, ops) = {
   let m = o.mods;
   if isBar(o.base, m) then match ops {
-    [|a|] => { do_bar(rdu32(a), -1, not_bool(has(m, "arrive"))); true },
-    [|a, nn|] => { do_bar(rdu32(a), rdu32(nn), not_bool(has(m, "arrive"))); true },
+    [|a|] => { if barOk(rdu32(a), -1) then do_bar(rdu32(a), -1, not_bool(has(m, "arrive"))); true },
+    [|a, nn|] => { if barOk(rdu32(a), rdu32(nn)) then do_bar(rdu32(a), rdu32(nn), not_bool(has(m, "arrive"))); true },
     _ => false
   } else if isBarRed(o.base, m) then match ops {
-    [|d, a, pc|] => { do_barred(rdu32(a), -1, redKind(m), b2i(rdp(pc) != 0), d); true },
-    [|d, a, nn, pc|] => { do_barred(rdu32(a), rdu32(nn), redKind(m), b2i(rdp(pc) != 0), d); true },
+    [|d, a, pc|] => { if barOk(rdu32(a), -1) then do_barred(rdu32(a), -1, redKind(m), b2i(rdp(pc) != 0), d); true },
+    [|d, a, nn, pc|] => { if barOk(rdu32(a), rdu32(nn)) then do_barred(rdu32(a), rdu32(nn), redKind(m), b2i(rdp(pc) != 0), d); true },
     _ => false
   } else false
 }

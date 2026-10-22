@@ -1,6 +1,7 @@
-// legal qualifier combinations under .isacheck: add.f32x2 on sm_100 / PTX 8.6, add.u8x4 on PTX 9.2, shfl.sync
+// legal qualifier combinations under .isacheck: add.f32x2 (sm_100 or higher, PTX 8.6), add.u8x4 (PTX 9.2, sm_120f
+// or higher in the same family: 9.7.1.1 L5762, so sm_120a and not sm_100a), shfl.sync
 .version 9.2
-.target sm_100a
+.target sm_120a
 .address_size 64
 .isacheck ;
 .global .align 4 .u32 r;

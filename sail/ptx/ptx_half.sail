@@ -89,8 +89,11 @@ function gx_half(o, ops) = {
           wr(d, pack32(bin(op, m, F32, up32(lt, lane16(va, 0)), lane32(vx, 0)), bin(op, m, F32, up32(lt, lane16(va, 1)), lane32(vx, 1)))); true
         } else if isNarrowPair(dt) & ty_eq(aty, f32x2) & ty_eq(ct, f32x2) & has([|"add", "sub", "mul"|], op) then {
           let va = rd(a, aty); let vx = rd(x, ct); let lt = laneTyH(dt);
-          wr(d, pack16(cvt([|"rz"|], lt, F32, bin(op, withRz(m), F32, lane32(va, 0), lane32(vx, 0))),
-                       cvt([|"rz"|], lt, F32, bin(op, withRz(m), F32, lane32(va, 1), lane32(vx, 1))))); true
+          /* .ftz "flushes subnormal inputs and results to sign-preserving zero" (9.7.3, 9.7.4): also the f16 result */
+          let fz = has(m, "ftz");
+          let r0 = cvt([|"rz"|], lt, F32, bin(op, withRz(m), F32, lane32(va, 0), lane32(vx, 0)));
+          let r1 = cvt([|"rz"|], lt, F32, bin(op, withRz(m), F32, lane32(va, 1), lane32(vx, 1)));
+          wr(d, pack16(if fz then flushB(r0, fw(lt)) else r0, if fz then flushB(r1, fw(lt)) else r1)); true
         } else if op == "mul" & isNarrowPair(dt) & ty_eq(dt, aty) & isNarrowPair(ct) & not_bool(ty_eq(dt, ct)) then {
           let va = rd(a, aty); let vx = rd(x, ct); let lt = laneTyH(dt); let lc = laneTyH(ct);
           wr(d, pack16(bin("mul", m, lt, lane16(va, 0), cvt([||], lt, lc, lane16(vx, 0))),
@@ -107,7 +110,9 @@ function gx_half(o, ops) = {
     let f32x2 = mkty("f32x2", 64);
     match ops {
       [|d, a, b, x|] => {
-        if op == "fma" & ty_eq(dt, f32x2) & isNarrowPair(aty) & ty_eq(bt, f32x2) & ty_eq(ct, f32x2) then {
+        /* fma.dtype.atype.btype.ctype (PTX ISA 9.4 9.7.5.3): the syntax gives .btype = .f32x2, the semantics
+           convert(b[0:15]) / convert(b[16:31]) a pair like a; b is read as a pair of .atype, also when spelled so */
+        if op == "fma" & ty_eq(dt, f32x2) & isNarrowPair(aty) & (ty_eq(bt, f32x2) | ty_eq(bt, aty)) & ty_eq(ct, f32x2) then {
           let va = rd(a, aty); let vb = rd(b, aty); let vx = rd(x, ct); let lt = laneTyH(aty);
           wr(d, pack32(tern("fma", m, F32, up32(lt, lane16(va, 0)), up32(lt, lane16(vb, 0)), lane32(vx, 0)),
                        tern("fma", m, F32, up32(lt, lane16(va, 1)), up32(lt, lane16(vb, 1)), lane32(vx, 1)))); true
@@ -121,25 +126,40 @@ function gx_half(o, ops) = {
 val laneTrue : ty -> int
 function laneTrue(t) = match t.k { "f16x2" => 15360, "bf16x2" => 16256, _ => 65535 }
 
+/* the lane results of a packed half compare: .ftz flushes subnormal lane inputs, then BoolOp with c when present */
+val halfCmp : (list(string), ty, int, int, list(xop)) -> (int, int)
+function halfCmp(m, t, x, y, rest) = {
+  let lt = laneTyH(t);
+  let c0 = cmp(cmpOp(m), lt, ftzSrc(m, lt, lane16(x, 0)), ftzSrc(m, lt, lane16(y, 0)));
+  let c1 = cmp(cmpOp(m), lt, ftzSrc(m, lt, lane16(x, 1)), ftzSrc(m, lt, lane16(y, 1)));
+  match rest {
+    [|c|] => (bop(c0, boolOp(m), rd(c, PRED)), bop(c1, boolOp(m), rd(c, PRED))),
+    _ => (c0, c1)
+  }
+}
+
 /* opcode-specific rules of PTX-EXEC-HALF (setp / set on pairs, cvt to pairs, cvt.pack) */
 val exec_half : (opcode, list(xop)) -> bool
 function exec_half(o, ops) = {
   let m = o.mods;
   match (o.base, ops) {
-    ("setp", [|XS(SPIPE(true, p, true, q)), a, b|]) => {
+    /* setp.CmpOp{.BoolOp}{.ftz}.{f16x2,bf16x2} p|q, a, b{, {!}c}: p = BoolOp(t[0], c), q = BoolOp(t[1], c); either
+     * destination may be the sink '_' (9.7.7.2) */
+    ("setp", XS(SPIPE(k1, p, k2, q)) :: a :: b :: rest) => {
       let t = ty1(o);
-      if ntys(o) == 1 & isHalfPair(t) then {
-        let x = rd(a, t); let y = rd(b, t); let lt = laneTyH(t);
-        wreg(p, cmp(cmpOp(m), lt, lane16(x, 0), lane16(y, 0)));
-        wreg(q, cmp(cmpOp(m), lt, lane16(x, 1), lane16(y, 1)));
+      if ntys(o) == 1 & isHalfPair(t) & xop_count(rest) <= 1 then {
+        let (r0, r1) = halfCmp(m, t, rd(a, t), rd(b, t), rest);
+        wr_sop(if k1 then SR(p) else SN(p), r0);
+        wr_sop(if k2 then SR(q) else SN(q), r1);
         true
       } else false
     },
-    ("set", [|d, a, b|]) => {
-      if ntys(o) == 2 & isHalfPair(ty_nth(o.tys, 1)) then {
+    /* set.CmpOp{.BoolOp}{.ftz}.dtype.{f16x2,bf16x2} d, a, b{, {!}c}: d[i] = BoolOp(t[i], c) (9.7.7.1) */
+    ("set", d :: a :: b :: rest) => {
+      if ntys(o) == 2 & isHalfPair(ty_nth(o.tys, 1)) & xop_count(rest) <= 1 then {
         let dt = ty_nth(o.tys, 0); let st = ty_nth(o.tys, 1);
-        let x = rd(a, st); let y = rd(b, st); let lt = laneTyH(st);
-        wr(d, pack16(cmp(cmpOp(m), lt, lane16(x, 0), lane16(y, 0)) * laneTrue(dt), cmp(cmpOp(m), lt, lane16(x, 1), lane16(y, 1)) * laneTrue(dt)));
+        let (r0, r1) = halfCmp(m, st, rd(a, st), rd(b, st), rest);
+        wr(d, pack16(r0 * laneTrue(dt), r1 * laneTrue(dt)));
         true
       } else false
     },
@@ -148,10 +168,24 @@ function exec_half(o, ops) = {
         let dt = ty_nth(o.tys, 0); let st = ty_nth(o.tys, 1);
         wr(d, pack16(cvt(m, laneTyH(dt), st, rd(b, st)), cvt(m, laneTyH(dt), st, rd(a, st))));
         true
+      } else if ntys(o) == 2 & has(m, "pack") then {
+        /* cvt.pack.sat.{u16,s16}.s32 d, a, b (ISA 9.7.9.23): d = sat(a) << 16 | sat(b) */
+        let pt = ty_nth(o.tys, 0); let st = ty_nth(o.tys, 1);
+        wr(d, lor_int(shl_int(land_int(clamp(ival(rd(a, st), st), pt), mask(wid(pt))), wid(pt)), land_int(clamp(ival(rd(b, st), st), pt), mask(wid(pt)))));
+        true
       } else false
     },
     ("cvt", [|d, a, b, x|]) => {
-      if ntys(o) == 3 & has(m, "pack") then {
+      if ntys(o) == 2 & has(m, "rs") & isHalfPair(ty_nth(o.tys, 0)) & ty_eq(ty_nth(o.tys, 1), F32) then {
+        /* cvt.rs{.relu}{.satfinite}.{f16x2,bf16x2}.f32 d, a, b, rbits (ISA 9.7.9.22, Figures 38 / 39): random bits
+         * rbits[28:16] / rbits[12:0] (13 bits, .f16) or rbits[31:16] / rbits[15:0] (.bf16) for a / b */
+        let lt = laneTyH(ty_nth(o.tys, 0)); let w = fw(lt); let r = rd(x, U32);
+        let k = if w == 16 then 13 else 16;
+        let fm = fmods_of(m);
+        wr(d, pack16(pzoBits(m, 16, post(fm, w, fround_rs(fv(rd(b, F32), F32), prec(w), ebits(w), land_int(r, mask(k)), k))),
+                     pzoBits(m, 16, post(fm, w, fround_rs(fv(rd(a, F32), F32), prec(w), ebits(w), land_int(asr_int(r, 16), mask(k)), k)))));
+        true
+      } else if ntys(o) == 3 & has(m, "pack") then {
         let pt = ty_nth(o.tys, 0); let st = ty_nth(o.tys, 1);
         wr(d, trunc(lor_int(lor_int(shl_int(rd(x, U32), 2 * wid(pt)), shl_int(land_int(clamp(ival(rd(a, st), st), pt), mask(wid(pt))), wid(pt))),
                             land_int(clamp(ival(rd(b, st), st), pt), mask(wid(pt)))), 32));
@@ -192,14 +226,25 @@ val exec_memq_prio : (opcode, list(xop)) -> bool
 function exec_memq_prio(o, ops) = {
   let m = o.mods;
   match (o.base, ops) {
-    ("atom", [|XV(ds), XB([|a|], [||]), XV(bs)|]) => { let t = ty1(o); atv(ds, ea(a, spaceOf(m)), atomOp(m), t, rdList(bs, t)); true },
-    ("red", [|XB([|a|], [||]), XV(bs)|]) => { let t = ty1(o); atv([||], ea(a, spaceOf(m)), atomOp(m), t, rdList(bs, t)); true },
+    /* a vector atom / red is one access of (elements x element size) bytes for the alignment rule (6.4.1) */
+    ("atom", [|XV(ds), XB([|a|], [||]), XV(bs)|]) => {
+      let t = ty1(o); let l = ea(a, spaceOf(m));
+      if vecAligned(l, sop_count(bs) * bytes(t)) then atv(ds, l, atOpG(l, atomOp(m), t, has(m, "noftz")), t, rdList(bs, t)); true
+    },
+    ("red", [|XB([|a|], [||]), XV(bs)|]) => {
+      let t = ty1(o); let l = ea(a, spaceOf(m));
+      if vecAligned(l, sop_count(bs) * bytes(t)) then atv([||], l, atOpG(l, atomOp(m), t, has(m, "noftz")), t, rdList(bs, t)); true
+    },
     _ => false
   }
 }
 
 val exec_memq : (opcode, list(xop)) -> bool
 function exec_memq(o, ops) = match (o.base, ops) {
+  /* "The valid range of values for the operand fraction is (0.0,.., 1.0]" (9.7.9.19): reported under .isacheck */
+  ("createpolicy", [|d, fr|]) if isachk & has(o.mods, "fractional") & not_bool(fv_lt(FV_Fin(false, 0, 0), decodeF(rd(fr, F32), 32)) & not_bool(fv_lt(fv_one(), decodeF(rd(fr, F32), 32)))) => {
+    fault("createpolicy: fraction outside (0.0, 1.0] [PTX ISA 9.4 9.7.10.21]", 0); true
+  },
   ("createpolicy", d :: _) => { wr(d, 0); true },
   _ => false
 }
@@ -209,7 +254,21 @@ function gx_memq(o, ops) = {
   let m = o.mods;
   if has(m, "L2::cache_hint") & not_bool(has(m, "bulk") | has(m, "tensor")) & has([|"ld", "st", "atom", "red", "cp"|], o.base) then {
     exec_dispatch({ o with mods = drop_mod(m, "L2::cache_hint") }, drop_last(ops)); true
-  } else o.base == "discard" | o.base == "applypriority"
+  } else if o.base == "discard" | o.base == "applypriority" then {
+    /* discard "behaves like a weak write of an unstable indeterminate value" (9.7.9.18): the old bytes are one such
+       value, so memory is left as it is; applypriority only sets a cache eviction priority (9.7.9.17).  For both, "If
+       the specified address does not fall within the address window of .global state space then the behavior is
+       undefined" and "a must be aligned to 128 bytes": reported under .ub strict */
+    match ops {
+      XB([|a|], [||]) :: _ => if ub then match ea(a, if has(m, "global") then "global" else "generic") {
+        Loc(sp, off) => if sp != "global" then fault(concat_str(o.base, ": address outside the .global window"), off)
+                        else if tmod_int(off, 128) != 0 then fault(concat_str(o.base, ": address not aligned to 128 bytes"), off),
+        _ => fault(concat_str(o.base, ": address outside the .global window"), 0)
+      },
+      _ => ()
+    };
+    true
+  } else false
 }
 
 /* ---------------------------------------------------------------- PTX-EXEC-VIDEO */
@@ -252,7 +311,8 @@ function vcore(op, a, b) = match op { "vadd" => a + b, "vsub" => a - b, "vabsdif
 
 val vshift : (bool, bool, int, int) -> int
 function vshift(left, clampm, a, b) = {
-  let s = if clampm then min_int(land_int(b, 255), 32) else land_int(b, 31);
+  /* ISA vshl/vshr: if (mode == .clamp && tb > 32) tb = 32, on the full selected value */
+  let s = if clampm then min_int(land_int(b, 4294967295), 32) else land_int(b, 31);
   if left then shl_int(a, s) else asr_int(a, s)
 }
 
@@ -372,7 +432,13 @@ function exec_video(o, ops) = {
   let m = o.mods;
   match (o.base, ops) {
     ("vset", [|d, a, b|]) => if ntys(o) == 2 then { let aty = ty_nth(o.tys, 0); let bt = ty_nth(o.tys, 1); wr(d, vsetRes(m, vrd(a, aty), vrd(b, bt), 0)); true } else false,
-    ("vset", [|d, a, b, x|]) => if ntys(o) == 2 then { let aty = ty_nth(o.tys, 0); let bt = ty_nth(o.tys, 1); wr(d, vsetRes(m, vrd(a, aty), vrd(b, bt), rd(x, U32))); true } else false,
+    ("vset", [|d, a, b, x|]) => if ntys(o) == 2 then {
+      let aty = ty_nth(o.tys, 0); let bt = ty_nth(o.tys, 1);
+      /* ISA vset: d = optMerge(dsel, tmp, c) when d carries a selector, else the secondary operation */
+      if selSfx(opName(d)) == "" then wr(d, vsetRes(m, vrd(a, aty), vrd(b, bt), rd(x, U32)))
+      else wreg(baseStr(opName(d)), vmerge(U32, false, selSfx(opName(d)), cmpV(cmpOp(m), vrd(a, aty), vrd(b, bt)), rd(x, U32)));
+      true
+    } else false,
     ("vmad", [|d, a, b, x|]) => {
       if ntys(o) == 3 then {
         let aty = ty_nth(o.tys, 1); let bt = ty_nth(o.tys, 2);
@@ -420,3 +486,28 @@ function gx_video(o, ops) = {
     _ => false
   } else false
 }
+
+/* undefined behaviour of the PTX ISA 9.4 memory hints, under .ub strict:
+ * ld.proxy::readonly "may only be used with global state space or with generic addressing where the address points to
+ * global or const state space. If the generic address does not fall within the address window of the global or const
+ * memory, then the behavior is undefined" (9.7.10.8); prefetch .valid_addr "requires at-least 1B-wide memory location
+ * referred to by address a to be valid for this access. Otherwise, the behavior is undefined", and with .L1::32B "the
+ * generic address must fall within the global state-space" (9.7.10.16) */
+val hintUb : (opcode, list(xop)) -> unit
+function hintUb(o, ops) =
+  if ub then {
+    let m = o.mods;
+    if o.base == "ld" & has(m, "proxy::readonly") then match ops {
+      _ :: XB([|a|], _) :: _ => { let _ = winUb("ld.proxy::readonly", "address", ea(a, spaceOf(m)), [|"global", "const"|]); () },
+      _ => ()
+    } else if o.base == "prefetch" & has(m, "valid_addr") then match ops {
+      XB([|a|], _) :: _ => match ea(a, spaceOf(m)) {
+        Loc(s, x) =>
+          if has(m, "L1::32B") & s != "global" then fault("prefetch.L1::32B: the address is not in the global window", x)
+          else if s == "global" & (x < 4096 | x + 1 > gtop) then fault("prefetch.valid_addr: the address is not a valid location", x)
+          else if s != "global" & s != "local" then fault("prefetch.valid_addr: the address is not a valid location", x),
+        BadLoc(e) => fault(concat_str("prefetch.valid_addr: ", e), 0)
+      },
+      _ => ()
+    }
+  }

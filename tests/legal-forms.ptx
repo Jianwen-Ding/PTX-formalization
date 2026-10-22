@@ -1,0 +1,59 @@
+// Legal forms of the PTX ISA 9.3:
+// * generic(var)+offset and mask() initializers (5.4.4): parr[1] = generic(bar)+4 points to bar[1];
+//   mask(expr) extracts the masked bits to the lowest position: 0xff00(0x1234) = 0x12, 0xFF(1000 + 546) = 0x0a,
+//   0xff00(foo+4) = byte 1 of the .const offset of foo, plus 4;
+// * mov of the address of an array element (mov examples, 6.4.2): A[8] is A+8 (a byte offset, as array[r1] with
+//   r1 = tid << 2 in 4.3);
+// * an unsized last .param .b8 array argument may be omitted from the call (11.2.2).
+.version 8.6
+.target sm_90
+.address_size 64
+.const .u32 foo = 42;
+.global .u32 bar[] = { 2, 3, 5 };
+.global .u64 parr[] = { generic(bar), generic(bar)+4, generic(bar)+8 };
+.global .u8 m[] = { 0xff00(0x1234), 0xFF(1000 + 546), 0xff(foo+4), 0xff00(foo+4) };
+.func (.param .b32 rv) f(.param .b32 n, .param .align 4 .b8 va[])
+{
+    .reg .b32 %x;
+    ld.param.b32 %x, [n];
+    st.param.b32 [rv], %x;
+    ret;
+}
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %a, %b; .reg .b32 %r<8>;
+    ld.param.u64 %o, [po];
+    ld.global.u64 %a, [parr+8];
+    ld.u32 %r1, [%a];
+    ld.global.u64 %a, [parr+16];
+    ld.u32 %r2, [%a];
+    ld.global.u8 %r3, [m];
+    ld.global.u8 %r4, [m+1];
+    st.global.v4.u32 [%o], {%r1, %r2, %r3, %r4};
+    mov.u64 %a, foo;
+    add.u64 %a, %a, 4;
+    cvt.u32.u64 %r5, %a;
+    and.b32 %r1, %r5, 255;
+    ld.global.u8 %r2, [m+2];
+    sub.u32 %r1, %r2, %r1;
+    shr.u32 %r5, %r5, 8;
+    and.b32 %r5, %r5, 255;
+    ld.global.u8 %r2, [m+3];
+    sub.u32 %r2, %r2, %r5;
+    mov.u64 %a, bar[8];
+    mov.u64 %b, bar;
+    sub.u64 %a, %a, %b;
+    cvt.u32.u64 %r3, %a;
+    {
+    .param .b32 p0;
+    .param .b32 r0;
+    st.param.b32 [p0], 7;
+    call (r0), f, (p0);
+    ld.param.b32 %r4, [r0];
+    }
+    st.global.v4.u32 [%o+16], {%r1, %r2, %r3, %r4};
+    ret;
+}
+.buffer OUT .u32 [8];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 3, 5, 18, 10, 0, 0, 8, 7 };

@@ -14,7 +14,7 @@ Litmus tests are small text files (tests/memmodel/*.litmus):
       fence.acq_rel.sys
       r1 = ld.weak x
     exists r0==1 && r1==0
-    expect forbidden
+    expect forbidden            # optionally followed by racy | race-free
 
 Instructions:  st[.weak|.relaxed|.release|.volatile][.cta|.cluster|.gpu|.sys] ADDR VAL
                rN = ld[.weak|.relaxed|.acquire|.volatile][.scope] ADDR
@@ -22,7 +22,10 @@ Instructions:  st[.weak|.relaxed|.release|.volatile][.cta|.cluster|.gpu|.sys] AD
                fence.sc.SCOPE | fence.acq_rel.SCOPE | fence.proxy.KIND        bar.sync N | bar.arrive N
 VAL is an integer or a register (a data dependency).  A leading `? rN==V :` makes the instruction conditional
 (a control dependency).  `@proxy=NAME` after an instruction sets the memory proxy (default generic), and
-`alias a b` declares two virtual addresses that map to the same location (each is its own proxy).
+`alias a b` declares two virtual addresses that map to the same location (each is its own proxy).  Accesses via
+different proxies or addresses are ordered by a chain of proxy fences on the base causality path, as in NVIDIA's
+mixed-proxy model: X, fence.proxy.<X's proxy> in X's CTA, fence.proxy.alias (if the addresses differ),
+fence.proxy.<Y's proxy> in Y's CTA, Y (scripts/nvmm.py compares this checker with NVIDIA's Alloy models).
 
 The checker enumerates read-from choices, per-location write orders and Fence-SC orders and keeps the
 executions that satisfy the axioms Coherence, Fence-SC, Atomicity, No-Thin-Air, SC-per-Location and Causality.
@@ -51,7 +54,7 @@ def parse(text):
             continue
         w = line.split()
         if w[0] == 'test':
-            cur = dict(name=w[1], init={}, threads=[], alias=[], exists=None, expect=None, desc='')
+            cur = dict(name=w[1], init={}, threads=[], alias=[], exists=None, expect=None, race=None, desc='')
             tests.append(cur)
         elif w[0] == 'init':
             for kv in w[1:]:
@@ -67,6 +70,8 @@ def parse(text):
             cur['exists'] = line.strip()[len('exists'):].strip()
         elif w[0] == 'expect':
             cur['expect'] = w[1]
+            if len(w) > 2:
+                cur['race'] = w[2]          # racy | race-free: whether some execution has a data race
         elif w[0] == 'desc':
             cur['desc'] = line.strip()[4:].strip()
         else:
@@ -186,6 +191,10 @@ def includes(scope, t1, t2, tinfo):
     return a['gpu'] == b['gpu'] and a['cluster'] == b['cluster'] and a['cta'] == b['cta']
 
 
+def same_cta(t1, t2, tinfo):
+    return includes('cta', t1, t2, tinfo)
+
+
 def closure(n, edges):
     reach = [set() for _ in range(n)]
     for a, b in edges:
@@ -208,13 +217,12 @@ def acyclic(n, edges):
     return all(i not in reach[i] for i in range(n))
 
 
-PROXY_FENCE_COVERS = {
-    'alias': lambda p, q: p != q,
-    'async': lambda p, q: {p, q} <= {'generic', 'async'},
-    'tensormap': lambda p, q: {p, q} <= {'generic', 'tensormap'},
-    'texture': lambda p, q: {p, q} <= {'generic', 'texture'},
-    'surface': lambda p, q: {p, q} <= {'generic', 'surface'},
-}
+def proxy_fence_orders(kind, frm, to):
+    """fence.proxy.KIND orders an access via proxy `frm` before one via proxy `to` (one side is the generic proxy):
+    .KIND is bi-directional between generic and KIND, .TO::FROM (e.g. tensormap::generic) uni-directional (ISA 9.7.15.4)."""
+    if '::' in kind:
+        return tuple(kind.split('::')) == (to, frm)
+    return kind != 'alias' and {frm, to} == {'generic', kind}
 
 
 def evaluate(evs, rf):
@@ -264,6 +272,11 @@ def evaluate(evs, rf):
     return value, exe, env
 
 
+def rfv(w, value):
+    """the value a read takes from write w"""
+    return w.value if w.tid == -1 else value[w.idx]
+
+
 def enumerate_executions(test):
     evs, tinfo, alias = build(test)
     n = len(evs)
@@ -307,7 +320,15 @@ def enumerate_executions(test):
         livei = {e.idx for e in live}
         if any((r.idx in livei) and (rf[r.idx].tid != -1 and rf[r.idx].idx not in livei) for r in reads):
             continue
-        lw = [w for w in writes if w.idx in livei]
+        # "write operation: ... atomic operations if they result in a write" (Table 20): a failing atom.cas reads but does
+        # not write, so it is no write in this execution (nothing reads from it, it has no place in the write order)
+        failed = {e.idx for e in live if e.op == 'atom' and e.aop == 'cas' and rfv(rf[e.idx], value) != val(e.args[1], env)}
+        if any(r.idx in livei and rf[r.idx].idx in failed for r in reads):
+            continue
+        for e in evs:
+            if e.op in ('st', 'atom', 'red'):
+                e.is_write = e.idx not in failed
+        lw = [w for w in writes if w.idx in livei and w.idx not in failed]
         lr = [r for r in reads if r.idx in livei]
         # write orders per location (init first)
         per_loc = {l: [w for w in lw if w.loc == l] for l in locs}
@@ -335,7 +356,7 @@ def check(evs, init, tinfo, alias, live, livei, lw, lr, rf, order, fsc, ms, po, 
                 sw.add((a, b))
     for x in bars:
         for y in bars:
-            if x.idx in livei and y.idx in livei and x.tid != y.tid and x.args == y.args and tinfo[x.tid]['cta'] == tinfo[y.tid]['cta'] \
+            if x.idx in livei and y.idx in livei and x.tid != y.tid and x.args == y.args and same_cta(x.tid, y.tid, tinfo) \
                and x.bkind in ('sync', 'red', 'arrive') and y.bkind in ('sync', 'red'):
                 sw.add((x.idx, y.idx))
     # observation order
@@ -343,18 +364,20 @@ def check(evs, init, tinfo, alias, live, livei, lw, lr, rf, order, fsc, ms, po, 
         return rf.get(r.idx) is w and r.read_role and ms(r, w)
     obs = set()
     for r in lr:
-        if r.read_role and ms(r, rf[r.idx]) and rf[r.idx].idx < len(evs) + len(locs):
+        if (r.read_role or r.is_red) and ms(r, rf[r.idx]) and rf[r.idx].idx < len(evs) + len(locs):
             obs.add((rf[r.idx].idx, r.idx))
-    # close through atomic reads
+    # close through atomic operations ("for some atomic operation Z", 8.9.2: atom or red, Table 20)
     changed = True
     while changed:
         changed = False
         for (w, z) in list(obs):
             ze = byidx[z]
-            if ze.is_atomic and not ze.is_red:
+            if ze.is_atomic:
                 for (z2, r) in list(obs):
                     if z2 == z and (w, r) not in obs:
                         obs.add((w, r)); changed = True
+    # ... but only a read operation (ld, atom; not red) is observed
+    obs = {(w, r) for (w, r) in obs if byidx[r].read_role}
     # patterns
     thr = defaultdict(list)
     for e in liveo:
@@ -388,21 +411,25 @@ def check(evs, init, tinfo, alias, live, livei, lw, lr, rf, order, fsc, ms, po, 
     # base causality order
     n = len(allev)
     bco = closure(n, list(po) + list(sw))
+    pfences = [f for f in liveo if f.pfence]
     def mem_pair_ok(x, y):
         if not (x.is_mem and y.is_mem): return True
         if x.loc != y.loc: return False
-        if x.proxy == 'generic' and y.proxy == 'generic': return True
-        if x.proxy == y.proxy and tinfo[x.tid]['cta'] == tinfo[y.tid]['cta'] and tinfo[x.tid]['gpu'] == tinfo[y.tid]['gpu']: return True
-        # different proxies (aliases, async, ...): a proxy fence along the base causality path
-        for f in liveo:
-            if f.pfence and (x.idx == f.idx or f.idx in bco[x.idx]) and (y.idx in bco[f.idx]):
-                cov = PROXY_FENCE_COVERS.get(f.pkind, PROXY_FENCE_COVERS['alias'])
-                px, py = x.proxy, y.proxy
-                if px.startswith('alias:') or py.startswith('alias:'):
-                    if f.pkind == 'alias': return True
-                elif cov(px, py):
-                    return True
-        return False
+        px, py = (('generic' if e.proxy.startswith('alias:') else e.proxy) for e in (x, y))
+        if x.addr == y.addr and px == py and (px == 'generic' or same_cta(x.tid, y.tid, tinfo)): return True
+        # otherwise a chain of proxy fences along the base causality path (the composition of the mixed-proxy model,
+        # Lustig et al. ISCA'22):  X [-> fence px->generic in X's CTA] [-> fence.proxy.alias if the addresses differ]
+        # [-> fence generic->py in Y's CTA] -> Y.  A bi-directional proxy fence acts in its own CTA (ISA 9.7.15.4).
+        stage = [x]
+        if px != 'generic':
+            stage = [f for f in pfences if proxy_fence_orders(f.pkind, px, 'generic') and same_cta(f.tid, x.tid, tinfo)
+                     and f.idx in bco[x.idx]]
+        if x.addr != y.addr:
+            stage = [f for f in pfences if f.pkind == 'alias' and any(f.idx in bco[s.idx] for s in stage)]
+        if py != 'generic':
+            stage = [f for f in pfences if proxy_fence_orders(f.pkind, 'generic', py) and same_cta(f.tid, y.tid, tinfo)
+                     and any(f.idx in bco[s.idx] for s in stage)]
+        return any(y.idx in bco[s.idx] for s in stage)
     ppbco = set()
     for x in liveo:
         for y in liveo:
@@ -519,8 +546,9 @@ def main(argv):
             outs = run(t)
             hit = any(holds(t['exists'], o) for o in outs) if t['exists'] else None
             verdict = 'allowed' if hit else 'forbidden'
-            ok = (t['expect'] is None) or (t['expect'] == verdict)
             racy = any(dict(o).get('#race') for o in outs)
+            ok = ((t['expect'] is None) or (t['expect'] == verdict)) and \
+                 (t['race'] is None or t['race'] == ('racy' if racy else 'race-free'))
             print(f"{'PASS' if ok else 'FAIL'}  {t['name']:28s} {verdict:9s} {'racy' if racy else 'race-free':9s} ({len(outs)} outcomes)")
             if not ok:
                 bad += 1

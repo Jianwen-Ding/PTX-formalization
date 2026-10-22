@@ -1,0 +1,18 @@
+// expect: vectors of .pred are not allowed
+// 5.4.2: vectors of any non-predicate fundamental type (reported under .isacheck)
+.version 9.4
+.target sm_90
+.address_size 64
+.isacheck ;
+
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r;
+    .reg .v2 .pred %vp;
+    ld.param.u64 %o, [po];
+    mov.u32 %r, 1;
+    st.global.u32 [%o], %r;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

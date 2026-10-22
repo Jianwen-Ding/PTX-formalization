@@ -1,0 +1,32 @@
+// isspacep.shared::cluster is true only for shared memory accessible to the threads of the cluster (PTX ISA 9.3,
+// isspacep): the peer CTA's variable (mapa) is in it, an address 5 CTAs further in the cluster window (cluster of 2) is not
+.version 8.6
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 po) .reqnctapercluster 2, 1, 1
+{
+    .reg .b64 %o, %g, %c, %pc, %far; .reg .b32 %r<4>, %rank, %peer, %u<4>; .reg .pred %p;
+    .shared .align 4 .b32 s;
+    ld.param.u64 %o, [po];
+    mov.u32 %rank, %cluster_ctarank;
+    xor.b32 %peer, %rank, 1;
+    cvta.shared.u64 %g, s;
+    mapa.u64 %pc, %g, %peer;                    // the peer's s (generic, in the cluster window)
+    isspacep.shared::cluster %p, %pc;
+    selp.u32 %u0, 1, 0, %p;
+    add.u64 %far, %pc, 83886080;                // + 5 * 2^24: a CTA rank outside the cluster
+    isspacep.shared::cluster %p, %far;
+    selp.u32 %u1, 1, 0, %p;
+    isspacep.shared::cluster %p, %g;            // the own s
+    selp.u32 %u2, 1, 0, %p;
+    mov.u32 %r1, %ctaid.x;
+    mul.wide.u32 %c, %r1, 12;
+    add.u64 %o, %o, %c;
+    st.global.b32 [%o], %u0;
+    st.global.b32 [%o+4], %u1;
+    st.global.b32 [%o+8], %u2;
+    ret;
+}
+.buffer O .u32 [6];
+.launch k <<< 2, 1 >>> (O);
+.expect O .u32 = { 1, 0, 1, 1, 0, 1 };

@@ -1,0 +1,18 @@
+// expect: cp.reduce.async.bulk: .min with .f32 is not a valid .redOp / type combination for .global
+// PTX ISA 9.3 9.7.9.26.4.2 table: .global .min, .max take .u32 .s32 .u64 .s64 .f16 .bf16
+.version 8.6
+.target sm_90
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 pg)
+{
+  .reg .b64 %g; .reg .b32 %buf32;
+  .shared .align 128 .b8 buf[64];
+  ld.param.u64 %g, [pg]; mov.u32 %buf32, buf;
+  cp.reduce.async.bulk.global.shared::cta.bulk_group.min.f32 [%g], [%buf32], 16;
+  cp.async.bulk.commit_group;
+  cp.async.bulk.wait_group 0;
+  ret;
+}
+.buffer G .f32 = { 5.0, 0.5, 2.0, -1.0 };
+.launch k <<< 1, 1 >>> (G);

@@ -12,9 +12,11 @@
 // dropped from the cluster barrier, and an access to the shared memory of a CTA that has exited faults (undefined behaviour in the ISA).
 // =============================================================================
 requires "ptx-exec-mem.k"
+requires "ptx-exec-alu.k"
 
 module PTX-EXEC-CLUSTER
   imports PTX-EXEC-MEM
+  imports PTX-EXEC-ALU
 
   // ---------------------------------------------------------------- geometry
   syntax Int ::= clTarget(Int, Int, Dim3, Dim3) [function, total]      // ctaid, rank -> ctaid of that cluster mate
@@ -43,10 +45,20 @@ module PTX-EXEC-CLUSTER
   rule <tk> #mem(loc("cluster", A), _) => #fault("shared::cluster access to a CTA that has exited or is not in the cluster", A) ... </tk> [owise]
 
   // mapa.shared::cluster.type d, a, rank ;  getctarank.shared::cluster.type d, a
-  rule <tk> exec(opc("mapa", _, ListItem(T)), ops(D, A, R, .Operands), C) => .K ... </tk>
+  rule <tk> exec(opc("mapa", M, ListItem(T)), ops(D, A, R, .Operands), C) => .K ... </tk>
        <regs> Rg => wr(Rg, D, (rd(A, T, C) &Int 16777215) |Int ((rd(R, ty("u", 32), C) +Int 1) <<Int 24)) </regs>
-  rule <tk> exec(opc("getctarank", _, ListItem(T)), ops(D, A, .Operands), C) => .K ... </tk>
+    requires "shared::cluster" in M
+  rule <tk> exec(opc("getctarank", M, ListItem(T)), ops(D, A, .Operands), C) => .K ... </tk>
        <regs> Rg => wr(Rg, D, #if (rd(A, T, C) >>Int 24) ==Int 0 #then rreg("%cluster_ctarank", C) #else (rd(A, T, C) >>Int 24) -Int 1 #fi) </regs>
+    requires "shared::cluster" in M
+  // without .shared::cluster, a and d are generic addresses (in the shared::cta or cluster window)
+  rule <tk> exec(opc("mapa", M, ListItem(T)), ops(D, A, R, .Operands), C) => .K ... </tk>
+       <regs> Rg => wr(Rg, D, trunc(clToGeneric((clFromGeneric(rd(A, T, C), rreg("%cluster_ctarank", C)) &Int 16777215)
+                                                |Int ((rd(R, ty("u", 32), C) +Int 1) <<Int 24), rreg("%cluster_ctarank", C)), wid(T))) </regs>
+    requires notBool "shared::cluster" in M
+  rule <tk> exec(opc("getctarank", M, ListItem(T)), ops(D, A, .Operands), C) => .K ... </tk>
+       <regs> Rg => wr(Rg, D, (clFromGeneric(rd(A, T, C), rreg("%cluster_ctarank", C)) >>Int 24) -Int 1) </regs>
+    requires notBool "shared::cluster" in M
 
   // ---------------------------------------------------------------- barrier.cluster
   syntax KItem ::= #clWait(Int, Int)

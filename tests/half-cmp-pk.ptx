@@ -1,0 +1,33 @@
+// packed f16x2 / bf16x2 setp / set: .ftz on lane inputs, the BoolOp form (p = BoolOp(t[0], c), q = BoolOp(t[1], c)) (9.7.7.1, 9.7.7.2)
+.version 9.0
+.target sm_100
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %a, %b, %c, %r<16>; .reg .b16 %h<8>, %g<8>; .reg .pred %p<8>;
+    ld.param.u64 %o, [po];
+    // setp.ftz.f16x2 with subnormal 0x0001 vs 0 in lane0, lane1 0x8001 vs 0
+    mov.b32 %a, 0x80010001; mov.b32 %b, 0x00000000;
+    setp.eq.ftz.f16x2 %p0|%p1, %a, %b;
+    selp.u32 %r0, 1, 0, %p0; selp.u32 %r1, 1, 0, %p1;
+    // setp with BoolOp on f16x2: lane0 1.0 < 2.0 true, lane1 2.0<1.0 false ; c = false, .or
+    mov.b32 %a, 0x40003c00; mov.b32 %b, 0x3c004000;
+    setp.ne.u32 %p2, 0, 0;
+    setp.lt.or.f16x2 %p3|%p4, %a, %b, %p2;
+    selp.u32 %r2, 1, 0, %p3; selp.u32 %r3, 1, 0, %p4;
+    // set with BoolOp on f16x2 -> f16x2
+    set.lt.or.f16x2.f16x2 %r4, %a, %b, %p2;
+    // set.ftz f16x2 subnormal
+    mov.b32 %a, 0x80010001;
+    set.eq.ftz.u32.f16x2 %r5, %a, 0;
+    // set.bf16 dtype scalar true
+    mov.b16 %h0, 0x3c00;
+    set.eq.bf16.f16 %h1, %h0, %h0;
+    cvt.u32.u16 %r6, %h1;
+    st.global.v4.u32 [%o], {%r0, %r1, %r2, %r3};
+    st.global.v4.u32 [%o+16], {%r4, %r5, %r6, %r6};
+    ret;
+}
+.buffer OUT .u32 [8];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 1, 1, 1, 0, 15360, 4294967295, 16256, 16256 };

@@ -1,0 +1,15 @@
+// expect: immAlign must be a power of 2
+// a qualifier / operand rule of the ISA text, reported under .isacheck (the default mode runs the form)
+.version 8.0
+.target sm_90
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %a; .reg .b32 %r<4>; .reg .f32 %f<4>; .reg .f64 %d<4>;
+    ld.param.u64 %o, [po];
+    alloca.u64 %a, 16, 3;
+    ret;
+}
+.buffer OUT .u32 [4];
+.launch k <<< 1, 1 >>> (OUT);

@@ -231,6 +231,7 @@ module PTX-EXEC-MMA
             #coll("mma", 4294967295, ListItem(shapeOf(M)) ListItem(DT) ListItem(AT) ListItem(BT) ListItem(CT) ListItem(M),
                   vecRegs(Av, AT, C) vecRegs(Bv, BT, C) vecRegs(Cv, CT, C), vecOps(Dv)) ... </tk>
     requires "sync" in M andBool notBool "sp" in M
+     andBool notBool (shapeOf(M) ==String "m8n8k4" andBool wid(AT) =/=Int 64)   // the sm_70 .f16 m8n8k4 form is not modelled
 
   // ---------------------------------------------------------------- mma.sync with block scaling (sm_120a)
   //   mma.sync.aligned.m16n8k{32,64}.row.col.kind::{mxf8f6f4,mxf4,mxf4nvf4}.block_scale{.scale_vec::NX}.f32.atype.btype.f32.stype
@@ -247,10 +248,14 @@ module PTX-EXEC-MMA
   rule bsNB(M) => 2 requires "scale_vec::2X" in M orBool ("kind::mxf4" in M andBool notBool "scale_vec::1X" in M)
   rule bsNB(_) => 1 [owise]
   syntax Float ::= bsScale(Bool, Int) [function, total]                     // is UE4M3?, byte
-  rule bsScale(false, X) => scaleP2(Int2Float(1, 64, WEXP), X -Int 127)
+  rule bsScale(false, X) => scaleP2(Int2Float(1, 64, WEXP), X -Int 127) requires X =/=Int 255
+  rule bsScale(false, 255) => Int2Float(0, 64, WEXP) /Float Int2Float(0, 64, WEXP)   // ue8m0: 0xFF is NaN
+  // ue4m3 (ISA 5.2): 7 bits with the MSB padded, NaN is 0x7f
+  rule bsScale(true, X) => Int2Float(0, 64, WEXP) /Float Int2Float(0, 64, WEXP) requires X &Int 127 ==Int 127
   rule bsScale(true, X) =>
-       #if (X >>Int 3) ==Int 0 #then scaleP2(Int2Float(X &Int 7, 64, WEXP), 0 -Int 9)
-       #else scaleP2(Int2Float((X &Int 7) +Int 8, 64, WEXP), (X >>Int 3) -Int 10) #fi
+       #if ((X &Int 127) >>Int 3) ==Int 0 #then scaleP2(Int2Float(X &Int 7, 64, WEXP), 0 -Int 9)
+       #else scaleP2(Int2Float((X &Int 7) +Int 8, 64, WEXP), ((X &Int 127) >>Int 3) -Int 10) #fi
+    requires X &Int 127 =/=Int 127
   syntax Int ::= bsReg(Map, Int, Int) [function, total]                      // arrivals, lane, index
   rule bsReg(Arr, L, I) => {listAt(Arr, L)[I]}:>Int
   syntax Map ::= bsScA(Map, Int, Int, Int, Int, Map) [function, total]       // arrivals, register offset, #chunks, row, chunk, acc

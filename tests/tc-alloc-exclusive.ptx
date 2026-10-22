@@ -1,0 +1,39 @@
+// tcgen05.alloc / dealloc .exclusive (PTX ISA 9.4 9.7.18.7.1): an exclusive allocation "blocks until there is no other
+// live allocation" and no other allocation is made until its tcgen05.dealloc.exclusive; on sm_107 its nCols is any
+// multiple of 32 up to 576 (Table 60).  Warp 0 makes a non-exclusive 32-column allocation, warp 1 an exclusive 576-column
+// one, which uses column 544 beyond the non-exclusive limit of 512; whichever runs first, both start at column 0.
+// (When warp 0 allocates first, the 576 columns after 32 break "The number of columns allocated should not increase",
+// reported under .ub strict; the default mode runs it.)
+.version 9.4
+.target sm_107f
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b32 %r<4>, %ta, %tb, %v; .reg .pred %p, %q; .reg .b64 %o;
+    .shared .align 16 .b32 slot[2];
+    ld.param.u64 %o, [po];
+    mov.u32 %r0, %tid.x; shr.u32 %r1, %r0, 5; setp.eq.u32 %p, %r1, 0; and.b32 %r2, %r0, 31; setp.eq.u32 %q, %r2, 0;
+    @!%p bra W1;
+    tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [slot], 32;
+    ld.shared.b32 %ta, [slot];
+    tcgen05.dealloc.cta_group::1.sync.aligned.b32 %ta, 32;
+    @%q st.global.b32 [%o], %ta;
+    bra DONE;
+W1:
+    tcgen05.alloc.exclusive.cta_group::1.sync.aligned.shared::cta.b32 [slot+4], 576;
+    ld.shared.b32 %ta, [slot+4];
+    add.u32 %tb, %ta, 2097696;            // lane 32 (warp 1's lanes), column 544
+    add.u32 %v, %r2, 1000;
+    tcgen05.st.sync.aligned.32x32b.x1.b32 [%tb], {%v};
+    tcgen05.wait::st.sync.aligned;
+    tcgen05.ld.sync.aligned.32x32b.x1.b32 {%r3}, [%tb];
+    tcgen05.wait::ld.sync.aligned;
+    tcgen05.dealloc.exclusive.cta_group::1.sync.aligned.b32 %ta, 576;
+    @%q st.global.b32 [%o+4], %ta;
+    @%q st.global.b32 [%o+8], %r3;
+DONE:
+    ret;
+}
+.buffer O .u32 = { 7, 7, 7 };
+.launch k <<< 1, 64 >>> (O);
+.expect O .u32 = { 0, 0, 1000 };

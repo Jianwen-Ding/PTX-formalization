@@ -1,0 +1,23 @@
+// min / max .f64 of two NaNs: "NaN payloads are supported for double-precision instructions" (PTX ISA 9.4 9.7.3),
+// so the result is the first NaN operand, quieted, as for add / mul (the model returned the canonical NaN).  With one
+// NaN operand the result is the other operand.
+.version 9.4
+.target sm_90
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .f64 %a, %b, %c, %d<3>;
+    ld.param.u64 %o, [po];
+    mov.b64 %a, 0x7ff0000000001234;    // signalling NaN, payload 0x1234
+    mov.b64 %b, 0xfff8000000005678;    // quiet NaN
+    mov.f64 %c, 0d3ff0000000000000;    // 1.0
+    min.f64 %d0, %a, %b;               // 0x7ff8000000001234
+    max.f64 %d1, %b, %a;               // 0xfff8000000005678
+    min.f64 %d2, %a, %c;               // 1.0
+    st.global.v2.f64 [%o], {%d0, %d1};
+    st.global.f64 [%o+16], %d2;
+    ret;
+}
+.buffer O .u64 [3];
+.launch k <<< 1, 1 >>> (O);
+.expect O .u64 = { 0x7ff8000000001234, 0xfff8000000005678, 0x3ff0000000000000 };

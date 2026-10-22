@@ -70,7 +70,8 @@ function rdu64(o) = rd(o, mkty("u", 64))
 /* wr(R, D, V): registers, names (`_` is a sink) */
 val wr_sop : (sop, int) -> unit
 function wr_sop(d, v) = match d {
-  SR(r) => wreg(r, v),
+  /* special registers are predefined, read-only variables (ISA 10) */
+  SR(r) => if smap_has(t_sregs[tchk(cur)], r) then fault(concat_str("write to the read-only special register ", r), 0) else wreg(r, v),
   SN(n) => if n != "_" then wreg(n, v),
   _ => ()
 }
@@ -112,11 +113,11 @@ union loc = {
 val mkLoc : (string, int) -> loc
 function mkLoc(s, a) = {
   if s == "generic" then {
-    if a >= CLBASE & a < PARBASE then Loc("cluster", lor_int(shl_int(asr_int(a - CLBASE, 24) + 1, 24), land_int(a - CLBASE, 16777215)))
-    else if a >= PARBASE then Loc("param", a - PARBASE)
-    else if a >= LOCBASE & a < CLBASE then Loc("local", a - LOCBASE)
-    else if a >= SHBASE & a < LOCBASE then Loc("shared", a - SHBASE)
-    else Loc("global", a)
+    let w = genWin(a);
+    let o = a - winBase(w);
+    if w == "cluster" then Loc("cluster", lor_int(shl_int(asr_int(o, 24) + 1, 24), land_int(o, 16777215)))
+    else if w == "const" then Loc("global", o)
+    else Loc(w, o)
   } else if s == "const" then Loc("global", a)
   else if s == "shared_cluster" then Loc("cluster", a)
   else Loc(s, a)
@@ -144,7 +145,8 @@ function ea(a, s) = match a {
   ARO(r, i) => mkLocA(s, rreg(r) + i, r),
   AN(n) => if isRegName(n) then mkLocA(s, rreg(n), n) else symLoc(lookupSym(n), n, 0),
   ANO(n, i) => if isRegName(n) then mkLocA(s, rreg(n) + i, n) else symLoc(lookupSym(n), n, i),
-  AI(i) => mkLoc(s, i)
+  AI(i) => mkLoc(s, i),
+  ANR(n, r, i) => symLoc(lookupSym(n), n, rreg(r) + i)
 }
 
 /* the address operand of [ A ] */
@@ -200,6 +202,45 @@ function mem_apply(sp, a, op) = match op {
 /* hook for the cluster module: accesses of shared::cluster locations */
 val cluster_mem : (int, memop) -> option(int)
 
+/* [a, a + n) overlaps [%reserved_smem_offset_begin, %reserved_smem_offset_end) of the executing thread's CTA */
+val resvHit : (int, int) -> bool
+function resvHit(a, n) = {
+  let sp = t_sregs[tchk(cur)];
+  if smap_has(sp, "%reserved_smem_offset_begin") then {
+    let b = smap_get(sp, "%reserved_smem_offset_begin");
+    let e = smap_get(sp, "%reserved_smem_offset_end");
+    a < e & a + n > b
+  } else false
+}
+
+/* [a, a + n) overlaps a multimem handle's address range */
+val mmHit : (int, int) -> bool
+function mmHit(a, n) = {
+  var hit : bool = false;
+  var l = mmtab;
+  while is_cons(l) & not_bool(hit) do { match l { (h, sz, _) :: rest => { if a < h + sz & a + n > h then hit = true; l = rest }, [||] => () } };
+  hit
+}
+
+/* [a, a + n) overlaps an initialised mbarrier object (8 bytes, keyed by CTA and offset as in ptx_async.sail) */
+val mbarHit : (int, int) -> bool
+function mbarHit(a, n) = {
+  var hit : bool = false;
+  var x : int = a - tmod_int(a, 8);
+  while x < a + n & not_bool(hit) do {
+    if smap_has(SP_MBARS, concat_str("p", dec_str(cur_cta() * 4294967296 + x))) then hit = true;
+    x = x + 8
+  };
+  hit
+}
+
+/* [a, a + n) reaches past the CTA's shared memory (static, dynamic and the reserved region after them) */
+val resvAbove : (int, int) -> bool
+function resvAbove(a, n) = {
+  let sp = t_sregs[tchk(cur)];
+  smap_has(sp, "%reserved_smem_offset_end") & a + n > smap_get(sp, "%reserved_smem_offset_end")
+}
+
 /* #mem(L, OP) => #res(V): one atomic step */
 val memop_do : (loc, memop) -> int
 function memop_do(l, op) = match l {
@@ -210,8 +251,22 @@ function memop_do(l, op) = match l {
       fault(concat_str("misaligned ", concat_str(s, concat_str(" access of ", concat_str(dec_str(nb), " bytes")))), a); 0
     } else if ub & s == "global" & nb > 0 & (a < 4096 | a + nb > gtop) then {
       fault("global access outside the allocated data", a); 0
-    } else if ub & s == "local" & nb > 0 & a + nb > t_ltop[tchk(cur)] then {
+    } else if ub & s == "local" & nb > 0 & a + nb > t_ltop[tchk(cur)] & (a < t_lsp[tchk(cur)] | a + nb > LSTACK) then {
       fault("local access above the stack top", a); 0
+    } else if ub & s == "shared" & nb > 0 & cur >= 0 & resvHit(a, nb) then {
+      /* "This region of shared memory is not available to users, and accessing this region from user code results in
+         undefined behavior" (10.29) */
+      fault("shared access to the region reserved for system software", a); 0
+    } else if ub & s == "global" & nb > 0 & mmHit(a, nb) then {
+      /* "Multimem addresses can be accessed only by multimem.* operations. Accessing a multimem address with ld, st or
+         any other memory operations results in undefined behavior" (9.7.9.15) */
+      fault("access to a multimem address by a non-multimem operation", a); 0
+    } else if ub & s == "shared" & nb > 0 & cur >= 0 & mbarHit(a, nb) then {
+      /* "Performing any non-mbarrier or mbarrier.init operations on an initialized mbarrier object results in undefined
+         behavior" (9.7.14.16) */
+      fault("shared access to a valid mbarrier object", a); 0
+    } else if ub & s == "shared" & nb > 0 & cur >= 0 & resvAbove(a, nb) then {
+      fault("shared access outside the CTA's shared memory", a); 0
     } else if s == "global" & a >= 4096 then mem_apply(SP_GMEM, a, op)
     else if s == "shared" & a >= 0 then mem_apply(cta_smem(), a, op)
     else if s == "local" & a >= 0 then mem_apply(t_lmem[tchk(cur)], a, op)

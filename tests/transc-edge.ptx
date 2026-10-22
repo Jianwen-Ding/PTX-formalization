@@ -1,0 +1,31 @@
+// lg2.approx.f32 on powers of two is exact (the exponent is added exactly, ln(m)/ln 2 rounded once), and
+// tanh.approx.f16 is +-1 where e^|x| overflows binary16 (|x| > ln 65520 ~ 11.09) instead of Inf/Inf = NaN
+.version 8.0
+.target sm_80
+.address_size 64
+
+.visible .entry k(.param .u64 px, .param .u64 py, .param .u64 ph, .param .u64 pt)
+{
+    .reg .b32 %r0; .reg .f32 %f<3>; .reg .b16 %h<3>; .reg .b64 %rd<8>;
+    mov.u32 %r0, %tid.x;
+    mul.wide.u32 %rd1, %r0, 4;
+    ld.param.u64 %rd2, [px]; add.s64 %rd2, %rd2, %rd1; ld.global.f32 %f1, [%rd2];
+    lg2.approx.f32 %f2, %f1;
+    ld.param.u64 %rd3, [py]; add.s64 %rd3, %rd3, %rd1; st.global.f32 [%rd3], %f2;
+    mul.wide.u32 %rd4, %r0, 2;
+    ld.param.u64 %rd5, [ph]; add.s64 %rd5, %rd5, %rd4; ld.global.b16 %h1, [%rd5];
+    tanh.approx.f16 %h2, %h1;
+    ld.param.u64 %rd6, [pt]; add.s64 %rd6, %rd6, %rd4; st.global.b16 [%rd6], %h2;
+    ret;
+}
+// 2^-126, 2^-149 (subnormal), 2^100, 3.0, 0.5
+.buffer X .b32 = { 0x00800000, 0x00000001, 0x71800000, 0x40400000, 0x3F000000, 0x3F800000 };
+.buffer Y .b32 [6];
+// 12.0, -15.0, 11.0, 19.5, 0.5, 20.0
+.buffer H .b16 = { 0x4A00, 0xCB80, 0x4980, 0x4CE0, 0x3800, 0x4D00 };
+.buffer T .b16 [6];
+.launch k <<< 1, 6 >>> (X, Y, H, T);
+// -126, -149, 100, log2(3) = 0x3FCAE00D, -1, +0
+.expect Y .b32 = { 0xC2FC0000, 0xC3150000, 0x42C80000, 0x3FCAE00D, 0xBF800000, 0x00000000 };
+// tanh(0.5) = 0.46212: 0x3765, correctly rounded (tests/tanh-half.ptx)
+.expect T .b16 = { 0x3C00, 0xBC00, 0x3C00, 0x3C00, 0x3765, 0x3C00 };

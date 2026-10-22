@@ -1,0 +1,14 @@
+// expect: fence.sync_restrict::shared::cluster::read needs .release and .cluster
+// "When .sync_restrict is .sync_restrict::shared::cluster::read, .sem must be .release ... the .scope must be specified
+// as .cluster" (PTX ISA 9.4 9.7.15.4), under .isacheck
+.version 9.4
+.target sm_100a
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    fence.proxy.async::generic.release.sync_restrict::shared::cluster::read.gpu;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

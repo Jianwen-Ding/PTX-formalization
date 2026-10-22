@@ -1,0 +1,14 @@
+// expect: shared access to the region reserved for system software
+// "accessing this region from user code results in undefined behavior" (10.29), reported under .ub strict
+.version 8.0
+.target sm_90
+.address_size 64
+.ub strict ;
+.visible .entry k()
+{
+    .reg .b32 %r<2>;
+    mov.u32 %r1, %reserved_smem_offset_begin;
+    st.shared.u32 [%r1], 7;
+    ret;
+}
+.launch k <<< 1, 1 >>> ();

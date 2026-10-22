@@ -99,6 +99,9 @@ val lvD : (int, int, int) -> int
 function lvD(b, lv, i) = max_int(1, asr_int(txDim(b, i), lv))
 val lvTexels : (int, int) -> int
 function lvTexels(b, lv) = txLayers(b) * lvD(b, lv, 0) * lvD(b, lv, 1) * lvD(b, lv, 2)
+/* samples per texel of a multi-sample texture (0: not multi-sample) */
+val txSamples : int -> int
+function txSamples(b) = tdW(b, 14)
 val lvOff : (int, int) -> int
 function lvOff(b, lv) = { var o : int = 0; var l : int = 0; while l < lv do { o = o + lvTexels(b, l); l = l + 1 }; o }
 
@@ -117,8 +120,12 @@ val effFilter : (int, int) -> int
 function effFilter(b, s) = if s >= 0 then tdW(s, 1) else tdW(b, 4)
 val effAddr : (int, int) -> int
 function effAddr(b, s) = if s >= 0 then tdW(s, 2) else tdW(b, 5)
+/* PTX ISA 9.3 section 5.3.2 (~2528-2531): force_unnormalized_coords "allows the sampler to override the texture header
+ * normalized_coords property ... When True, the texture header setting is overridden and unnormalized coordinates are used;
+ * when False, the texture header setting is used".  The harness sampler's normalized field is the negated
+ * force_unnormalized_coords (0: force unnormalized). */
 val effNorm : (int, int) -> int
-function effNorm(b, s) = if s >= 0 then tdW(s, 3) else tdW(b, 6)
+function effNorm(b, s) = if s >= 0 & tdW(s, 3) == 0 then 0 else tdW(b, 6)
 
 /* ---------------------------------------------------------------- texels */
 val adIdx : (int, int, int) -> int
@@ -128,6 +135,10 @@ function adIdx(md, i, n) = match md {
   2 => if i >= 0 & i < n then i else -1,
   _ => min_int(max_int(i, 0), n - 1)
 }
+
+/* wrap and mirror need normalized coordinates: unnormalized coordinates clamp */
+val amEff : (int, int) -> int
+function amEff(am, nm) = if nm != 1 & (am == 0 | am == 3) then 1 else am
 
 val codeBits : int -> int
 function codeBits(c) = if c == 0 | c == 20 then 8 else if c == 1 | c == 21 then 16 else 32
@@ -147,13 +158,15 @@ function texC(b, a, c) =
   if c < txCh(b) then convF(txCode(b), mem_rdn(SP_GMEM, a + c * txEb(b), txEb(b)), tdW(b, 7))
   else if c == 3 then oneF() else zF()
 
-/* Q = [level, offset x, y, z, has depth reference, reference bits] */
+/* Q = [level, offset x, y, z, has depth reference, reference bits, sample number].  A multi-sample texture keeps the
+ * samples of a texel next to each other: texel index * samples + sample (harness layout). */
 val texel : (int, list(int), int, int, int, int) -> list(fv)
 function texel(b, q, i, j, k, l) = {
   let lv = at(q, 0);
   let t : list(fv) = if i < 0 | j < 0 | k < 0 then [|zF(), zF(), zF(), zF()|]
     else {
-      let a = txBase(b) + (lvOff(b, lv) + ((l * lvD(b, lv, 2) + k) * lvD(b, lv, 1) + j) * lvD(b, lv, 0) + i) * txCh(b) * txEb(b);
+      let ti = lvOff(b, lv) + ((l * lvD(b, lv, 2) + k) * lvD(b, lv, 1) + j) * lvD(b, lv, 0) + i;
+      let a = txBase(b) + (ti * max_int(1, txSamples(b)) + nthD(q, 6, 0)) * txCh(b) * txEb(b);
       [|texC(b, a, 0), texC(b, a, 1), texC(b, a, 2), texC(b, a, 3)|]
     };
   if at(q, 4) == 0 then t
@@ -173,7 +186,7 @@ function posF(x, n, nm) = if nm == 1 then wmul(x, intF(n)) else x
 val tIdx : (int, list(int), int, int, fv, int, int, int) -> int
 function tIdx(b, q, am, nm, x, d, dim, lin) = {
   let p = posF(x, lvD(b, at(q, 0), dim), nm);
-  adIdx(am, flo(if lin == 1 then wsub(p, halfF()) else p) + d + at(q, 1 + dim), lvD(b, at(q, 0), dim))
+  adIdx(amEff(am, nm), flo(if lin == 1 then wsub(p, halfF()) else p) + d + at(q, 1 + dim), lvD(b, at(q, 0), dim))
 }
 val tW : (int, list(int), int, fv, int) -> fv
 function tW(b, q, nm, x, dim) = qw(wsub(posF(x, lvD(b, at(q, 0), dim), nm), halfF()))
@@ -205,7 +218,7 @@ function lodF(v) = wmul(intF(v), inv256())
 val lamClamp : (int, int, fv) -> fv
 function lamClamp(b, s, lam) = minF(maxF(maxF(lam, lodF(minLodW(s))), zF()), minF(lodF(maxLodW(s)), intF(txLevels(b) - 1)))
 val setLv : (list(int), int) -> list(int)
-function setLv(q, lv) = [|lv, at(q, 1), at(q, 2), at(q, 3), at(q, 4), at(q, 5)|]
+function setLv(q, lv) = [|lv, at(q, 1), at(q, 2), at(q, 3), at(q, 4), at(q, 5), nthD(q, 6, 0)|]
 
 val mipSample : (int, int, bool, fv, list(int), int, int, int, fv, fv, fv, int, int) -> list(fv)
 function mipSample(b, s, uselod, lam, q, f, am, nm, x, y, z, l, r) = {
@@ -256,9 +269,13 @@ val cubeNorm : (fv, fv) -> fv
 function cubeNorm(s, ma) = if fv_lt(zF(), ma) then wmul(wadd(divD(s, ma), oneF()), halfF()) else halfF()
 
 /* ---------------------------------------------------------------- operands */
+/* .dtype = { .u32, .s32, .f16, .f32 } and .f16x2 (PTX ISA 9.3 tex, ~18731, 18768): .f16 results are rounded to binary16
+ * (round to nearest even); .f16x2 packs two results per register, the first in the low half */
 val outBits : (ty, fv) -> int
 function outBits(t, f) =
-  if (t.k == "s" | t.k == "u") & t.w == 32 then trunc(f2int(wr4(f)), 32) else fin(noMods(), 32, f, false)
+  if (t.k == "s" | t.k == "u") & t.w == 32 then trunc(f2int(wr4(f)), 32)
+  else if t.k == "f16x2" | (t.k == "f" & t.w == 16) then fin(noMods(), 16, f, false)
+  else fin(noMods(), 32, f, false)
 
 val rankOf : list(string) -> int
 function rankOf(m) = if has(m, "1d") | has(m, "a1d") then 1 else if has(m, "3d") then 3 else 2
@@ -286,10 +303,11 @@ function txRest(l) = match l { XV(v) :: rest => if is_cons(v) then rest else l, 
 val mkQ : (list(int), list(xop)) -> list(int)
 function mkQ(offs, rest) = {
   let r = txRest(rest);
-  [|0, nthD(offs, 0, 0), nthD(offs, 1, 0), nthD(offs, 2, 0), b2i(is_cons(r)), match r { x :: _ => rd(x, mkty("b", 32)), [||] => 0 }|]
+  [|0, nthD(offs, 0, 0), nthD(offs, 1, 0), nthD(offs, 2, 0), b2i(is_cons(r)), match r { x :: _ => rd(x, mkty("b", 32)), [||] => 0 }, 0|]
 }
-val lodArg : list(xop) -> fv
-function lodArg(l) = match l { XS(s) :: _ => coordF(s, mkty("f", 32)), _ => zF() }
+/* "The type of lod follows .ctype (either .s32 or .f32)" (PTX ISA 9.3 tex .level, ~18911) */
+val lodArg : (list(xop), ty) -> fv
+function lodArg(l, ct) = match l { XS(s) :: _ => coordF(s, ct), _ => zF() }
 val gradVec : (list(xop), int) -> list(fv)
 function gradVec(l, i) = match xop_nth(l, i) {
   XV(v) => { var out : list(fv) = [||]; var x = v;
@@ -297,8 +315,38 @@ function gradVec(l, i) = match xop_nth(l, i) {
   _ => [||]
 }
 
+/* tex.2dms / tex.a2dms (PTX ISA 9.3 ~18859-18895).  .2dms: "The first element in operand c is interpreted as unsigned
+ * integer sample number (.u32), and the next two elements are interpreted as signed integer (.s32) 2d texture
+ * coordinates".  .a2dms: the text gives two orders: "selects a multi-sample texture ... using the index given by the first
+ * element ... from sample number given by second element" (~18878-18881, also the example {idx,sample,r6,r7} at ~19016),
+ * but then "The first element in operand c is interpreted as unsigned integer sampler number, the second element is
+ * interpreted as unsigned integer index" (~18883-18885).  The model takes {array index, sample, x, y}, the order of the
+ * selection sentence, of the example and of the other array geometries.  .ctype must be .s32 (~18733); .level / .grad
+ * (~18912, 18918) and the depth compare operand ("not supported for multi-sample textures") stop with an error, as do a
+ * texture without samples (the harness attribute 10) and a sample number beyond them.  Integer coordinates: point
+ * sampling with the texture's address mode. */
+val ms_run : (int, int, list(string), ty, list(sop), list(xop)) -> list(fv)
+function ms_run(b, s, m, ct, cs, ex) = {
+  let ar = has(m, "a2dms");
+  let g = if ar then "tex.a2dms" else "tex.2dms";
+  let z4 : list(fv) = [|zF(), zF(), zF(), zF()|];
+  let q0 = mkQ(txOffs(ex), ex);
+  let o = if ar then 1 else 0;
+  let smp = rd_sop(vecAt(cs, o), mkty("u", 32));
+  if not_bool(ty_eq(ct, mkty("s", 32))) then { fault(concat_str(g, " requires .ctype .s32"), 0); z4 }
+  else if nLod(m) > 0 then { fault(concat_str(g, " does not support .level or .grad"), 0); z4 }
+  else if at(q0, 4) != 0 then { fault(concat_str(g, " does not support the depth compare operand"), 0); z4 }
+  else if txSamples(b) <= 0 then { fault(concat_str(g, " on a texture that is not multi-sample"), 0); z4 }
+  else if smp >= txSamples(b) then { fault(concat_str(g, ": sample number beyond the samples of the texture"), smp); z4 }
+  else {
+    let q : list(int) = [|0, at(q0, 1), at(q0, 2), at(q0, 3), 0, 0, smp|];
+    sample(b, q, 0, effAddr(b, s), effNorm(b, s), coordF(vecAt(cs, o + 1), ct), coordF(vecAt(cs, o + 2), ct), zF(),
+           if ar then min_int(rd_sop(vecAt(cs, 0), mkty("u", 32)), txLayers(b) - 1) else 0, 2)
+  }
+}
+
 val tex_run : (int, int, list(string), ty, list(sop), list(xop)) -> list(fv)
-function tex_run(b, s, m, ct, cs, ex) = {
+function tex_run(b, s, m, ct, cs, ex) = if has(m, "2dms") | has(m, "a2dms") then ms_run(b, s, m, ct, cs, ex) else {
   let rest = ldropx(ex, nLod(m));
   let q = mkQ(txOffs(rest), rest);
   let f32 = mkty("f", 32);
@@ -308,12 +356,12 @@ function tex_run(b, s, m, ct, cs, ex) = {
     let y = coordF(vecAt(cs, o + 1), f32);
     let z = coordF(vecAt(cs, o + 2), f32);
     let ma = cubeMa(x, y, z);
-    let lam = if nLod(m) == 0 then zF() else if has(m, "level") then lodArg(ex) else gradLam(b, 1, 3, gradVec(ex, 0), gradVec(ex, 1), wmul(ma, intF(2)));
+    let lam = if nLod(m) == 0 then zF() else if has(m, "level") then lodArg(ex, ct) else gradLam(b, 1, 3, gradVec(ex, 0), gradVec(ex, 1), wmul(ma, intF(2)));
     mipSample(b, s, nLod(m) > 0, lam, q, effFilter(b, s), 1, 1, cubeNorm(cubeSC(x, y, z), ma), cubeNorm(cubeTC(x, y, z), ma), zF(),
               6 * min_int(if has(m, "acube") then rd_sop(vecAt(cs, 0), mkty("u", 32)) else 0, max_int(tdiv_int(txLayers(b), 6) - 1, 0)) + cubeFace(x, y, z), 2)
   } else {
     let o = if isArr(m) then 1 else 0;
-    let lam = if nLod(m) == 0 then zF() else if has(m, "level") then lodArg(ex) else gradLam(b, effNorm(b, s), rankOf(m), gradVec(ex, 0), gradVec(ex, 1), oneF());
+    let lam = if nLod(m) == 0 then zF() else if has(m, "level") then lodArg(ex, ct) else gradLam(b, effNorm(b, s), rankOf(m), gradVec(ex, 0), gradVec(ex, 1), oneF());
     mipSample(b, s, nLod(m) > 0, lam, q, if ty_eq(ct, f32) then effFilter(b, s) else 0, effAddr(b, s), effNorm(b, s),
               coordF(vecAt(cs, o), ct), coordF(vecAt(cs, o + 1), ct), coordF(vecAt(cs, o + 2), ct),
               if isArr(m) then min_int(rd_sop(vecAt(cs, 0), mkty("u", 32)), txLayers(b) - 1) else 0, rankOf(m))
@@ -351,22 +399,46 @@ function gather_run(b, s, m, cs, ex) = {
 
 val texOut : (xop, ty, list(fv)) -> unit
 function texOut(dv, t, vs) = {
-  var bits : list(int) = [||];
+  var bits0 : list(int) = [||];
   var x = vs;
-  while is_cons(x) do { match x { f :: rest => { bits = pend_append(bits, [|outBits(t, f)|]); x = rest }, [||] => () } };
+  while is_cons(x) do { match x { f :: rest => { bits0 = pend_append(bits0, [|outBits(t, f)|]); x = rest }, [||] => () } };
+  let bits : list(int) = if t.k == "f16x2" then [|lor_int(at(bits0, 0), shl_int(at(bits0, 1), 16)), lor_int(at(bits0, 2), shl_int(at(bits0, 3), 16))|]
+                         else bits0;
   match dv {
     XVP(l, isreg, p) => { collWrite(vecOps(XV(l)), bits); wr_sop(if isreg then SR(p) else SN(p), 1) },
     _ => collWrite(vecOps(dv), bits)
   }
 }
 
-val txqVal : (list(string), int) -> int
-function txqVal(m, b) =
-  if has(m, "width") then txDim(b, 0) else if has(m, "height") then txDim(b, 1) else if has(m, "depth") then txDim(b, 2)
-  else if has(m, "array_size") then (if land_int(tdW(b, 13), 2) != 0 then tdiv_int(tdW(b, 8), 6) else tdW(b, 8))
+/* the harness address modes (0 wrap, 1 clamp, 2 border, 3 mirror) as txq's "Integer from enum { wrap, mirror, clamp_ogl,
+ * clamp_to_edge, clamp_to_border }" (PTX ISA 9.3 ~19254): clamp is clamp_to_edge, border clamp_to_border */
+val amEnum : int -> int
+function amEnum(c) = match c { 0 => 0, 1 => 3, 2 => 4, 3 => 1, _ => c }
+
+/* txq (PTX ISA 9.3, txq): ".array_size: For a texture array, number of textures in array, 0 otherwise", ".num_mipmap_levels:
+ * For a mipmapped texture, number of levels of details (LOD), 0 otherwise", ".num_samples: For a multi-sample texture,
+ * number of samples, 0 otherwise" (the harness attribute 10, default 0).
+ * The harness descriptor has no array or mipmap flag: a texture with more than one layer (more than six for a cubemap)
+ * is an array, one with more than one level is mipmapped.  A .samplerref operand (the sampler magic word) answers the
+ * sampler queries from the sampler's fields (1 filter, 2 address mode, 3 normalized); .force_unnormalized_coords is
+ * set when the sampler does not use normalized coordinates.  txq.level queries the size of level lod. */
+val txqVal : (list(string), int, int) -> int
+function txqVal(m, b, lv) =
+  if tdW(b, 0) == 1396920397 then {
+    if has(m, "filter_mode") then tdW(b, 1)
+    else if has(m, "addr_mode_0") | has(m, "addr_mode_1") | has(m, "addr_mode_2") then amEnum(tdW(b, 2))
+    else if has(m, "force_unnormalized_coords") then b2i(tdW(b, 3) == 0)
+    else 0
+  }
+  else if has(m, "width") then lvD(b, lv, 0) else if has(m, "height") then lvD(b, lv, 1) else if has(m, "depth") then lvD(b, lv, 2)
+  else if has(m, "array_size") then {
+    let n = if land_int(tdW(b, 13), 2) != 0 then tdiv_int(tdW(b, 8), 6) else tdW(b, 8);
+    if n > 1 then n else 0
+  }
   else if has(m, "normalized_coords") then tdW(b, 6) else if has(m, "filter_mode") then tdW(b, 4)
-  else if has(m, "addr_mode_0") | has(m, "addr_mode_1") | has(m, "addr_mode_2") then tdW(b, 5)
-  else if has(m, "num_mipmap_levels") then txLevels(b) else 0
+  else if has(m, "addr_mode_0") | has(m, "addr_mode_1") | has(m, "addr_mode_2") then amEnum(tdW(b, 5))
+  else if has(m, "num_mipmap_levels") then (if tdW(b, 12) > 1 then tdW(b, 12) else 0)
+  else if has(m, "num_samples") then txSamples(b) else 0
 
 /* ---------------------------------------------------------------- surfaces */
 val sfBase : int -> int
@@ -445,6 +517,27 @@ function sfRed(a, op, t, v, m) = {
   else if not_bool(has(m, "zero")) then fault("surface access out of bounds", a)
 }
 
+/* sured (PTX ISA 9.3 ~19588-19613): sured.b ".ctype = { .u32, .u64, .s32, .b32, .s64 }", "Operation add applies to .u32,
+ * .u64, and .s32 types; min and max apply to .u32, .s32, .u64 and .s64 types; operations and and or apply to .b32 type";
+ * sured.p ".ctype = { .b32, .b64 }", "The instruction type .b64 is restricted to min and max operations".  The example
+ * "sured.p.min.1d.u32" (~19629) contradicts the sured.p .ctype list, which the model follows.  Reported by `.isacheck ;`
+ * (isaTables, ptx_mm.sail); without it every combination runs with the natural meaning of the operation on the type
+ * (atom's: .and / .or on the bits, .add / .min / .max on .b32 / .b64 as unsigned; sured.p with another type uses its
+ * width and the surface format's signedness, as for .b32 / .b64). */
+val suredErr : (bool, string, string) -> string
+function suredErr(p, op, n) = {
+  let ok : bool = if p then n == "b32" | (n == "b64" & (op == "min" | op == "max"))
+    else match op {
+      "add" => has([|"u32", "u64", "s32"|], n),
+      "min" => has([|"u32", "s32", "u64", "s64"|], n),
+      "max" => has([|"u32", "s32", "u64", "s64"|], n),
+      "and" => n == "b32",
+      "or" => n == "b32",
+      _ => false
+    };
+  if ok then "" else concat_str(if p then "sured.p." else "sured.b.", concat_str(op, concat_str(" with .", concat_str(n, " is not a valid operation / type combination"))))
+}
+
 val suqVal : (list(string), int) -> int
 function suqVal(m, b) =
   if has(m, "width") then sfDim(b, 0) else if has(m, "height") then sfDim(b, 1) else if has(m, "depth") then sfDim(b, 2)
@@ -464,7 +557,8 @@ function exec_tex(o, ops) = {
     ("tex", [|dt, ct|], dv :: XB([|t, s|], [|IV(cs)|]) :: ex) => { texOut(dv, dt, tex_run(hBlob(t), hBlob(s), m, ct, cs, ex)); true },
     ("tld4", [|dt, _|], dv :: XB([|t|], [|IV(cs)|]) :: ex) => { texOut(dv, dt, gather_run(hBlob(t), -1, m, cs, ex)); true },
     ("tld4", [|dt, _|], dv :: XB([|t, s|], [|IV(cs)|]) :: ex) => { texOut(dv, dt, gather_run(hBlob(t), hBlob(s), m, cs, ex)); true },
-    ("txq", _, [|d, XB([|t|], [||])|]) => { wr(d, txqVal(m, hBlob(t))); true },
+    ("txq", _, [|d, XB([|t|], [||])|]) => { wr(d, txqVal(m, hBlob(t), 0)); true },
+    ("txq", _, [|d, XB([|t|], [||]), lod|]) => if has(m, "level") then { wr(d, txqVal(m, hBlob(t), rdu32(lod))); true } else false,
     ("suld", [|t|], [|dv, XB([|s|], [|IV(cs)|])|]) => {
       if has(m, "b") then {
         let n = sfVec(m);
@@ -514,6 +608,8 @@ function exec_tex(o, ops) = {
 }
 
 /* ---------------------------------------------------------------- the .texture / .surface / .sampler directives */
+/* .texture attrs { channels, filter, addrmode, normalized, read-normalized, layers, levels, flags, mip filter, samples }:
+ * the tenth attribute (word 14, default 0) is the number of samples of a multi-sample texture (tex.2dms / .a2dms) */
 val tmCode : ty -> int
 function tmCode(t) = match (t.k, t.w) {
   ("u", 8) => 0, ("u", 16) => 1, ("u", 32) => 2, ("s", 32) => 3, ("u", 64) => 4, ("s", 64) => 5, ("f", 16) => 6, ("f", 32) => 7,
@@ -532,7 +628,7 @@ function harness_tex(d) = {
       Some(a) => {
         let w : list(int) = if d == "TEXTURE" then
             [|1415075924, a, tmCode(t), nth(as_, 0), nth(as_, 1), nth(as_, 2), nth(as_, 3), nth(as_, 4), nth(as_, 5), nth(ds, 0), nth(ds, 1), nth(ds, 2),
-              nthD(as_, 6, 1), nthD(as_, 7, 0), 0, nthD(as_, 8, 0)|]
+              nthD(as_, 6, 1), nthD(as_, 7, 0), nthD(as_, 9, 0), nthD(as_, 8, 0)|]
           else
             [|1398035526, a, bytes(t), nth(as_, 0), nth(ds, 0), nth(ds, 1), nth(ds, 2), nthD(as_, 1, 11), nthD(as_, 2, 1), nthD(as_, 3, 0), nthD(as_, 4, 0),
               nthD(as_, 5, 1), nthD(as_, 6, b2i(nth(as_, 0) > 1)), 0, 0, 0, 0|];

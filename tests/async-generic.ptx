@@ -1,0 +1,53 @@
+// st.async / red.async without .ss and st.bulk without a state space use generic addressing (PTX ISA 9.3: st.async "If
+// .ss is not specified, Generic Addressing is used" ~13917, red.async ~21414, both for a and mbar; st.bulk "If no state
+// space is specified then Generic Addressing is used" ~14114).  CTA 1 stores 7 and adds 5 into CTA 0's buf through the
+// generic addresses that mapa returns for CTA 0 (each a complete-tx of 4 bytes on CTA 0's mbarrier, also generic); then
+// CTA 0 zeroes buf[2..3] (99, 98) with st.bulk on a generic address and stores 3 with the .shared::cluster form.
+.version 8.6
+.target sm_100a
+.address_size 64
+.visible .entry k(.param .u64 po) .reqnctapercluster 2, 1, 1
+{
+    .reg .b64 %o, %st, %ga, %gb, %rg, %rb, %rg1; .reg .b32 %r0, %r1, %r2, %r3, %r4, %rank, %v, %sc, %sb; .reg .pred %is0, %is1, %w;
+    .shared .align 8 .b64 bar;
+    .shared .align 16 .b32 buf[8];
+    ld.param.u64 %o, [po];
+    mov.u32 %rank, %cluster_ctarank;
+    setp.eq.u32 %is0, %rank, 0;
+    setp.eq.u32 %is1, %rank, 1;
+    cvta.shared.u64 %ga, buf;
+    cvta.shared.u64 %gb, bar;
+    mov.u32 %v, 10; st.shared.b32 [buf+4], %v;
+    mov.u32 %v, 99; st.shared.b32 [buf+8], %v;
+    mov.u32 %v, 98; st.shared.b32 [buf+12], %v;
+    @%is0 mbarrier.init.shared.b64 [bar], 1;
+    @%is0 mbarrier.arrive.expect_tx.shared.b64 %st, [bar], 12;
+    barrier.cluster.arrive.release.aligned;
+    barrier.cluster.wait.acquire.aligned;
+    mapa.u64 %rg, %ga, 0;
+    mapa.u64 %rb, %gb, 0;
+    add.u64 %rg1, %rg, 4;
+    mov.u32 %r0, 7; mov.u32 %r1, 5;
+    @%is1 st.async.mbarrier::complete_tx::bytes.u32 [%rg], %r0, [%rb];
+    @%is1 red.async.relaxed.cluster.mbarrier::complete_tx::bytes.add.u32 [%rg1], %r1, [%rb];
+    mapa.shared::cluster.u32 %sc, buf, 0;
+    mapa.shared::cluster.u32 %sb, bar, 0;
+    add.u32 %sc, %sc, 16;
+    mov.u32 %r0, 3;
+    @%is1 st.async.shared::cluster.mbarrier::complete_tx::bytes.u32 [%sc], %r0, [%sb];
+W:  @%is0 mbarrier.try_wait.parity.shared.b64 %w, [bar], 0;
+    @%is0 bra.uni C;
+    bra.uni X;
+C:  @!%w bra W;
+    st.bulk [%ga+8], 8, 0;
+    ld.shared.b32 %r0, [buf]; ld.shared.b32 %r1, [buf+4]; ld.shared.b32 %r2, [buf+8]; ld.shared.b32 %r3, [buf+12];
+    ld.shared.b32 %r4, [buf+16];
+    st.global.b32 [%o], %r0; st.global.b32 [%o+4], %r1; st.global.b32 [%o+8], %r2; st.global.b32 [%o+12], %r3;
+    st.global.b32 [%o+16], %r4;
+X:  barrier.cluster.arrive.release.aligned;
+    barrier.cluster.wait.acquire.aligned;
+    ret;
+}
+.buffer O .u32 [5];
+.launch k <<< 2, 1 >>> (O);
+.expect O .u32 = { 7, 15, 0, 0, 3 };

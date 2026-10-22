@@ -1,0 +1,18 @@
+// expect: a variable declaration names the state space
+// 5.4.1: every variable resides in a state space (reported under .isacheck)
+.version 9.4
+.target sm_90
+.address_size 64
+.isacheck ;
+
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r;
+    .b32 %x;
+    ld.param.u64 %o, [po];
+    mov.u32 %r, 1;
+    st.global.u32 [%o], %r;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

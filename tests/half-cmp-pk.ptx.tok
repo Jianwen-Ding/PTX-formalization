@@ -1,0 +1,30 @@
+VERSION 4621256167635550208
+TARGET 1 sm_100
+ASZ 64
+FUNC k entry 1 visible PERF 0  RETS 0  PARAMS 1 po u 64 8 8 RW 44 %o 64 %a 32 %b 32 %c 32 %r0 32 %r1 32 %r2 32 %r3 32 %r4 32 %r5 32 %r6 32 %r7 32 %r8 32 %r9 32 %r10 32 %r11 32 %r12 32 %r13 32 %r14 32 %r15 32 %h0 16 %h1 16 %h2 16 %h3 16 %h4 16 %h5 16 %h6 16 %h7 16 %g0 16 %g1 16 %g2 16 %g3 16 %g4 16 %g5 16 %g6 16 %g7 16 %p0 1 %p1 1 %p2 1 %p3 1 %p4 1 %p5 1 %p6 1 %p7 1 LABELS 0  TARGETS 0  CODE 21
+IN G0 ld 1 param 1 u 64 2 S R %o B 1 AN po 0 
+IN G0 mov 0  1 b 32 2 S R %a S H 0x80010001
+IN G0 mov 0  1 b 32 2 S R %b S H 0x00000000
+IN G0 setp 2 eq ftz 1 f16x2 32 3 S PIPE r %p0 r %p1 S R %a S R %b
+IN G0 selp 0  1 u 32 4 S R %r0 S I 1 S I 0 S R %p0
+IN G0 selp 0  1 u 32 4 S R %r1 S I 1 S I 0 S R %p1
+IN G0 mov 0  1 b 32 2 S R %a S H 0x40003c00
+IN G0 mov 0  1 b 32 2 S R %b S H 0x3c004000
+IN G0 setp 1 ne 1 u 32 3 S R %p2 S I 0 S I 0
+IN G0 setp 2 lt or 1 f16x2 32 4 S PIPE r %p3 r %p4 S R %a S R %b S R %p2
+IN G0 selp 0  1 u 32 4 S R %r2 S I 1 S I 0 S R %p3
+IN G0 selp 0  1 u 32 4 S R %r3 S I 1 S I 0 S R %p4
+IN G0 set 2 lt or 2 f16x2 32 f16x2 32 4 S R %r4 S R %a S R %b S R %p2
+IN G0 mov 0  1 b 32 2 S R %a S H 0x80010001
+IN G0 set 2 eq ftz 2 u 32 f16x2 32 3 S R %r5 S R %a S I 0
+IN G0 mov 0  1 b 16 2 S R %h0 S H 0x3c00
+IN G0 set 1 eq 2 bf 16 f 16 3 S R %h1 S R %h0 S R %h0
+IN G0 cvt 0  2 u 32 u 16 2 S R %r6 S R %h1
+IN G0 st 2 global v4 1 u 32 2 B 1 AR %o 0  V 4 R %r0 R %r1 R %r2 R %r3
+IN G0 st 2 global v4 1 u 32 2 B 1 ARO %o 16 0  V 4 R %r4 R %r5 R %r6 R %r6
+IN G0 ret 0  0  0 
+STATICS 0 
+BUFFER OUT u 32 8 0 
+LAUNCH k 1 1 1 1 1 1 0 1 N OUT
+EXPECT OUT u 32 0 8 I 1 I 1 I 1 I 0 I 15360 I 4294967295 I 16256 I 16256
+END

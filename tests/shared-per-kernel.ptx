@@ -1,0 +1,34 @@
+// a kernel's own .shared variables belong to its CTAs (PTX ISA 9.3 5.1.5): two kernels may both declare `buf`, and each
+// kernel's variables are laid out after the module-scope .shared data independently of the other kernels
+.version 8.0
+.target sm_80
+.address_size 64
+.shared .align 16 .b32 common[4];
+.visible .entry k1(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r<4>;
+    .shared .align 16 .b32 buf[8192];
+    ld.param.u64 %o, [po];
+    mov.u32 %r1, buf;
+    st.shared.u32 [buf + 4], 11;
+    ld.shared.u32 %r2, [buf + 4];
+    st.global.v2.u32 [%o], {%r1, %r2};
+    ret;
+}
+.visible .entry k2(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r<4>;
+    .shared .align 16 .b32 buf[16];
+    ld.param.u64 %o, [po];
+    mov.u32 %r1, buf;
+    st.shared.u32 [buf + 4], 22;
+    ld.shared.u32 %r2, [buf + 4];
+    mov.u32 %r3, %total_smem_size;
+    st.global.v2.u32 [%o + 8], {%r1, %r2}; st.global.v2.u32 [%o + 16], {%r3, %r3};
+    ret;
+}
+.buffer OUT .u32 [6];
+.launch k1 <<< 1, 1 >>> (OUT);
+.launch k2 <<< 1, 1 >>> (OUT);
+// both buf start right after common (16 bytes); k2's shared memory is 16 + 64 bytes, in 128-byte units
+.expect OUT .u32 = { 16, 11, 16, 22, 128, 128 };

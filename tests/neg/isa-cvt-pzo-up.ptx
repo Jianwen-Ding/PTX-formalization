@@ -1,0 +1,17 @@
+// expect: cvt: .pzo is only supported for float-to-float conversions to a strictly smaller type
+// .pzo on an up-conversion (.f32 from .f16), PTX ISA 9.4 9.7.10.24, reported under .isacheck
+.version 9.4
+.target sm_107f
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b16 %h; .reg .f32 %f;
+    ld.param.u64 %o, [po];
+    mov.b16 %h, 0x8000;
+    cvt.pzo.f32.f16 %f, %h;
+    st.global.f32 [%o], %f;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

@@ -1,0 +1,18 @@
+// expect: vectors cannot exceed 128 bits in length
+// 5.4.2: .v4 .f64 is not allowed (reported under .isacheck)
+.version 9.4
+.target sm_90
+.address_size 64
+.isacheck ;
+.global .v4 .f64 gv;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r;
+
+    ld.param.u64 %o, [po];
+    mov.u32 %r, 1;
+    st.global.u32 [%o], %r;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

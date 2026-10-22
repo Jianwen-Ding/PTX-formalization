@@ -1,0 +1,18 @@
+// expect: ld: the instruction's state space .shared does not match the variable's .global (g)
+// "The state space specified by memory instructions must match the state space of the address operand, otherwise the
+// behavior is undefined" (PTX ISA 9.4 6.4.1), under .ub strict
+.version 9.4
+.target sm_90
+.address_size 64
+.ub strict ;
+.global .align 4 .u32 g = 5;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r;
+    ld.param.u64 %o, [po];
+    ld.shared.u32 %r, [g];
+    st.global.u32 [%o], %r;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

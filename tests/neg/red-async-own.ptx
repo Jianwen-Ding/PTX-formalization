@@ -1,0 +1,20 @@
+// expect: red.async: a and mbar belong to the executing CTA
+// red.async: "The CTA to which they belong is different from the CTA of the executing thread" (9.7.14.7), under .ub strict
+.version 8.1
+.target sm_90
+.address_size 64
+.ub strict ;
+.visible .entry k() .reqnctapercluster 2, 1, 1
+{
+    .reg .b32 %a, %b, %ra, %rb, %rank; .reg .b64 %st;
+    .shared .align 8 .b64 bar;
+    .shared .align 4 .b32 buf;
+    mov.u32 %rank, %cluster_ctarank;
+    mov.u32 %a, buf; mov.u32 %b, bar;
+    mbarrier.init.shared.b64 [bar], 1;
+    mapa.shared::cluster.u32 %ra, %a, %rank;
+    mapa.shared::cluster.u32 %rb, %b, %rank;
+    red.async.relaxed.cluster.shared::cluster.mbarrier::complete_tx::bytes.add.u32 [%ra], 1, [%rb];
+    ret;
+}
+.launch k <<< 2, 1 >>> ();

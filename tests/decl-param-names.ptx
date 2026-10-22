@@ -1,0 +1,23 @@
+// parameterized variable names in .global / .shared / .local: "This shorthand syntax may be used with any of the
+// fundamental types and with any state space" (5.4.6): g<3> declares g0, g1, g2
+.version 8.0
+.target sm_90
+.address_size 64
+.global .u32 g<3>;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r<4>;
+    .shared .align 8 .u32 s<2>;
+    .local .u32 l<2>;
+    ld.param.u64 %o, [po];
+    st.global.u32 [g2], 7; st.global.u32 [g0], 5;
+    st.shared.u32 [s1], 8;
+    st.local.u32 [l1], 9;
+    ld.global.u32 %r0, [g2]; ld.global.u32 %r1, [g0];
+    ld.shared.u32 %r2, [s1]; ld.local.u32 %r3, [l1];
+    st.global.v4.u32 [%o], {%r0, %r1, %r2, %r3};
+    ret;
+}
+.buffer O .u32 [4];
+.launch k <<< 1, 1 >>> (O);
+.expect O .u32 = { 7, 5, 8, 9 };

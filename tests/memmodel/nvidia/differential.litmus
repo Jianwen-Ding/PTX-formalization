@@ -1,0 +1,235 @@
+# Extra differential tests for scripts/nvmm.py: shapes the repo suite and the NVIDIA suites do not cover.  `expect` is
+# the verdict derived from PTX ISA 9.4 chapter 8; scripts/nvmm.py checks it against ptxmm.py and both NVIDIA models.
+
+test SB-fence-sc-mixed-scope
+desc fence.sc.cta and fence.sc.gpu in different CTAs: the cta fence's scope does not include the other thread
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.sc.cta
+  r0 = ld.weak y
+thread T2 cta=1 cluster=0 gpu=0
+  st.weak y 1
+  fence.sc.gpu
+  r1 = ld.weak x
+exists r0==0 && r1==0
+expect allowed
+
+test SB-fence-sc-gpu-cross-gpu
+desc gpu-scoped fence.sc on two GPUs are not morally strong; sys-scoped ones are
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.sc.gpu
+  r0 = ld.weak y
+thread T2 cta=0 cluster=0 gpu=1
+  st.weak y 1
+  fence.sc.sys
+  r1 = ld.weak x
+exists r0==0 && r1==0
+expect allowed
+
+test SB-fence-sc-sys-cross-gpu
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.sc.sys
+  r0 = ld.weak y
+thread T2 cta=0 cluster=0 gpu=1
+  st.weak y 1
+  fence.sc.sys
+  r1 = ld.weak x
+exists r0==0 && r1==0
+expect forbidden
+
+test MP-fence-release-acquire
+desc fence.release / fence.acquire (PTX 8.6) form the release and acquire patterns
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.release.gpu
+  st.relaxed.gpu f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.relaxed.gpu f
+  fence.acquire.gpu
+  r1 = ld.weak x
+exists r0==1 && r1==0
+expect forbidden
+
+test MP-fence-acquire-wrong-side
+desc an acquire fence does not form a release pattern
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  fence.acquire.gpu
+  st.relaxed.gpu f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.relaxed.gpu f
+  fence.acquire.gpu
+  r1 = ld.weak x
+exists r0==1 && r1==0
+expect allowed
+
+test MP-release-pattern-2
+desc st.release; st.relaxed to the same location is a release pattern (8.8 item 2)
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.gpu f 1
+  st.relaxed.gpu f 2
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.acquire.gpu f
+  r1 = ld.weak x
+exists r0==2 && r1==0
+expect forbidden
+
+test MP-acquire-pattern-2
+desc ld.relaxed; ld.acquire of the same location is an acquire pattern (8.8 item 2)
+init x=0 f=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.gpu f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.relaxed.gpu f
+  r2 = ld.acquire.gpu f
+  r1 = ld.weak x
+exists r0==1 && r1==0
+expect forbidden
+
+test MP-bar-arrive
+desc producer bar.arrive, consumer bar.sync on the same barrier (8.9.4 item 2)
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  bar.arrive 1
+thread T2 cta=0 cluster=0 gpu=0
+  bar.sync 1
+  r0 = ld.weak x
+exists r0==0
+expect forbidden
+
+test MP-bar-arrive-reversed
+desc a bar.arrive does not wait: no ordering from the bar.sync thread to the arriving thread
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  bar.arrive 1
+  r0 = ld.weak x
+thread T2 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  bar.sync 1
+exists r0==0
+expect allowed
+
+test WRC-bar-cumulative
+desc bar.sync is cumulative: a write observed before the barrier is visible after it
+init x=0 y=0
+thread T1 cta=1 cluster=0 gpu=0
+  st.relaxed.gpu x 1
+thread T2 cta=0 cluster=0 gpu=0
+  r0 = ld.relaxed.gpu x
+  bar.sync 0
+thread T3 cta=0 cluster=0 gpu=0
+  bar.sync 0
+  r1 = ld.relaxed.gpu x
+exists r0==1 && r1==0
+expect forbidden
+
+test CoRR-cta-cross
+desc cta-scoped accesses in different CTAs are not morally strong: CoRR is not guaranteed
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.relaxed.cta x 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.relaxed.cta x
+  r1 = ld.relaxed.cta x
+exists r0==1 && r1==0
+expect allowed
+
+test S-relacq
+desc S: a write causally after a write is coherence-after it
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 2
+  st.release.gpu y 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = ld.acquire.gpu y
+  st.relaxed.gpu x 1
+exists r0==1 && [x]==2
+expect forbidden
+
+test LB-acquire-release
+desc LB with an acquire load on one side and a release store on the other
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  r0 = ld.acquire.gpu x
+  st.relaxed.gpu y 1
+thread T2 cta=1 cluster=0 gpu=0
+  r1 = ld.relaxed.gpu y
+  st.release.gpu x 1
+exists r0==1 && r1==1
+expect forbidden
+
+test Atomicity-cta-same
+desc cta-scoped atomics in one CTA are morally strong
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  r0 = atom.cta.add x 1
+thread T2 cta=0 cluster=0 gpu=0
+  r1 = atom.cta.add x 1
+exists [x]==1
+expect forbidden
+
+test Atomicity-cluster
+desc cluster-scoped atomics in two CTAs of one cluster are morally strong
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  r0 = atom.cluster.add x 1
+thread T2 cta=1 cluster=0 gpu=0
+  r1 = atom.cluster.add x 1
+exists [x]==1
+expect forbidden
+
+test IRIW-fence-sc-gpu-scope-split
+desc IRIW with gpu-scoped fences and readers on two GPUs: the fences are not morally strong
+init x=0 y=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.relaxed.sys x 1
+thread T2 cta=1 cluster=0 gpu=0
+  st.relaxed.sys y 1
+thread T3 cta=2 cluster=0 gpu=0
+  r0 = ld.relaxed.sys x
+  fence.sc.gpu
+  r1 = ld.relaxed.sys y
+thread T4 cta=0 cluster=0 gpu=1
+  r2 = ld.relaxed.sys y
+  fence.sc.gpu
+  r3 = ld.relaxed.sys x
+exists r0==1 && r1==0 && r2==1 && r3==0
+expect allowed
+
+test MP-atom-acq_rel-chain
+desc an atom.acq_rel in the middle both acquires and releases
+init x=0 f=0 g=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.weak x 1
+  st.release.gpu f 1
+thread T2 cta=1 cluster=0 gpu=0
+  r0 = atom.acq_rel.gpu.exch f 2
+  st.release.gpu g 1
+thread T3 cta=2 cluster=0 gpu=0
+  r1 = ld.acquire.gpu g
+  r2 = ld.weak x
+exists r0==1 && r1==1 && r2==0
+expect forbidden
+
+test CoWW-volatile
+desc volatile is relaxed.sys: two volatile stores and loads are coherent
+init x=0
+thread T1 cta=0 cluster=0 gpu=0
+  st.volatile x 1
+  st.volatile x 2
+thread T2 cta=0 cluster=0 gpu=1
+  r0 = ld.volatile x
+  r1 = ld.volatile x
+exists r0==2 && r1==1
+expect forbidden

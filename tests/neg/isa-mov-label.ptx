@@ -1,0 +1,18 @@
+// expect: a label is not a mov operand
+// mov d, label: not an operand form of mov (PTX ISA 9.4 9.7.10.3) (reported under .isacheck; runs in the default mode)
+.version 9.4
+.target sm_90
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %a; .reg .b32 %r; .reg .f32 %f;
+    ld.param.u64 %o, [po];
+L1:
+    mov.u64 %a, L1;
+    mov.u32 %r, 1;
+    st.global.u32 [%o], %r;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

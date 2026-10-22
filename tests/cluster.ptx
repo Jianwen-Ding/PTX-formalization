@@ -5,7 +5,7 @@
 
 .visible .entry k(.param .u64 po) .reqnctapercluster 2, 1, 1
 {
-    .reg .b64 %o, %oo; .pred %p0; .reg .b32 %r<16>, %rank, %nrank, %cid, %peer, %v, %got, %tid;
+    .reg .b64 %o, %oo; .reg .pred %p0; .reg .b32 %r<16>, %rank, %nrank, %cid, %peer, %v, %got, %tid;
     .shared .align 4 .b32 slot[2];
     ld.param.u64 %o, [po];
     mov.u32 %tid, %tid.x;
