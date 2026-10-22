@@ -629,6 +629,9 @@ function exec_tc(o, ops) = {
   else if has(m, "wait") | has(m, "fence") then true
   else if has(m, "alloc") then match ops {
     [|XB([|d|], [||]), n|] if not_bool(warpUniform("tcgen05.alloc", "nCols", rdu32(n))) => true,
+    /* "If the address specified by dst does not fall within the address window of .shared::cta state space then the
+       behavior is undefined" (9.7.17.7.1) */
+    [|XB([|d|], [||]), n|] if not_bool(winUb("tcgen05.alloc", "dst", ea(d, if has(m, "shared::cta") | has(m, "shared") then "shared" else "generic"), [|"shared"|])) => true,
     [|XB([|d|], [||]), n|] => {
       t_post[t] = P_tcalloc(ea(d, if has(m, "shared::cta") | has(m, "shared") then "shared" else "generic"), rdu32(n));
       do_coll("tcgen05.alloc", full, [||], [|0|], [||]);
@@ -706,6 +709,9 @@ function exec_tc(o, ops) = {
     },
     _ => false
   } else if has(m, "commit") then match ops {
+    /* "If the address specified by mbar does not fall within the address window of .shared::cluster state space then
+       the behavior is undefined" (9.7.17.12.1) */
+    XB([|a|], [||]) :: _ if not_bool(winUb("tcgen05.commit", "mbar", ea(a, spaceOf(m)), [|"shared", "cluster"|])) => true,
     [|XB([|a|], [||])|] => { mbArriveKey(mbKey(ea(a, spaceOf(m)))); true },
     [|XB([|a|], [||]), mk|] if has(m, "multicast") => {
       var ks = mbMcKeys(land_int(locOffA(ea(a, spaceOf(m))), 16777215), rdu32(mk));

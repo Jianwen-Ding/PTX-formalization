@@ -307,6 +307,12 @@ Open:
 - [x] ldmatrix / stmatrix with a generic address outside `.shared` (§9.7.15.5.15-16) under `.ub strict`
       (tests/neg/ldmatrix-ub-global.ptx); the 23 ldmatrix / stmatrix programs pass, the ZLUDA ldmatrix program keeps its
       own out-of-bounds store
+- [x] address-window rules ("does not fall within the address window of ... the behavior is undefined") under
+      `.ub strict` with one helper (winUb): tcgen05.alloc dst (.shared::cta), tcgen05.commit mbar (.shared::cluster),
+      clusterlaunchcontrol.try_cancel addr / mbar (.shared::cta), tensormap.replace addr (.global or .shared::cta)
+      (tests/neg/tc-alloc-ub-window.ptx, clc-ub-window.ptx); with the earlier ones (mbarrier, st / red.async, st.bulk,
+      discard, applypriority, cvta, ldmatrix / stmatrix, multimem) every window rule of §9.7 is checked except
+      createpolicy's (an opaque policy with no memory access in the model) and cp.async's prefetch hint
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

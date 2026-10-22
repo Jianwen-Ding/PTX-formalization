@@ -1,0 +1,19 @@
+// expect: clusterlaunchcontrol.try_cancel: addr outside the address window of its state space
+// "The result is undefined if any of address operands do not fall within the address window of .shared::cta"
+// (9.7.14.18); a global response address, under .ub strict
+.version 8.6
+.target sm_100a
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %mb;
+    .shared .align 8 .b64 bar;
+    ld.param.u64 %o, [po];
+    mbarrier.init.shared.b64 [bar], 1;
+    cvta.shared.u64 %mb, bar;
+    clusterlaunchcontrol.try_cancel.async.mbarrier::complete_tx::bytes.b128 [%o], [%mb];
+    ret;
+}
+.buffer O .u32 [4];
+.launch k <<< 1, 1 >>> (O);

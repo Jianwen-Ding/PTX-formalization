@@ -459,6 +459,9 @@ function exec_tma(o, ops) = {
     let f = tmField(m);
     let ordf = f == "box_dim" | f == "global_dim" | f == "global_stride" | f == "element_stride";
     match ops {
+      /* "If the address specified by addr does not fall within the address window of .global or .shared::cta state space
+         then the behavior is undefined" (9.7.9.27) */
+      XB([|a|], _) :: _ if has(m, "replace") & not_bool(winUb("tensormap.replace", "addr", ea(a, sp), [|"global", "shared"|])) => true,
       [|XB([|a|], [||]), n|] if has(m, "replace") & not_bool(ordf) => {
         let l = ea(a, sp);
         let b = memop_do(l, RdOp(128));

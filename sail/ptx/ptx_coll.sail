@@ -189,6 +189,16 @@ function sum_list(l) = match l { [||] => 0, h :: t => h + sum_list(t) }
 val seqKey : (string, int) -> string
 function seqKey(k, m) = concat_str(k, concat_str(":", dec_str(m)))
 
+/* "If the address specified by ... does not fall within the address window of <spaces> ... the behavior is undefined":
+ * under .ub strict, l must lie in one of the windows ("shared" is .shared::cta, "cluster" another CTA's window) */
+val winUb : (string, string, loc, list(string)) -> bool
+function winUb(op, what, l, ok) = match l {
+  Loc(sp, a) => if ub & not_bool(has(ok, sp)) then {
+      fault(concat_str(op, concat_str(": ", concat_str(what, " outside the address window of its state space"))), a); false
+    } else true,
+  _ => true
+}
+
 /* warp-uniform operands of a per-thread warp-wide instruction (.ub strict): the first lane of the warp to execute an
  * instance (function, pc, the thread's visit count, operand tag) records the value in the CTA's misc map, later lanes
  * compare; false (after a fault) when they differ */

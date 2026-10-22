@@ -658,6 +658,8 @@ function exec_amisc(o, ops) = {
          * cluster", signalled by a complete-tx on the mbarrier "on the shared memory of that CTA" (PTX ISA 9.3,
          * clusterlaunchcontrol.try_cancel).  The response is always the failure response (0). */
         let sp = if has(m, "shared") then "shared" else "generic";
+        /* "The result is undefined if any of address operands do not fall within the address window of .shared::cta" */
+        if not_bool(winUb("clusterlaunchcontrol.try_cancel", "addr", ea(a, sp), [|"shared"|]) & winUb("clusterlaunchcontrol.try_cancel", "mbar", ea(mb, sp), [|"shared"|])) then return true;
         let mc = has(m, "multicast::cluster::all");
         let all = pow2(vol(clusterDim)) - 1;
         var ds = if mc then rankLocs(land_int(locOffA(ea(a, sp)), 16777215), all) else [|ea(a, sp)|];
