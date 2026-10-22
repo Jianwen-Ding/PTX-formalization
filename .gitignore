@@ -4,3 +4,4 @@ build/
 __pycache__/
 tmp.*
 sail_smt_cache
+_gpgpusim_build/
