@@ -1,0 +1,14 @@
+// expect: K Dimension bit 29 must be 0
+// .kind::f16 with idesc bit 29 set: K is unique, so "the instruction descriptor bit corresponding to K must be set to 0" (PTX ISA 9.4 9.7.18.2.2, Table 53), under .isacheck
+.version 9.4
+.target sm_100a
+.address_size 64
+.isacheck ;
+.visible .entry k()
+{
+    .reg .b32 %r<6>; .reg .b64 %dA, %dB;
+    mov.u32 %r1, 0; mov.u32 %r2, 256; mov.u32 %r3, 671219728; mov.u32 %r4, 300; mov.u32 %r5, 310; mov.b64 %dA, 0; mov.b64 %dB, 0;
+    tcgen05.mma.cta_group::1.kind::f16 [%r1], %dA, %dB, %r3, 1;
+    ret;
+}
+.launch k <<< 1, 1 >>> ();

@@ -277,10 +277,16 @@ function tcMD(m, i) = if isMxK(m) then land_int(asr_int(i, 27), 3) * 128 else la
 val tcN : int -> int
 function tcN(i) = land_int(asr_int(i, 17), 63) * 8
 
+/* the 2-bit K field of .kind::mxf4 / .kind::mxf4nvf4 (PTX ISA 9.4 9.7.18.4.2, Table 55): "use bit 3 as upper-bit while
+   bit 31 serves as lower-bit"; 0 = Dense K=64 / Sparse K=128, 1 = Dense K=96 / Sparse K=192, 2 = Dense K=128 (3 and a
+   sparse 2 are errors in tcIdescOk) */
+val tcMxf4KF : int -> int
+function tcMxf4KF(i) = 2 * land_int(asr_int(i, 3), 1) + land_int(asr_int(i, 31), 1)
+
 val tcK : (list(string), int) -> int
 function tcK(m, i) =
   if has(m, "kind::mxf8f6f4") then (if land_int(asr_int(i, 31), 1) == 1 then 64 else 32)
-  else if has(m, "kind::mxf4") | has(m, "kind::mxf4nvf4") then (if land_int(asr_int(i, 3), 1) == 1 then 128 else if land_int(asr_int(i, 31), 1) == 1 then 96 else 64)
+  else if has(m, "kind::mxf4") | has(m, "kind::mxf4nvf4") then (match tcMxf4KF(i) { 0 => 64, 1 => 96, _ => 128 })
   else if has(m, "kind::tf32") then 8
   else if has(m, "kind::i8") then 32
   else if has(m, "kind::ti16") then 16
@@ -303,6 +309,10 @@ function tcSub(t) = t.k == "e2m1" | t.k == "e2m3" | t.k == "e3m2"
 val tcNb : ty -> int
 function tcNb(t) = if t.k == "e2m1" then 4 else 6
 
+/* element (r, kk) of a shared-memory A / B tile; k is the Dense-K dimension, the K field of the instruction descriptor
+   (Dense K / Sparse 2K), for both A and B: "The 4-bit and 6-bit floating point elements in shared memory must be
+   contiguously packed and based on the Dense-K dimension, padding may be needed: 32 Yes, 64 No" (PTX ISA 9.4
+   9.7.18.10.4.4); so the B of a sparse K = 64 instruction (64 elements per row) is padded as the compressed A */
 val tcSE : (int, int, bool, ty, int, int, int) -> int
 function tcSE(sp, d, km, t, r, kk, k) = {
   if km & tcSub(t) then {
@@ -329,7 +339,20 @@ function tcTi16(t, v) = {
 val tcNeg : (ty, int, int) -> int
 function tcNeg(t, sg, v) = if t.k == "s" & t.w == 16 then (if sg < 0 then trunc(negate(sext(v, 16)), 16) else v) else wgNeg(t, sg, v)
 
-/* A (M x K) into SP_MA: from shared memory (descriptor) or tensor memory */
+/* FP6 A in tensor memory with Dense K = 64 (PTX ISA 9.4 9.7.18.10.4.3, Table 68): 6-bit containers (Figures 205, 206:
+   the element in bits 0-5, as the model's 8-bit container of Figures 203, 204 without its 2 zero bits) "must be
+   contiguously packed in a 32-bit Tensor Memory word": element kk of row r at bits 6 kk .. 6 kk + 5 of the row's
+   columns read as one bit string (column c + 6 kk / 32, bit 6 kk % 32; an element may straddle two columns, as the
+   unpadded shared-memory form straddles bytes, Figure 209); 64 elements fill 12 columns */
+val tcTm6 : (int, int, int, int) -> int
+function tcTm6(tm, r, c, kk) = {
+  let bp = 6 * kk;
+  let lo = land_int(tcWord(tm, tcKey(r, c + tdiv_int(bp, 32))), 4294967295);
+  let hi = if fmod_int(bp, 32) + 6 > 32 then shl_int(land_int(tcWord(tm, tcKey(r, c + tdiv_int(bp, 32) + 1)), 4294967295), 32) else 0;
+  land_int(asr_int(lor_int(lo, hi), fmod_int(bp, 32)), 63)
+}
+
+/* A (M x K) into SP_MA: from shared memory (descriptor) or tensor memory (8-bit cells, FP6 at Dense K = 64 6-bit) */
 val tcTileA : (bool, int, int, int, ty, int, bool, int, int) -> unit
 function tcTileA(desc, v, tm, sp, t, sg, km, m, k) = {
   smap_clear(SP_MA);
@@ -337,6 +360,7 @@ function tcTileA(desc, v, tm, sp, t, sg, km, m, k) = {
     foreach (kk from 0 to (k - 1))
       mset(SP_MA, rc(r, kk), tcNeg(t, sg, tcTi16(t,
         if desc then tcSE(sp, v, km, t, r, kk, k)
+        else if tcSub(t) & tcNb(t) == 6 & k == 64 then tcTm6(tm, r, tcCol(v), kk)
         else land_int(asr_int(tcWord(tm, tcKey(r, tcCol(v) + tdiv_int(kk * ew(t), 32))), fmod_int(kk * ew(t), 32)), mask(ew(t))))))
 }
 
@@ -373,14 +397,15 @@ function tcLutE(tm, sp, d, lc, n, kk) = {
   land_int(asr_int(tcWord(tm, tcKey(tdiv_int(n, 8), lc + tdiv_int(j, 4))), 8 * fmod_int(j, 4)), 255)
 }
 
-/* B (K x N) into SP_MB at column offset co; lut >= 0: the lookup-table column of .decompress::lut::b */
-val tcTileB : (int, int, int, ty, int, bool, int, int, int, int, int, int, int) -> unit
-function tcTileB(tm, v, sp, t, sg, km, n, k, sh, z, md, co, lut) =
+/* B (K x N) into SP_MB at column offset co; dk: the Dense-K dimension (tcSE); lut >= 0: the lookup-table column of
+   .decompress::lut::b */
+val tcTileB : (int, int, int, ty, int, bool, int, int, int, int, int, int, int, int) -> unit
+function tcTileB(tm, v, sp, t, sg, km, n, k, dk, sh, z, md, co, lut) =
   foreach (nn from 0 to (n - 1))
     foreach (kk from 0 to (k - 1))
       mset(SP_MB, rc(kk, nn + co),
            if tcZero(z, md, n, nn) then 0
-           else tcNeg(t, sg, if lut >= 0 then tcLutE(tm, sp, v, lut, nn + sh, kk) else tcTi16(t, tcSE(sp, v, km, t, nn + sh, kk, k))))
+           else tcNeg(t, sg, if lut >= 0 then tcLutE(tm, sp, v, lut, nn + sh, kk) else tcTi16(t, tcSE(sp, v, km, t, nn + sh, kk, dk))))
 
 /* the D accumulator input, scaled by 2^-s, into SP_MC */
 val tcTileD : (int, ty, int, int, int, int) -> unit
@@ -452,11 +477,19 @@ function tcAshift() = {
   }
 }
 
+/* the sparsity of .kind::mxf4 / .kind::mxf4nvf4 by the SparsityVersion field, bit 12 (PTX ISA 9.4 9.7.18.10.9.3,
+   Table 55): v0 pair-wise 4:8 (the 4-bit chunking of spCw / spNz / spPos); v1 2:4, "The metadata format and valid index
+   values are the same as for .kind::mxf8f6f4" (Figure 286): the chunking of the 8-bit kinds, given here as the type .b8
+   (the type of a sparse expansion only fixes the chunk geometry and the metadata layout; the values stay e2m1) */
+val tcSpTy : (list(string), int, ty) -> ty
+function tcSpTy(m, id, t) =
+  if (has(m, "kind::mxf4") | has(m, "kind::mxf4nvf4")) & land_int(asr_int(id, 12), 1) == 1 then mkty("b", 8) else t
+
 val tcAMat : (list(string), int, int, bool, int, int, int) -> unit
 function tcAMat(m, tm, sp, ad, av, id, meta) = {
   let at_ = tcAT(m, id);
   tcTileA(ad, av, tm, sp, at_, if land_int(asr_int(id, 13), 1) == 1 then -1 else 1, land_int(asr_int(id, 15), 1) == 0, tcMD(m, id), tcK(m, id));
-  if meta >= 0 then tcSpExp(tm, at_, tcMD(m, id), tcK(m, id), meta, land_int(id, 3));
+  if meta >= 0 then tcSpExp(tm, tcSpTy(m, id, at_), tcMD(m, id), tcK(m, id), meta, land_int(id, 3));
   if has(m, "ashift") then tcAshift()
 }
 
@@ -547,6 +580,56 @@ function tcLutOk(m, id, lut) = {
   not_bool(stuck)
 }
 
+/* the "sm_107f or higher in the same family" targets (sm_107f, sm_107a); no .target: not known */
+val tc107f : unit -> bool
+function tc107f() = isasm <= 0 | ((isaarch == "a" | isaarch == "f") & isasm >= 107 & isasm < 110)
+
+/* instruction-descriptor rules of both tcgen05.mma forms (PTX ISA 9.4); ad: A in shared memory; meta >= 0: .sp.
+   - "if K can be uniquely determined as per the Table 50, then the instruction descriptor bit corresponding to K must be
+     set to 0" (9.7.18.2.2): bit 29 of .kind::tf32 / .kind::f16 / .kind::i8 (Table 53: the only value is 0), under
+     .isacheck (the model ignores the bit; .kind::ti16 in tcTi16Idesc).  The 2-bit K field of .kind::mxf4 /
+     .kind::mxf4nvf4 (Table 55) has no value 3, and its value 2 is "Dense K=128" only: errors
+   - .kind::f8f6f4 "For K = 64, only .e4m3 and .e5m2 are supported" (9.7.18.2.1, Table 50), under .isacheck
+   - transpose (9.7.18.10.1 Table 64, 9.7.18.10.10.1), under .isacheck: .kind::mxf4 / .kind::mxf4nvf4 "No";
+     .kind::f8f6f4 / .kind::mxf8f6f4 "No for element types E3M2, E2M3 and E2M1 for Dense matrix with K = 64" and "with
+     dense K=64 and sparse K=128, matrix A in shared memory can be transposed only for formats E5M2 and E4M3"
+   - FP4 A of .kind::mxf8f6f4 in tensor memory: Table 68 (9.7.18.10.4.3) gives FP4 the 8-bit container with Dense K 32
+     only; Dense K 64 under .isacheck (the default mode reads the 8-bit containers)
+   - bit 26 (128-lane scale_A layout) "is valid for sm_107f or higher in the same family" (9.7.18.4.2.1), under .isacheck
+   - "Bit 12 of the instruction descriptor (SparsityVersion) must be set to v0 for sm_100a, sm_103a, sm_110a and to v1
+     for sm_107a. Using the wrong SparsityVersion results in undefined behavior" (9.7.18.10.9.3): tcgen05.mma.sp of
+     .kind::mxf4 / .kind::mxf4nvf4 under .ub strict against the .target (the bit only has a meaning with .sp)
+   Returns false when the instruction cannot run */
+val tcIdescOk : (list(string), int, bool, int) -> bool
+function tcIdescOk(m, id, ad, meta) = {
+  let mx4 = has(m, "kind::mxf4") | has(m, "kind::mxf4nvf4");
+  let f864 = (has(m, "kind::f8f6f4") | has(m, "kind::mxf8f6f4")) & tcK(m, id) == 64;
+  let at_ = tcAT(m, id);
+  let bt = tcBT(m, id);
+  let trA = land_int(asr_int(id, 15), 1) == 1;
+  let trB = land_int(asr_int(id, 16), 1) == 1;
+  let v1 = land_int(asr_int(id, 12), 1) == 1;
+  if mx4 & tcMxf4KF(id) == 3 then
+    fault("tcgen05.mma: K Dimension value 3 of .kind::mxf4 / .kind::mxf4nvf4 is not defined [PTX ISA 9.4 9.7.18.4.2]", id)
+  else if mx4 & tcMxf4KF(id) == 2 & meta >= 0 then
+    fault("tcgen05.mma.sp: K Dimension value 2 (Dense K=128) of .kind::mxf4 / .kind::mxf4nvf4 has no sparse form [PTX ISA 9.4 9.7.18.4.2]", id)
+  else if isachk & (has(m, "kind::tf32") | has(m, "kind::f16") | has(m, "kind::i8")) & land_int(asr_int(id, 29), 1) == 1 then
+    fault("tcgen05.mma: K is unique for .kind::tf32 / .kind::f16 / .kind::i8, so the K Dimension bit 29 must be 0 [PTX ISA 9.4 9.7.18.2.2]", id)
+  else if isachk & has(m, "kind::f8f6f4") & tcK(m, id) == 64 & (tcSub(at_) | tcSub(bt)) then
+    fault("tcgen05.mma.kind::f8f6f4: for K = 64 only .e4m3 and .e5m2 are supported [PTX ISA 9.4 9.7.18.2.1]", id)
+  else if isachk & mx4 & (trA | trB) then
+    fault("tcgen05.mma: .kind::mxf4 / .kind::mxf4nvf4 do not support transpose [PTX ISA 9.4 9.7.18.10.1]", id)
+  else if isachk & f864 & ((trA & tcSub(at_) & (meta < 0 | ad)) | (trB & tcSub(bt) & meta < 0)) then
+    fault("tcgen05.mma: with dense K = 64 / sparse K = 128 a transposed matrix must be E4M3 or E5M2 [PTX ISA 9.4 9.7.18.10.1]", id)
+  else if isachk & has(m, "kind::mxf8f6f4") & not_bool(ad) & at_.k == "e2m1" & tcK(m, id) == 64 then
+    fault("tcgen05.mma.kind::mxf8f6f4: FP4 matrix A in Tensor Memory has no container with Dense K = 64 [PTX ISA 9.4 9.7.18.10.4.3]", id)
+  else if isachk & isMxK(m) & land_int(asr_int(id, 26), 1) == 1 & not_bool(tc107f()) then
+    fault("tcgen05.mma: the 128-lane scale factor A layout (idesc bit 26) requires sm_107f or higher in the same family [PTX ISA 9.4 9.7.18.4.2.1]", isasm)
+  else if ub & mx4 & meta >= 0 & ((v1 & (isasm == 100 | isasm == 103 | isasm == 110)) | (not_bool(v1) & isasm == 107)) then
+    fault("tcgen05.mma.sp: the SparsityVersion (idesc bit 12) does not match the target (v0 for sm_100a, sm_103a, sm_110a, v1 for sm_107a) [PTX ISA 9.4 9.7.18.10.9.3]", isasm);
+  not_bool(stuck)
+}
+
 val tc_mma : (list(string), bool, int, int, int, int, int, int, list(xop)) -> unit
 function tc_mma(m, ad, av, bv, id, da, meta, lut, rest) = {
   let c = cur_cta();
@@ -559,13 +642,14 @@ function tc_mma(m, ad, av, bv, id, da, meta, lut, rest) = {
     fault("tcgen05.mma: scale-input-d is only valid for .kind::tf32 and .kind::f16 [PTX ISA 9.4 9.7.18.10.10.1]", 0)
   else if isachk & tcTi16Idesc(m, id) then
     fault("tcgen05.mma.kind::ti16: the instruction descriptor needs dtype S32 = 2, atype / btype S1Z4M11 = 3, Saturate 0 (NA) and K Dimension 0 (NA) [PTX ISA 9.4 9.7.18.4.2]", id);
-  if stuck | not_bool(tcLutOk(m, id, lut)) then return ();
+  if stuck then return ();
+  if not_bool(tcIdescOk(m, id, ad, meta)) | not_bool(tcLutOk(m, id, lut)) then return ();
   if not_bool(has(m, "cta_group::2")) then {
     let tm = tcSpace(c, "tm");
     let sp = c_smem[cchk(c)];
     let z = tcZm(m, rest);
     smap_clear(SP_MB);
-    tcTileB(tm, bv, sp, tcBT(m, id), tcSgB(id), tcKmB(id), tcN(id), tcKS(m, id, meta), tcShiftZ(z), z, tcMD(m, id), 0, lut);
+    tcTileB(tm, bv, sp, tcBT(m, id), tcSgB(id), tcKmB(id), tcN(id), tcKS(m, id, meta), tcK(m, id), tcShiftZ(z), z, tcMD(m, id), 0, lut);
     tcMmaB(m, tm, sp, ad, av, id, da, tcEn(rest), if has(m, "ws") then 0 else tcSc(rest), tcMk(rest), meta)
   } else match tcPeer() {
     Some(pt) => {
@@ -581,8 +665,8 @@ function tc_mma(m, ad, av, bv, id, da, meta, lut, rest) = {
       foreach (j from 0 to 1) {
         let cc = if j == 0 then c else pt;
         smap_clear(SP_MB);
-        tcTileB(0, bv, se, tcBT(m, id), tcSgB(id), tcKmB(id), n2, tcKS(m, hid, meta), 0, -1, tcMD(m, hid), 0, -1);
-        tcTileB(0, bv, so, tcBT(m, id), tcSgB(id), tcKmB(id), n2, tcKS(m, hid, meta), 0, -1, tcMD(m, hid), n2, -1);
+        tcTileB(0, bv, se, tcBT(m, id), tcSgB(id), tcKmB(id), n2, tcKS(m, hid, meta), tcK(m, id), 0, -1, tcMD(m, hid), 0, -1);
+        tcTileB(0, bv, so, tcBT(m, id), tcSgB(id), tcKmB(id), n2, tcKS(m, hid, meta), tcK(m, id), 0, -1, tcMD(m, hid), n2, -1);
         tcMmaB(m, tcSpace(cc, "tm"), c_smem[cchk(cc)], ad, av, hid, da, en, s, 0, meta)
       }
     },
@@ -614,10 +698,6 @@ function tcScaleF(st, x) = match st {
 val tcScaleTy : (list(string), int) -> int
 function tcScaleTy(m, id) = if has(m, "kind::mxf4nvf4") | has(m, "kind::mxf4") then land_int(asr_int(id, 23), 3) else 1
 
-/* the "sm_107f or higher in the same family" targets (sm_107f, sm_107a); no .target: not known */
-val tc107f : unit -> bool
-function tc107f() = isasm <= 0 | ((isaarch == "a" | isaarch == "f") & isasm >= 107 & isasm < 110)
-
 /* scale type rules (PTX ISA 9.4 9.7.18.10.7.1, Table 71): .kind::mxf8f6f4 and .kind::mxf4 take UE8M0 only (under
    .isacheck; Table 55 also gives .kind::mxf4 the 2-bit field, whose UE4M3 / UE5M3 values the default mode honours);
    .kind::mxf4nvf4 takes UE8M0, UE4M3 or UE5M3 with every .scale_vectorsize; 3 is no scale type (error).  "Support for
@@ -638,15 +718,19 @@ function tcScaleOk(m, id) = {
 
 /* scale factor byte b (= SF ID + j) of row / column x of an M x SF or SF x N scale matrix at column x0
    (ISA 9.7.17.10.7, Figures 231-258): lane x % 32, column x0 + x / 32, byte b % 4; bytes 4.. of the K = 96 forms
-   (3 or 6 factors) are in the next group of columns, 4 columns on (8 when N > 128) */
-val tcSF : (int, int, int, int, int) -> int
-function tcSF(tm, x0, b, x, dim) =
-  land_int(asr_int(tcWord(tm, tcKey(fmod_int(x, 32), x0 + tdiv_int(b, 4) * (if dim > 128 then 8 else 4) + tdiv_int(x, 32))),
+   (3 or 6 factors) are in the next group of columns, 4 columns on (8 when N > 128).  l128: the 128-lane layout of
+   scale_A, idesc bit 26 "Matrix A Scale Factor Layout: 32 Lane = 0, 128 Lane = 1" (PTX ISA 9.4 9.7.18.4.2, Tables 54,
+   55; 9.7.18.10.7.3-.8, Figures 238, 240, 242, 247-250, 253, 254, 256): row x in lane x ("Lane i + subp * 32" holds
+   "M[i + subp * 32]"), byte b % 4 of column x0 + b / 4 (the K = 96 / 128 bytes 4.. in column X + 1) */
+val tcSF : (int, int, int, int, int, bool) -> int
+function tcSF(tm, x0, b, x, dim, l128) =
+  land_int(asr_int(tcWord(tm, if l128 then tcKey(x, x0 + tdiv_int(b, 4))
+                              else tcKey(fmod_int(x, 32), x0 + tdiv_int(b, 4) * (if dim > 128 then 8 else 4) + tdiv_int(x, 32))),
                    8 * fmod_int(b, 4)), 255)
 
 val tc_mmabs : (list(string), bool, int, int, int, int, bool, int, int, int, int) -> unit
 function tc_mmabs(m, ad, av, bv, id, da, en, sac, sbc, meta, lut) = {
-  if not_bool(tcScaleOk(m, id)) | not_bool(tcLutOk(m, id, lut)) then return ();
+  if not_bool(tcIdescOk(m, id, ad, meta)) | not_bool(tcScaleOk(m, id)) | not_bool(tcLutOk(m, id, lut)) then return ();
   let c = cur_cta();
   let tm = tcSpace(c, "tm");
   let sp = c_smem[cchk(c)];
@@ -660,16 +744,16 @@ function tc_mmabs(m, ad, av, bv, id, da, en, sac, sbc, meta, lut) = {
   let st = tcScaleTy(m, id);
   tcAMat(m, tm, sp, ad, av, id, meta);
   smap_clear(SP_MB);
-  tcTileB(tm, bv, sp, bt, tcSgB(id), tcKmB(id), n, ks, 0, -1, md, 0, lut);
+  tcTileB(tm, bv, sp, bt, tcSgB(id), tcKmB(id), n, ks, tcK(m, id), 0, -1, md, 0, lut);
   if en then tcTileD(tm, mkty("f", 32), tcCol(da), md, n, 0) else smap_clear(SP_MC);
   smap_clear(SP_SA);
   smap_clear(SP_SB);
   let ida = land_int(asr_int(id, 29), 3);
   let idb = land_int(asr_int(id, 4), 3);
   foreach (r from 0 to (md - 1))
-    foreach (j from 0 to (nb - 1)) mset(SP_SA, rc(r, j), tcSF(tm, sac, ida + j, r, md));
+    foreach (j from 0 to (nb - 1)) mset(SP_SA, rc(r, j), tcSF(tm, sac, ida + j, r, md, land_int(asr_int(id, 26), 1) == 1));
   foreach (nn from 0 to (n - 1))
-    foreach (j from 0 to (nb - 1)) mset(SP_SB, rc(j, nn), tcSF(tm, sbc, idb + j, nn, n));
+    foreach (j from 0 to (nb - 1)) mset(SP_SB, rc(j, nn), tcSF(tm, sbc, idb + j, nn, n, false));
   smap_clear(SP_MD);
   foreach (r from 0 to (md - 1))
     foreach (cc from 0 to (n - 1)) {

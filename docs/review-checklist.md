@@ -553,3 +553,46 @@ is recorded in the list under "Second review pass".  The legality table is gener
       modifiers(no default)"; the `.isacheck` report stays (no meaning without a default) -- spec inconsistency
 - [x] multicast mbarrier expect_tx / complete_tx / arrive / arrive_drop skipped an uninitialised object of ctaMask
       silently; reported under `.ub strict` like the local forms
+- [x] tcgen05.mma.sp `.kind::mxf4` / `.kind::mxf4nvf4` SparsityVersion (9.4 §9.7.18.10.9.3, Table 55 bit 12, Figures
+      285, 286): bit 12 was ignored (always pair-wise 4:8).  v1 (bit 12 = 1) is now 2:4 with "The metadata format and
+      valid index values ... the same as for .kind::mxf8f6f4" (`tcSpTy`: the chunking and metadata layout of the 8-bit
+      kinds; K = 128 has 32 nibbles, row r in lane r, four columns, as the model's mxf8f6f4 sparse K = 128).  "Bit 12 ...
+      must be set to v0 for sm_100a, sm_103a, sm_110a and to v1 for sm_107a. Using the wrong SparsityVersion results in
+      undefined behavior": under `.ub strict` against the `.target`, for `.sp` only (the bit names the sparsity, although
+      the §9.7.18.4.2.1 note is not restricted to `.sp`) (tests/tc-94b-0.ptx v1, tc-94b-1.ptx v0, the first sparse
+      `.kind::mxf4*` tests; tests/neg/tc-94b-ub-spver.ptx)
+- [x] tcgen05.mma idesc bit 26 "Matrix A Scale Factor Layout: 32 Lane = 0, 128 Lane = 1" (9.4 Tables 54, 55) was
+      ignored.  §9.7.18.10.7.3-.8 and Figures 238, 240, 242, 247-250, 253, 254, 256 determine the 128-lane layout: row x of
+      scale_A in lane x ("Lane i+subp*32" holds "M[i+subp*32]"), byte SFA_ID + j in column X + (SFA_ID + j) / 4, byte
+      (SFA_ID + j) % 4 (the K = 96 / 128 bytes 4.. in column X + 1) (`tcSF`).  "valid for sm_107f or higher in the same
+      family" (§9.7.18.4.2.1) under `.isacheck` (tests/tc-94b-2.ptx K = 96 SFA_ID 2, tc-94b-3.ptx K = 128 `.block16`,
+      tc-94b-4.ptx `.kind::mxf8f6f4` SFA_ID 3; tests/neg/isa-tc-94b-sfa128-target.ptx)
+- [x] FP6 A of `.kind::mxf8f6f4` in Tensor Memory with Dense K = 64 (9.4 §9.7.18.10.4.3, Table 68: "6-bits" container,
+      "contiguously packed in a 32-bit Tensor Memory word"; Figures 205, 206: one element in bits 0-5) was read as 8-bit
+      cells; now element k of a row is bits 6k .. 6k + 5 of the row's columns read as one bit string (an element may
+      straddle two columns, as the unpadded shared-memory form straddles bytes, Figure 209; 64 elements fill 12
+      columns) (`tcTm6`; tests/tc-94b-5.ptx E3M2, tc-94b-6.ptx E2M3).  Interpretation: the figures show only one
+      container, not how 6-bit containers cross a 32-bit word.  FP4 A in Tensor Memory with Dense K = 64 (Table 68 lists
+      FP4 with Dense K 32 only) under `.isacheck` (the default mode keeps the 8-bit containers)
+      (tests/neg/isa-tc-94b-fp4-tmem.ptx); `.kind::f8f6f4` "For K = 64, only .e4m3 and .e5m2 are supported" (Table 50)
+      under `.isacheck` (tests/neg/isa-tc-94b-f8f6f4-k64.ptx)
+- [x] idesc K field (9.4 §9.7.18.2.2 "if K can be uniquely determined as per the Table 50, then the instruction descriptor
+      bit corresponding to K must be set to 0"): bit 29 = 1 of `.kind::tf32` / `.kind::f16` / `.kind::i8` (Table 53: value
+      0 only) under `.isacheck`, the default mode ignores it (tests/neg/isa-tc-94b-k29.ptx).  The 2-bit field of
+      `.kind::mxf4` / `.kind::mxf4nvf4` (Table 55, bit 3 upper, bit 31 lower) is read as a value (`tcMxf4KF`; 3 was read
+      as K = 128); 3, and 2 ("Dense K=128") with `.sp`, have no meaning: errors (tests/neg/tc-94b-mxf4-k3.ptx,
+      tc-94b-mxf4-sp-k2.ptx).  Gap: the §9.7.18.2.1.1 note "K = 128 for Dense matrix and K = 192 for Sparse matrix"
+      pairs dense K = 128 with sparse K = 192 while Table 55 pairs sparse K = 192 with dense K = 96 (the model follows
+      Table 55); the "valid for sm_107f" target notes of bits 29 / 31 / 3 are not checked
+- [x] transpose (9.4 §9.7.18.10.1 Table 64, §9.7.18.10.10.1) under `.isacheck`: `.kind::mxf4` / `.kind::mxf4nvf4` "No";
+      `.kind::f8f6f4` / `.kind::mxf8f6f4` "No for element types E3M2, E2M3 and E2M1 for Dense matrix with K = 64" (A and
+      B) and "with dense K=64 and sparse K=128, matrix A in shared memory can be transposed only for formats E5M2 and
+      E4M3" (tests/neg/isa-tc-94b-mxf4-trans.ptx, isa-tc-94b-f864-trans.ptx).  The default mode keeps reading a
+      transposed sub-byte tile as 8-bit MN-major elements (Table 67 gives 4- / 6-bit types no transposed layout)
+- [x] shared-memory padding of FP4 / FP6 B of sparse `.kind::f8f6f4` / `.kind::mxf8f6f4` (9.4 §9.7.18.10.4.4): "based
+      on the Dense-K dimension, padding may be needed: 32 Yes, 64 No" is stated for "matrix A and B".  The Dense-K
+      dimension is the idesc K field ("(Dense K=32 / Sparse K=64) = 0"), which the model already used for the compressed
+      A; B used its own K extent (64 for sparse K = 64), so it was unpadded.  B is now padded when the Dense-K dimension
+      is 32 (`tcTileB` takes it separately) (tests/tc-94b-7.ptx sparse K = 64 with a padded E2M1 B, tc-94b-8.ptx sparse
+      K = 128 with an unpadded E2M3 B).  scripts/gen_tcgen05_94b.py generates tests/tc-94b-*.ptx and the `.ub strict`
+      negative test
