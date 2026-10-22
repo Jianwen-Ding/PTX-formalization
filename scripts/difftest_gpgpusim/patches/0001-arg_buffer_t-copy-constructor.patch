@@ -1,0 +1,16 @@
+--- a/src/cuda-sim/ptx_ir.h
++++ b/src/cuda-sim/ptx_ir.h
+@@ -1442,6 +1442,13 @@
+       : m_src_op(ctx) {
+     make_copy(another);
+   }
++  // difftest: deep copy.  The implicit copy constructor (used by
++  // std::list<arg_buffer_t>::push_back) shared m_param_value, which the
++  // destructor then freed twice on every call with .param arguments.
++  arg_buffer_t(const arg_buffer_t &another) : m_src_op(another.m_src_op) {
++    m_param_value = NULL;
++    make_copy(another);
++  }
+   void make_copy(const arg_buffer_t &another) {
+     m_dst = another.m_dst;
+     m_src_op = another.m_src_op;

@@ -43,7 +43,10 @@ function divApprox(fm, a, b) = {
 
 val bin : (string, list(string), ty, int, int) -> int
 function bin(op, m, t, a, b) = {
-  if isF(t) & is_some(nanPay(fw(t), [|a, b|])) & (op == "add" | op == "sub" | op == "mul" | op == "div") then
+  /* min / max .f64 of two NaNs ("z = NaN", 9.7.3.11 / .12) carry a payload like the other f64 operations; one NaN
+     operand gives the other operand, as for every type */
+  if isF(t) & is_some(nanPay(fw(t), [|a, b|])) & (op == "add" | op == "sub" | op == "mul" | op == "div"
+                                                  | ((op == "min" | op == "max") & isNaNB(a, 64) & isNaNB(b, 64))) then
     match nanPay(fw(t), [|a, b|]) { Some(v) => v, None() => 0 }
   else if isF(t) then {
     let fm = fmods_of(m);
