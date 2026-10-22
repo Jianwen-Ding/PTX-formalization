@@ -596,3 +596,112 @@ is recorded in the list under "Second review pass".  The legality table is gener
       is 32 (`tcTileB` takes it separately) (tests/tc-94b-7.ptx sparse K = 64 with a padded E2M1 B, tc-94b-8.ptx sparse
       K = 128 with an unpadded E2M3 B).  scripts/gen_tcgen05_94b.py generates tests/tc-94b-*.ptx and the `.ub strict`
       negative test
+
+## Memory model checked against NVIDIA's formal models
+
+`scripts/ptxmm.py` (the axiomatic checker of ISA 9.4 chapter 8) compared with NVIDIA's two published formal models,
+both BSD-3-Clause Alloy artifacts; `scripts/nvmm.py` (docstring: how to fetch and build them, how to run) holds the
+translators and the runner.  Only the allowed / forbidden verdict of each test's `exists` clause is compared (not the
+`racy` flag).  Memory: one Alloy instance at a time, `java -Xmx4g`; a full run takes about 8 minutes.
+
+- **ASPLOS'19** — github.com/NVlabs/ptxmemorymodel @ f0dc6b7 (Lustig, Sahasrabuddhe, Giroux, "A Formal Analysis of
+  the NVIDIA PTX Memory Consistency Model", written against PTX ISA 6.0): `ptx.als` run with the bundled
+  `alloy4.2.jar` and `RunAlloy`.  The Coq proofs (`make`) need Coq 8.4pl6, which is not installed, so only the Alloy
+  side was run; the README's empirical scoped-RC11 -> PTX mapping checks (`make src11_4`, bound 4) were run with
+  -Xmx4g: no counterexample for coherence, atomicity and sc (29 s, 2 s, 7 s).  The model has no values and no proxies; scopes are a free scope tree, so CTA / cluster /
+  GPU / system are all expressible, and it has bar.sync / bar.arrive and fence.acquire / fence.release.
+- **ISCA'22 mixed-proxy** — github.com/NVlabs/mixedproxy @ 0807da2 (Lustig, Cooksey, Giroux, "Mixed-Proxy Extensions
+  for the NVIDIA PTX Memory Consistency Model"): `alloy/ptx.als` with Alloy 5.1.0 (`make`) and its litmus front end
+  nvlitmus (`src/test_to_alloy.py`, needs `lark-parser`).  Its own suite (11 files, 128 template instances /
+  commands) all match their stated expectations.  Values, virtual aliases, surface / texture / constant proxies,
+  proxy and alias fences; scopes cta / gpu / sys only, `atom.add` only, `fence.sc` / `fence.acq_rel` only, no
+  barriers, no conditional instructions, zero-initialised memory, and the `red` rule of the front end is broken
+  (`atom(` is undefined in `litmus_parser.py`).
+
+Translation.  Repo -> mixedproxy: a `.test` file (threads `dD.bB.tT`, `.texref` / `.surfref` for `@proxy=texture` /
+`surface`, `physically aliases` for `alias`) through the unmodified front end; the `exists` clause is appended as an
+Alloy `run`, a final value `[x]==v` meaning "some coherence-maximal write of v" (ptxmm takes the last write of a
+linear extension), and data dependencies are added to `dep` (the front end leaves `dep` free, which would disable
+No-Thin-Air).  Repo -> ASPLOS: one Alloy module per set of executed instructions; the outcome becomes a disjunction of
+read-from / coherence-maximality constraints over all value assignments (constants, initial values, RMW results and
+an out-of-thin-air value 42) that satisfy `exists`; `dep` = data + control dependencies + rmw.  mixedproxy -> repo:
+one litmus test per template instance and permit / assert command (`exists` = the `== v` load filters and the
+condition, negated for assert), in tests/memmodel/nvidia/mixedproxy.litmus (`scripts/nvmm.py --write`); the NVIDIA
+verdict comes from the front end on the original instance.  The ASPLOS paper's litmus tests (Figures 5, 6, 8, 9a-d,
+12) are transcribed in tests/memmodel/nvidia/asplos2019.litmus; tests/memmodel/nvidia/differential.litmus adds 18
+shapes neither suite has (mixed-scope and cross-GPU fence.sc, fence.release / fence.acquire, release / acquire
+patterns 2, bar.arrive, barrier cumulativity, scoped CoRR, S, cluster atomics, IRIW split by GPU, volatile).
+
+Counts (after the fixes below; `scripts/nvmm.py`):
+
+| Direction | Tests | Translated | ptxmm = NVIDIA model | NVIDIA model = test's `expect` |
+|---|---|---|---|---|
+| tests/memmodel (57) -> mixedproxy | 57 | 45 | 42 | 42 |
+| tests/memmodel (57) -> ASPLOS | 57 | 44 | 43 | 43 |
+| asplos2019 + differential (27) -> mixedproxy | 27 | 20 | 20 | 20 |
+| asplos2019 + differential (27) -> ASPLOS | 27 | 27 | 27 | 27 |
+| mixedproxy suite (128) -> ptxmm | 128 | 128 | 127 | 128 (its own expectations) |
+| mixedproxy suite -> ASPLOS (no proxies) | 9 | 9 | 9 | 8 (not `Release_acquire_pattern`) |
+
+ptxmm matches the `expect` line of all 57 + 27 tests.  Before the fixes, the mixedproxy suite gave 99 / 128 (29
+disagreements: the 28 proxy instances and `Release_acquire_pattern`).  Not translated, repo -> mixedproxy:
+`atom.exch` / `.cas` (2), barriers (3), `.cluster` (2), the control dependency of LB-ctrl, the async proxy (4);
+repo -> ASPLOS: aliases and proxies (13).
+
+Disagreements and resolution:
+
+- [x] **ptxmm, proxy-preserved base causality order, case 2 ignored the address** (mixedproxy `MP_cta_synonym`:
+      `sust [c]` ... `suld [s]`, c and s surface references to two aliases of one location, nvlitmus permit, ptxmm
+      forbade).  9.4 §8.9.5 case 2: "X and Y are performed to the same address, using the same proxy, and by the same
+      thread block".  ptxmm bug: now same address and same proxy (and the same CTA unless generic).  Regression:
+      tests/memmodel/proxy.litmus CoWR-surface-alias.
+- [x] **ptxmm, proxy fences: no composition, any CTA** (28 instances of `CoWR`, `MP_cta`, `MP_gpu`,
+      `MP_cta_synonym`, `MP_gpu_synonym`, including the instance above).  ptxmm needed one fence covering both proxies anywhere on the base
+      causality path: `sust; fence.proxy.surface; fence.proxy.texture; tld` was allowed (nvlitmus: forbidden),
+      a writer-side `fence.proxy.surface` in another CTA ordered the reader's `suld` (nvlitmus: allowed), and
+      `fence.proxy.alias` ordered surface accesses.  Chapter 8 only defines the alias case (§8.9.5 case 3), and
+      §8.1 excludes textures and surfaces from the model; §9.7.15.4 (membar / fence) says a bi-directional proxy fence
+      orders the generic proxy and `.proxykind`, "take[s] effect within a single thread" and "composes with other
+      forms of synchronization".  Resolved by adopting the mixed-proxy formalization (`proxy_preserved_cause_base`):
+      X, a fence X-proxy -> generic in X's CTA, `fence.proxy.alias` if the addresses differ, a fence generic ->
+      Y-proxy in Y's CTA, Y, in that order on the base causality path (uni-directional `.tensormap::generic` only
+      generic -> tensormap).  The CTA (not the thread) is what NVIDIA's model uses, and is what the documented TMA
+      pattern (`fence.proxy.async` by the writers, `bar.sync`, one thread issues the bulk copy) needs.  Regressions:
+      proxy.litmus CoWR-surface-alias-fenced / -wrong-order, CoWR-surface-texture / -wrong-order,
+      MP-surface-fence-other-cta / -reader-cta, MP-async-fence-other-cta / -same-cta.
+- [x] **ptxmm, observation order skipped `red`** (found by the differential test MP-red-release-sequence: `st.release`,
+      a `red` of another thread, `ld.acquire` reading the red's value; both NVIDIA models forbid the stale data,
+      ptxmm allowed it).  §8.9.2: "For some atomic operation Z, W precedes Z and Z precedes R", and Table 20 makes
+      `red` an atomic operation; only the final R must be a read operation (ld / atom).  ptxmm bug: the chain now
+      runs through `red`; `red` still forms no acquire pattern.  Regression: mp.litmus MP-red-release-sequence (and
+      MP-atom-release-sequence).
+- [x] **ptxmm, barriers and CTA identity** (differential test MP-bar-cross-cluster, ASPLOS: allowed, ptxmm:
+      forbidden).  The litmus format numbers CTAs within a cluster (`includes`), but `bar.sync` matching and the
+      same-block proxy rule compared only `cta=` (and `gpu=`).  ptxmm bug: both use `same_cta` now.  Regression:
+      bar.litmus MP-bar-cross-cluster.
+- [x] **mixedproxy: fences never synchronize through release / acquire patterns** (repo MP-fences-sys,
+      MP-acquire-fence, MP-atom; mixedproxy's own `Release_acquire_pattern`, which expects permit; minimised to
+      MP-relfence-only / MP-acqfence-only: one fence.acq_rel on either side suffices).  `strong_r` is
+      `symmetric[scope.~scopes] & proxy.~proxy` and a Fence has no `proxy` field, so `strong[...]` drops every
+      release / acquire pattern headed or ended by a fence.  §8.8 patterns 3 and the §8.10.6 MP litmus test ("these
+      fences are morally strong", outcome forbidden) contradict it; the ASPLOS model and ptxmm agree with the ISA.
+      NVIDIA-model defect, not changed in ptxmm.  `scripts/nvmm.py --mp-fence-fix` adds non-memory operations to
+      `strong_r` (one line): then repo -> mixedproxy agrees on 44 / 45, the suite on 128 / 128 (and
+      `Release_acquire_pattern` no longer meets its own `permit`).
+- [x] **ASPLOS (and mixedproxy once fixed): `red` forms an acquire pattern** (repo MP-red, the §8.11.1 litmus test:
+      ISA allowed, ASPLOS forbidden, mixedproxy with the fence fix forbidden; mixedproxy without it allows it only
+      because no fence synchronizes at all).  Both models represent `red` as an RMW ("an atom that does not return a
+      value", ASPLOS §3.2, from PTX 6.0) and their acquire pattern takes any read.  9.4 §8.8 ("this strong read does
+      not form an acquire pattern") and §8.11.1 are later spec text the models predate.  ptxmm is right.
+- [x] Translation faults found and fixed in scripts/nvmm.py on the way: a fresh register for `red`-as-atom clashed
+      with an existing `r1` sig; `#` in generated test names is a comment in the litmus format.
+
+Features of ptxmm not covered by either NVIDIA model: the async, tensormap (incl. uni-directional
+`fence.proxy.tensormap::generic`) and other non-surface/texture proxies; `.mmio`; `red` as distinct from `atom`
+(§8.11.1); `fence.proxy` with `.release` / `.acquire`; bar.red; non-zero initial values in mixedproxy (the ASPLOS
+translation handles them on the Python side); the `racy` report.  Covered by one model only: `.cluster` scope,
+barriers, control dependencies, `fence.acquire` / `fence.release`, `atom.exch` / `.cas` and other RMW operators
+(ASPLOS, where values are abstract); aliases and proxies (mixedproxy).  Neither model nor ptxmm covers mixed-size
+accesses, §8.6.1 strong cross-proxy accesses, asynchronous operations (§8.9.1.1), mbarrier, multimem, or CUDA API
+synchronization.  ptxmm still treats a failing `atom.cas` as a write of the old value (Table 20: a write only "if
+[it results] in a write"); no test here distinguishes the two.
