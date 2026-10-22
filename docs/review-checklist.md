@@ -316,6 +316,15 @@ Open:
 - [x] operand ranges under `.isacheck`: createpolicy fraction in (0.0, 1.0] (§9.7.9.19), tensormap.replace ord in
       [0..4] (§9.7.9.27), tcgen05.mma scale-input-d in [0, 15] and only with .kind::tf32 / .kind::f16
       (§9.7.17.10.9.1) (tests/neg/isa-createpolicy-fraction.ptx, isa-tensormap-ord.ptx); the existing uses pass
+- [x] tensor-copy restrictions (§9.7.9.26.5.1) under `.ub strict`: OOB-NaN fill with sub-byte types; for .b4x16_p64 /
+      .b6x16_p32 the first coordinate a multiple of 128, a 32B aligned global address and strides; 96B swizzle with 16B
+      atomicity only, Box-Size[0] <= 96B, no padded sub-byte types, no .im2col::w::128; 128B swizzle with 32B + 8B flip
+      only for copies into shared memory and not with .im2col::w modes; non-negative starting coordinates for
+      .global.shared::cta (tests/neg/tma-ub-*.ptx).  tests/tma-rep-sub14 / sub15 had 16 / 24-byte strides; their rows
+      are now 32 bytes apart (scripts/gen_tma_rep.py)
+- [ ] open: ".global.shared::cta ... The bounding box along the D, W and H dimensions must stay within the tensor
+      boundaries" names the im2col dimensions; tile-mode stores past the boundary keep their clipping (tests/tma.ptx);
+      "Box-Size[0] must be exactly 64B / 96B" for the padded types does not say in which layout the bytes are counted
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

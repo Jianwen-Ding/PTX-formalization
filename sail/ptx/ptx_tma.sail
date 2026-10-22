@@ -298,8 +298,41 @@ function xnovec(l) = match l { [||] => [||], x :: rest => if isVec(x) then xnove
 val tmInfo : list(xop) -> list(int)
 function tmInfo(l) = match l { [||] => [||], XV(v) :: _ => tmCoords(IV(v)), _ :: rest => tmInfo(rest) }
 
+/* the restrictions on tensor copies (9.7.9.26.5.1) that the tensor map and the coordinates decide, under .ub strict
+ * (codes of Table 33: element type 13 .b4x16, 14 .b4x16_p64, 15 .b6x16_p32 / .b6p2x16; swizzle 4 96B; atomicity 0 16B,
+ * 2 32B + 8B flip; fill 1 OOB-NaN) */
+val tmUb : (list(string), int, list(int), bool) -> bool
+function tmUb(m, b, cs, store) =
+  if not_bool(ub) then true
+  else {
+    let c = tmEtc(b);
+    let padded = c == 14 | c == 15;
+    let c0 : int = match cs { x :: _ => x, [||] => 0 };
+    var e : string =
+      if tmSub(b) & tmFillMode(b) == 1 then "OOB-NaN fill mode does not support the sub-byte types"
+      else if padded & tmod_int(c0, 128) != 0 then "the first coordinate must be a multiple of 128 for the padded sub-byte types"
+      else if padded & tmod_int(tmAddrOf(b), 32) != 0 then "the global address must be 32B aligned for the padded sub-byte types"
+      else if tmSwz(b) == 4 & tmAtom(b) != 0 then "the 96B swizzle mode needs .swizzle_atomicity 16B"
+      else if tmSwz(b) == 4 & padded then "the 96B swizzle mode does not support the padded sub-byte types"
+      else if tmSwz(b) == 4 & not_bool(tmSub(b)) & tmBox(b, 0) * tmEb(b) > 96 then "the 96B swizzle mode needs Box-Size[0] <= 96B"
+      else if tmSwz(b) == 4 & has(m, "im2col::w::128") then "the 96B swizzle mode does not support .im2col::w::128"
+      else if tmSwz(b) == 3 & tmAtom(b) == 2 & store then "128B swizzle with 32B atomicity and 8B flip only for copies into shared memory"
+      else if tmSwz(b) == 3 & tmAtom(b) == 2 & (has(m, "im2col::w") | has(m, "im2col::w::128")) then "128B swizzle with 32B atomicity and 8B flip does not support .im2col::w modes"
+      else "";
+    if padded then foreach (i from 1 to (tmRank(b) - 1)) if e == "" & tmod_int(tmStride(b, i), 32) != 0 then e = "tensor strides must be 32B aligned for the padded sub-byte types";
+    /* .global.shared::cta: "Starting co-ordinates for Bounding Box (tensorCoords) must be non-negative".  The second
+       rule, "The bounding box along the D, W and H dimensions must stay within the tensor boundaries", names the im2col
+       dimensions; tile-mode stores past the boundary keep the clipping of 5.5 */
+    if store & e == "" then {
+      var x = cs;
+      while is_cons(x) do { match x { v :: rest => { if e == "" & v < 0 then e = "the starting coordinates of a .global.shared::cta copy must be non-negative"; x = rest }, [||] => () } }
+    };
+    if e != "" then { fault(concat_str("cp.async.bulk.tensor: ", e), 0); false } else true
+  }
+
 val tm_load : (list(string), addr, int, list(int), addr, list(xop)) -> unit
 function tm_load(m, d, b, cs, mb, rest) = {
+  if not_bool(tmUb(m, b, cs, false)) then return ();
   let cl = has(m, "shared::cluster");
   let sp = if cl then "cluster" else "shared";
   let dsp = if cl then "shared_cluster" else "shared";
@@ -385,6 +418,7 @@ function tm_store(m, b, cs, s) = if has(m, "reduce") & isachk & not_bool(tmRedOk
     " is not a valid combination with the tensor-map element type (PTX ISA 9.3 9.7.9.26.5.3), element type")), tmEtc(b))
 else if has(m, "reduce") & (atomOp(m) == "inc" | atomOp(m) == "dec") & tmRedFloat(tmEtc(b)) then
   fault(concat_str("cp.reduce.async.bulk.tensor: .", concat_str(atomOp(m), " on a floating-point tensor-map element type")), tmEtc(b))
+else if not_bool(tmUb(m, b, cs, true)) then ()
 else {
   let base = locOff(ea(s, "shared"));
   let op = if has(m, "reduce") then atomOp(m) else "";
