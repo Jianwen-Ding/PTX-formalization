@@ -854,3 +854,7 @@ compiled.  Both simulators start from the Sail model's initial byte image of eac
       saturation, NaN not 0, 64-bit results truncated); `.sat` ignored on int->int `cvt`; `rcp/rsqrt.approx.f64` and
       `div.approx.f32` exact; f16x2 `cvt`/`fma` one half only; nested register scopes and `.weak` linking; not
       implemented: `red`, `addc/subc`, `rem.u16/.s16`, `setp` with a boolean operator, 64-bit `atom.and/or/xor/min/max`.
+- [x] (follow-up) min / max .f64 of two NaNs returned the canonical NaN; with "NaN payloads are supported for
+      double-precision instructions" (§9.7.3) they now return the first NaN operand, quieted, as add / mul / div do
+      (tests/minmax-f64-nan.ptx).  docs/prior-work.md described the default `activemask` as "every lane that has not
+      exited"; corrected to the lanes executing it together (actGroup), as the model and tests/activemask-div.ptx do
