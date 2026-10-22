@@ -310,6 +310,12 @@ function isaBadAlign(ops) =
   if isaOpCount(ops) != 3 then false
   else match isaImm(xop_nth(ops, 2)) { Some(v) => not_bool(isaPow2(v)) | v > 8388608, None() => false }
 
+val isaSyncAligned : (string, list(string)) -> bool
+function isaSyncAligned(b, m) =
+  isaAny([|b|], [|"ldmatrix", "stmatrix", "movmatrix", "mma", "wmma", "wgmma", "setmaxnreg", "elect"|])
+  | (b == "tensormap" & has(m, "cp_fenceproxy"))
+  | (b == "tcgen05" & isaAny(m, [|"alloc", "dealloc", "relinquish_alloc_permit", "ld", "st", "wait::ld", "wait::st"|]))
+
 val isaQual : (opcode, list(xop)) -> string
 function isaQual(o, ops) = {
   let m = o.mods;
@@ -342,6 +348,11 @@ function isaQual(o, ops) = {
   else if (b == "ld" | b == "st") & (has(m, "v8") | (has(m, "v4") & w == 64))
           & isaAny(m, [|"shared", "local", "param", "const", "shared::cta", "shared::cluster"|]) then
     concat_str(b, ": .v8, and .v4 with a 64-bit type, need the .global state space or generic addressing [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
+  /* "The mandatory .sync qualifier ..." / "The mandatory .aligned qualifier ..." (ldmatrix, stmatrix, movmatrix, mma,
+     wmma (.aligned from PTX ISA 6.3), wgmma, setmaxnreg, tensormap.cp_fenceproxy, tcgen05 alloc / dealloc /
+     relinquish_alloc_permit / ld / st / wait; elect: .sync) */
+  else if isaSyncAligned(b, m) & not_bool(has(m, "sync") & (has(m, "aligned") | (b == "wmma" & isaver < 63) | b == "elect")) then
+    concat_str(b, ": the mandatory .sync / .aligned qualifiers are missing [PTX ISA 9.3 9.7]")
   else if b == "mbarrier" & has(m, "multicast::cluster::32b") then
     "mbarrier: the .multicast::cluster::32b forms are not in PTX ISA 9.3 (9.7.14.16)"
   else if b == "mbarrier" & isaAny(m, [|"relaxed", "release", "acquire"|]) != isaAny(m, [|"cta", "cluster", "gpu", "sys"|]) then

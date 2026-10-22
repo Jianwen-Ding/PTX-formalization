@@ -325,6 +325,9 @@ Open:
 - [ ] open: ".global.shared::cta ... The bounding box along the D, W and H dimensions must stay within the tensor
       boundaries" names the im2col dimensions; tile-mode stores past the boundary keep their clipping (tests/tma.ptx);
       "Box-Size[0] must be exactly 64B / 96B" for the padded types does not say in which layout the bytes are counted
+- [x] mandatory `.sync` / `.aligned` qualifiers (ldmatrix, stmatrix, movmatrix, mma, wmma (.aligned from 6.3), wgmma,
+      setmaxnreg, tensormap.cp_fenceproxy, tcgen05 alloc / dealloc / relinquish / ld / st / wait, elect) under
+      `.isacheck` (tests/neg/isa-ldmatrix-sync.ptx); no report over tests/ and ZLUDA
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

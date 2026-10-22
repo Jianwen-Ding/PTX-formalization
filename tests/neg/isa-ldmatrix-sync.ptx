@@ -1,0 +1,14 @@
+// expect: ldmatrix: the mandatory .sync / .aligned qualifiers are missing
+// ldmatrix.sync.aligned (9.7.15.5.15: "The mandatory .sync qualifier ...", "The mandatory .aligned qualifier ..."),
+// reported under .isacheck
+.version 8.0
+.target sm_90
+.address_size 64
+.isacheck ;
+.visible .entry k()
+{
+    .reg .b32 %r; .shared .align 16 .b8 s[256];
+    ldmatrix.m8n8.x1.b16 {%r}, [s];
+    ret;
+}
+.launch k <<< 1, 32 >>> ();
