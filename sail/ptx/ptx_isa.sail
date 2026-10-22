@@ -1,6 +1,6 @@
 /* =============================================================================
  * The optional legality check (`.isacheck ;`) of a program against its .version / .target, following
- * the PTX ISA 9.3 specification: the module directives (11.1.1 .version, 11.1.2 .target) and the
+ * the PTX ISA 9.4 specification: the module directives (11.1.1 .version, 11.1.2 .target) and the
  * "PTX ISA Notes" / "Target ISA Notes" of every 9.7 instruction section, as rows generated from the
  * spec text by gen_isa_table.py into ptx_isa_table.sail (row format: see gen_isa_table.py).
  *
@@ -260,7 +260,7 @@ function isaMsg(alts, ver, sm, arch, sec) = {
     else if vneed >= 0 then concat_str("instruction needs PTX ISA ", isaVerStr(vneed))
     else if isaAnySpec(alts) then concat_str("instruction needs an architecture-specific or family-specific target: ", isaTgtList(alts))
     else concat_str("instruction needs target sm_", dec_str(isaPlainMin(alts)));
-  concat_str(m, concat_str(" [PTX ISA 9.3 ", concat_str(sec, "]")))
+  concat_str(m, concat_str(" [PTX ISA 9.4 ", concat_str(sec, "]")))
 }
 
 val isaAltsOk : (list(string), int, int, string) -> bool
@@ -328,82 +328,83 @@ function isaQual(o, ops) = {
   let hk : string = match o.tys { [|t|] => if (t.k == "f" & t.w == 16) | t.k == "f16x2" then "f16" else if t.k == "bf" | t.k == "bf16x2" then "bf16" else "", _ => "" };
   let hArith = hk != "" & isaAny([|b|], [|"add", "sub", "mul", "fma"|]);
   let dk : string = match o.tys { t :: _ => t.k, _ => "" };
-  if b == "cvt" & isaAny([|dk|], [|"e4m3x2", "e5m2x2", "e2m3x2", "e3m2x2", "e2m1x2", "s2f6x2", "e4m3x4", "e5m2x4", "e2m3x4", "e3m2x4", "e2m1x4"|])
-     & isaAny(m, [|"rz", "rm", "rp", "rna"|]) then
-    concat_str("cvt to .", concat_str(dk, " rounds only with .rn (or .rs for the x4 forms) [PTX ISA 9.3 9.7.9.21]"))
-  else if b == "cvt" & dk == "ue8m0x2" & isaAny(m, [|"rn", "rm", "rna"|]) then
-    "cvt to .ue8m0x2 rounds with .rz or .rp [PTX ISA 9.3 9.7.9.21]"
+  if b == "cvt" & isaAny([|dk|], [|"e4m3x2", "e5m2x2", "e2m3x2", "e3m2x2", "e2m1x2", "s2f6x2"|])
+     & isaAny(m, [|"rm", "rp", "rna", "rs"|]) then
+    concat_str("cvt to .", concat_str(dk, " rounds only with .rn or .rz (.frnd2) [PTX ISA 9.4 9.7.10.24]"))
+  else if b == "cvt" & isaAny([|dk|], [|"e4m3x4", "e5m2x4", "e2m3x4", "e3m2x4", "e2m1x4"|])
+     & isaAny(m, [|"rn", "rz", "rm", "rp", "rna"|]) then
+    concat_str("cvt to .", concat_str(dk, " rounds only with .rs [PTX ISA 9.4 9.7.10.24]"))
+  else if b == "cvt" & dk == "ue8m0x2" & isaAny(m, [|"rn", "rm", "rna", "rs"|]) then
+    "cvt to .ue8m0x2 rounds with .rz or .rp (.frnd3) [PTX ISA 9.4 9.7.10.24]"
+  else if b == "cvt" & dk == "ue5m3x2" & (isaAny(m, [|"rm", "rna", "rs"|]) | (has(m, "scaled::n1::ue8m0") & has(m, "rp"))) then
+    "cvt to .ue5m3x2 rounds with .rn, .rz or .rp, and with .rn or .rz when scaled (.frnd4 / .frnd2) [PTX ISA 9.4 9.7.10.24]"
   else if hArith & isaAny(m, [|"rz", "rm", "rp"|]) then
-    concat_str(b, " on .f16 / .bf16 values rounds only with .rn [PTX ISA 9.3 9.7.4]")
+    concat_str(b, " on .f16 / .bf16 values rounds only with .rn [PTX ISA 9.4 9.7.4]")
   else if hk == "bf16" & isaAny([|b|], [|"add", "sub", "mul", "fma", "min", "max"|]) & isaAny(m, [|"ftz", "sat"|]) then
-    concat_str(b, ": no .ftz / .sat form on .bf16 / .bf16x2 [PTX ISA 9.3 9.7.4]")
+    concat_str(b, ": no .ftz / .sat form on .bf16 / .bf16x2 [PTX ISA 9.4 9.7.4]")
   else if hk != "" & b == "fma" & has(m, "relu") & has(m, "sat") then
-    "fma: .relu and .sat are exclusive [PTX ISA 9.3 9.7.4.4]"
+    "fma: .relu and .sat are exclusive [PTX ISA 9.4 9.7.4.4]"
   else if hk != "" & b == "fma" & has(m, "oob") & isaAny(m, [|"ftz", "sat"|]) then
-    "fma.oob takes no .ftz / .sat [PTX ISA 9.3 9.7.4.4]"
+    "fma.oob takes no .ftz / .sat [PTX ISA 9.4 9.7.4.4]"
   else if hk != "" & b == "ex2" & (if hk == "bf16" then not_bool(has(m, "ftz")) else has(m, "ftz")) then
-    "ex2.approx: .ftz is required on .bf16 / .bf16x2 and not allowed on .f16 / .f16x2 [PTX ISA 9.3 9.7.4.10]"
+    "ex2.approx: .ftz is required on .bf16 / .bf16x2 and not allowed on .f16 / .f16x2 [PTX ISA 9.4 9.7.4.10]"
   else if (b == "ld" | b == "st") & has(m, "v8") & not_bool(w == 32 & isaAny([|match o.tys { t :: _ => t.k, _ => "" }|], [|"b", "s", "u", "f"|])) then
-    concat_str(b, ".v8 takes only .b32 / .s32 / .u32 / .f32 [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
+    concat_str(b, ".v8 takes only .b32 / .s32 / .u32 / .f32 [PTX ISA 9.4 9.7.10.8 / 9.7.10.11]")
   else if (b == "ld" | b == "st") & (has(m, "v8") | (has(m, "v4") & w == 64))
           & isaAny(m, [|"shared", "local", "param", "const", "shared::cta", "shared::cluster"|]) then
-    concat_str(b, ": .v8, and .v4 with a 64-bit type, need the .global state space or generic addressing [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
+    concat_str(b, ": .v8, and .v4 with a 64-bit type, need the .global state space or generic addressing [PTX ISA 9.4 9.7.10.8 / 9.7.10.11]")
   /* "The mandatory .sync qualifier ..." / "The mandatory .aligned qualifier ..." (ldmatrix, stmatrix, movmatrix, mma,
      wmma (.aligned from PTX ISA 6.3), wgmma, setmaxnreg, tensormap.cp_fenceproxy, tcgen05 alloc / dealloc /
      relinquish_alloc_permit / ld / st / wait; elect: .sync) */
   else if isaSyncAligned(b, m) & not_bool(has(m, "sync") & (has(m, "aligned") | (b == "wmma" & isaver < 63) | b == "elect")) then
-    concat_str(b, ": the mandatory .sync / .aligned qualifiers are missing [PTX ISA 9.3 9.7]")
-  else if b == "mbarrier" & has(m, "multicast::cluster::32b") then
-    "mbarrier: the .multicast::cluster::32b forms are not in PTX ISA 9.3 (9.7.14.16)"
+    concat_str(b, ": the mandatory .sync / .aligned qualifiers are missing [PTX ISA 9.4 9.7]")
   else if b == "mbarrier" & isaAny(m, [|"relaxed", "release", "acquire"|]) != isaAny(m, [|"cta", "cluster", "gpu", "sys"|]) then
-    "mbarrier: qualifiers .sem and .scope must be specified together [PTX ISA 9.3 9.7.14.16]"
+    "mbarrier: qualifiers .sem and .scope must be specified together [PTX ISA 9.4 9.7.15.16]"
   else if b == "mbarrier" & isaAny(m, [|"gpu", "sys"|]) then
-    "mbarrier: .scope is .cta or .cluster [PTX ISA 9.3 9.7.14.16]"
+    "mbarrier: .scope is .cta or .cluster [PTX ISA 9.4 9.7.15.16]"
   else if b == "mbarrier" & isaAny(m, [|"arrive", "arrive_drop"|]) & has(m, "acquire") then
-    "mbarrier.arrive: .sem is .release or .relaxed [PTX ISA 9.3 9.7.14.16.16]"
+    "mbarrier.arrive: .sem is .release or .relaxed [PTX ISA 9.4 9.7.15.16.16]"
   else if b == "mbarrier" & isaAny(m, [|"test_wait", "try_wait"|]) & has(m, "release") then
-    "mbarrier.test_wait / try_wait: .sem is .acquire or .relaxed [PTX ISA 9.3 9.7.14.16.19]"
+    "mbarrier.test_wait / try_wait: .sem is .acquire or .relaxed [PTX ISA 9.4 9.7.15.16.19]"
   else if b == "mbarrier" & isaAny(m, [|"expect_tx", "complete_tx"|]) & not_bool(isaAny(m, [|"arrive", "arrive_drop"|]))
           & isaAny(m, [|"release", "acquire"|]) then
-    "mbarrier.expect_tx / complete_tx: .sem is .relaxed [PTX ISA 9.3 9.7.14.16.14 / .15]"
+    "mbarrier.expect_tx / complete_tx: .sem is .relaxed [PTX ISA 9.4 9.7.15.16.14 / .15]"
   else if b == "mbarrier" & isaAny(m, [|"test_wait", "try_wait"|]) & has(m, "shared::cluster") then
-    "mbarrier.test_wait / try_wait: the state space is .shared::cta [PTX ISA 9.3 9.7.14.16.19]"
+    "mbarrier.test_wait / try_wait: the state space is .shared::cta [PTX ISA 9.4 9.7.15.16.19]"
   else if b == "mbarrier" & has(m, "noComplete") & isaAny(m, [|"relaxed", "acquire", "cluster"|]) then
-    "mbarrier.arrive.noComplete: only .release.cta [PTX ISA 9.3 9.7.14.16.16]"
+    "mbarrier.arrive.noComplete: only .release.cta [PTX ISA 9.4 9.7.15.16.16]"
   else if b == "mbarrier" & has(m, "check_layout") & not_bool(isaAny(m, [|"layout::v0", "layout::v1"|])) then
-    "mbarrier.check_layout: a .layout qualifier is required [PTX ISA 9.3 9.7.14.16.21]"
+    "mbarrier.check_layout: a .layout qualifier is required [PTX ISA 9.4 9.7.15.16.21]"
   else if b == "mbarrier" & has(m, "init") & isaBadImm(ops, 2, 1, 1, if has(m, "layout::v1") then 511 else 1048575, 1) then
-    "mbarrier.init: count outside the range of the layout [PTX ISA 9.3 9.7.14.16.12]"
+    "mbarrier.init: count outside the range of the layout [PTX ISA 9.4 9.7.15.16.12]"
   else if b == "mbarrier" & isaAny(m, [|"test_wait", "try_wait"|]) & has(m, "parity")
           & (isaBadImm(ops, 3, 2, 0, 1, 1) | isaBadImm(ops, 4, 2, 0, 1, 1) | isaBadImm(ops, 4, 3, 0, 1, 1) | isaBadImm(ops, 5, 3, 0, 1, 1)) then
-    "mbarrier.test_wait / try_wait.parity: the phase parity is 0 or 1 [PTX ISA 9.3 9.7.14.16.19]"
+    "mbarrier.test_wait / try_wait.parity: the phase parity is 0 or 1 [PTX ISA 9.4 9.7.15.16.19]"
   else if b == "tensormap" & has(m, "replace") & isaBadImm(ops, 3, 1, 0, 4, 1) then
-    "tensormap.replace: the only valid values for ord are [0..4] [PTX ISA 9.3 9.7.9.27]"
+    "tensormap.replace: the only valid values for ord are [0..4] [PTX ISA 9.4 9.7.10.29]"
   else if (b == "discard" | b == "applypriority") & isaBadImm(ops, 2, 1, 128, 128, 1) then
-    concat_str(b, if b == "discard" then ": the only supported size is 128 [PTX ISA 9.3 9.7.9.18]"
-                  else ": the only supported size is 128 [PTX ISA 9.3 9.7.9.17]")
-  else if b == "fabric" & (has(m, "try_atom") | has(m, "tensor")) then
-    "fabric: the .try_atom and .tensor forms are not in PTX ISA 9.3 (9.7.10.5 lists try_get / try_put / try_red / try_pullred / submit / wait)"
+    concat_str(b, if b == "discard" then ": the only supported size is 128 [PTX ISA 9.4 9.7.10.20]"
+                  else ": the only supported size is 128 [PTX ISA 9.4 9.7.10.17]")
   else if (b == "ld" | b == "st") & isaCount(m, [|"weak", "volatile", "relaxed", sem|]) > 1 then
-    concat_str(b, ": the .weak, .volatile, .relaxed and .acquire / .release qualifiers are mutually exclusive [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
+    concat_str(b, ": the .weak, .volatile, .relaxed and .acquire / .release qualifiers are mutually exclusive [PTX ISA 9.4 9.7.10.8 / 9.7.10.11]")
   else if (b == "ld" & has(m, "release")) | (b == "st" & has(m, "acquire")) then
-    concat_str(b, concat_str(": no .", concat_str(if b == "ld" then "release" else "acquire", " form [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")))
+    concat_str(b, concat_str(": no .", concat_str(if b == "ld" then "release" else "acquire", " form [PTX ISA 9.4 9.7.10.8 / 9.7.10.11]")))
   else if (b == "ld" | b == "st") & (has(m, "relaxed") | has(m, sem) | has(m, "volatile")) & cache then
-    concat_str(b, ": cache operations are not allowed with .relaxed, .acquire / .release or .volatile [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
+    concat_str(b, ": cache operations are not allowed with .relaxed, .acquire / .release or .volatile [PTX ISA 9.4 9.7.10.8 / 9.7.10.11]")
   else if (b == "ld" | b == "st") & (has(m, "relaxed") | has(m, sem)) & not_bool(scope) then
-    concat_str(b, ": .relaxed and .acquire / .release need a .scope [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
+    concat_str(b, ": .relaxed and .acquire / .release need a .scope [PTX ISA 9.4 9.7.10.8 / 9.7.10.11]")
   else if (b == "ld" | b == "st") & has(m, "mmio") & not_bool(has(m, "sys") & has(m, "relaxed")) then
-    concat_str(b, ": only .relaxed.sys is valid for .mmio [PTX ISA 9.3 9.7.9.8 / 9.7.9.11]")
+    concat_str(b, ": only .relaxed.sys is valid for .mmio [PTX ISA 9.4 9.7.10.8 / 9.7.10.11]")
   else if b == "fma" & fl & not_bool(isaAny(m, [|"rn", "rz", "rm", "rp"|])) then
-    "fma needs a rounding modifier [PTX ISA 9.3 9.7.3.6]"
+    "fma needs a rounding modifier [PTX ISA 9.4 9.7.3.6]"
   else if b == "mma" & has(m, "m8n8k4") & (match o.tys { [|dt, _, _, ct|] => ty_eq(ct, mkty("f", 32)) & not_bool(ty_eq(dt, mkty("f", 32))), _ => false }) then
-    "mma.m8n8k4: .dtype must be .f32 when .ctype is .f32 [PTX ISA 9.3 9.7.15.5.14]"
+    "mma.m8n8k4: .dtype must be .f32 when .ctype is .f32 [PTX ISA 9.4 9.7.16.5.14]"
   else if b == "setmaxnreg" & isaBadImm(ops, 1, 0, 24, 256, 8) then
-    "setmaxnreg: imm-reg-count must be 24 .. 256 and a multiple of 8 [PTX ISA 9.3 9.7.20.5]"
+    "setmaxnreg: imm-reg-count must be 24 .. 256 and a multiple of 8 [PTX ISA 9.4 9.7.21.5]"
   else if b == "pmevent" & not_bool(has(m, "mask")) & isaBadImm(ops, 1, 0, 0, 15, 1) then
-    "pmevent: the event number must be 0 .. 15 [PTX ISA 9.3 9.7.20.3]"
+    "pmevent: the event number must be 0 .. 15 [PTX ISA 9.4 9.7.21.3]"
   else if b == "alloca" & isaBadAlign(ops) then
-    "alloca: immAlign must be a power of 2 not above 2^23 [PTX ISA 9.3 9.7.18.3]"
+    "alloca: immAlign must be a power of 2 not above 2^23 [PTX ISA 9.4 9.7.19.3]"
   else ""
 }
 
@@ -425,10 +426,10 @@ val isaModule : unit -> string
 function isaModule() = {
   let t = concat_str("sm_", concat_str(dec_str(isasm), isaarch));
   let tv = isaTargetVer(t);
-  if isaver <= 0 then "a PTX module must begin with a .version directive [PTX ISA 9.3 11.1.1]"
-  else if isasm <= 0 then "a PTX module must have a .target directive with an sm_ target architecture [PTX ISA 9.3 11.1.2]"
-  else if tv < 0 then concat_str("unknown target architecture ", concat_str(t, " [PTX ISA 9.3 11.1.2]"))
-  else if tv > isaver then concat_str("target ", concat_str(t, concat_str(" needs PTX ISA ", concat_str(isaVerStr(tv), " [PTX ISA 9.3 11.1.2]"))))
+  if isaver <= 0 then "a PTX module must begin with a .version directive [PTX ISA 9.4 11.1.1]"
+  else if isasm <= 0 then "a PTX module must have a .target directive with an sm_ target architecture [PTX ISA 9.4 11.1.2]"
+  else if tv < 0 then concat_str("unknown target architecture ", concat_str(t, " [PTX ISA 9.4 11.1.2]"))
+  else if tv > isaver then concat_str("target ", concat_str(t, concat_str(" needs PTX ISA ", concat_str(isaVerStr(tv), " [PTX ISA 9.4 11.1.2]"))))
   else ""
 }
 

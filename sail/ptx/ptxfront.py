@@ -1409,7 +1409,7 @@ def check_types(fname, ld):
                 ot = ld.rk.get(r)
                 if ot is not None and not ty_agrees(it, ot, rel):
                     raise PtxError("%s: %s: operand %s of type .%s%d does not agree with the instruction type .%s%d "
-                                   "[PTX ISA 9.3 9.4, Table %s]" % (fname, opc, r.split("@")[0], ot[0], ot[1], it[0], it[1],
+                                   "[PTX ISA 9.4 9.4, Table %s]" % (fname, opc, r.split("@")[0], ot[0], ot[1], it[0], it[1],
                                                                     "27 / 28" if rel else "26"))
 
 def serialize(mod):

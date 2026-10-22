@@ -1,6 +1,8 @@
 # Review checklist: the Sail PTX model (`sail/ptx`)
 
-Reference: the public **PTX ISA, Release 9.3** (NVIDIA, Jun 25 2026), cited by section, table, figure or page.
+Reference: the public **PTX ISA, Release 9.4**, from the 9.4 migration below on; the earlier entries were checked
+against **Release 9.3** (NVIDIA, Jun 25 2026) and cite its section, table, figure, page and line numbers (`Lnnnn`,
+`~nnnn`). Messages of the model (`[PTX ISA 9.4 <section>]`) and the legality table use 9.4 section numbers.
 The K semantics in `semantics/` is the model `sail/ptx` was written from and is kept in step with it, but it is not
 the reference for correctness.
 
@@ -179,7 +181,7 @@ Open:
 - [x] `.multimem` fabric operations with counted completion bump the counter on every destination device, each counting
       the accesses at that device (§9.7.10.4); the model bumped only the first device's (tests/fabric-mm-counted.ptx)
 - [x] `fabric.try_atom` and the `.tensor` fabric forms are not in the 9.3 text: they run in the default mode, `.isacheck`
-      reports them (tests/neg/isa-rule-fabric94.ptx)
+      reported them (superseded by the 9.4 migration: they are 9.4 forms, checked by the table rows)
 - [x] packed `.f16x2` / `.bf16x2` `setp` / `set`: `.ftz` flushes lane inputs; the `.BoolOp` form gives
       p = BoolOp(t[0], c), q = BoolOp(t[1], c) and d[i] = BoolOp(t[i], c); a sink `_` in either destination keeps the
       packed meaning (§9.7.7.1, §9.7.7.2). The model compared the whole word as an integer, ignored `.ftz`, and sent
@@ -228,7 +230,7 @@ Open:
         than the preceding phase, an address not 8-byte aligned (tests/neg/mbar-ub-*.ptx)
       - `.isacheck`: .sem / .scope together, .scope only .cta / .cluster, arrive not .acquire, waits not .release,
         expect_tx / complete_tx only .relaxed, waits only on .shared::cta, noComplete only .release.cta, check_layout needs
-        .layout, init count and parity immediates in range, the `.multicast::cluster::32b` forms (not in 9.3)
+        .layout, init count and parity immediates in range, the `.multicast::cluster::32b` forms (not in 9.3; 9.4 rows since)
         (tests/neg/isa-mbar-*.ptx)
 - [x] mbarrier: a shared ld / st / atom on an initialised object is reported under `.ub strict` (tests/neg/mbar-ub-st.ptx)
 - [x] mbarrier, `.ub strict`: an arrive-on before a wait returned True for the previous phase (§9.7.14.16.5.1), and
@@ -368,3 +370,26 @@ Each area above has had at least one review pass against the 9.3 text (sections 
 review pass"); the third pass (half precision and compares, warp and miscellaneous, conversions, fabric / tcgen05)
 is recorded in the list under "Second review pass".  The legality table is generated from the 9.3 text by
 `sail/ptx/gen_isa_table.py`.
+
+## Migration to PTX ISA 9.4
+
+- [x] `ptx_isa_table.sail` regenerated from the 9.4 text (`gen_isa_table.py`: 9.4 section numbers for the OVERRIDES /
+      GUARDS keys, the 9.4 page footer, the new whole-section forms "Supported on the following family-specific
+      architectures:" and "Requires sm_Nf or higher in the same family", 0 unhandled statements).  New rows for the 9.4
+      additions: mixed-precision 3-type add / sub / fma and mul (§9.7.5, 9.4 / sm_107f), alternate-format x4 add / sub /
+      mul / fma (§9.7.6, 9.4 / sm_100a, sm_103a), set with .u8x4 / .s8x4 / .u16x2 / .s16x2 (§9.7.7.1, sm_107f),
+      applypriority.async.bulk(.tensor), cvt .rz to f8 / f6 / f4 x2 and .ue5m3x2, .noftz with .f32 (cp.reduce.async.bulk,
+      multimem.cp.reduce.async.bulk, atom, red), fabric.*.async.tensor (sm_107f), fence .alias with .acquire / .release,
+      tcgen05.mma .decompress::lut::b and .collector::b::* (sm_107f), sm_107f added to the existing family lists
+      (e.g. add.s8x4).  sm_107 is in the sm_10x family (9.4 Table 76), which the family rule already gives.
+- [x] `isaQual` (9.4 §9.7.10.24 cvt syntax): .frnd2 = {.rn, .rz} for the f8 / f6 / f4 / s2f6 x2 destinations (9.3
+      allowed only .rn), the x4 destinations only .rs, .ue8m0x2 .frnd3 = {.rz, .rp}, .ue5m3x2 .frnd4 = {.rn, .rz, .rp}
+      (.frnd2 with .scaled::n1::ue8m0).  The "not in PTX ISA 9.3" rules for fabric .try_atom / .tensor and mbarrier
+      .multicast::cluster::32b are gone (9.4 defines them; the table rows check version and target):
+      tests/neg/isa-fabric-atom-sm90.ptx, tests/neg/isa-mbar-multicast.ptx
+- [x] message citations `[PTX ISA 9.3 <section>]` renumbered to the 9.4 sections (the 9.3 -> 9.4 section map, checked
+      by title); comments keep their 9.3 section / line citations.  Fixed on the way: the cvt rounding messages cited
+      9.7.9.21 (cvta in 9.3) instead of cvt
+- [x] `.isacheck` sweep of tests/*.ptx with the 9.4 table: the new reports are the tests' own (9.4 forms under an older
+      `.version`, sm_107f forms on other targets, .rm / .rp / .rn cvt to f8 / ue8m0x2 tested on purpose)
+- [ ] the semantics of the remaining 9.4 additions (release notes, 9.4 L45798 ff.): see the list below

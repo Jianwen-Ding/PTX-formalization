@@ -1,5 +1,5 @@
 // expect: multimem.ld_reduce: .vec and .e4m3x2 is not a valid combination
-// PTX ISA 9.3 9.7.9.15: "the size of the specified type along with .vec must equal either 32-bits or 64-bits or 128-bits"; .e4m3x2 alone is 16 bits
+// PTX ISA 9.4 9.7.10.15: "the size of the specified type along with .vec must equal either 32-bits or 64-bits or 128-bits"; .e4m3x2 alone is 16 bits
 .version 8.6
 .target sm_100a
 .address_size 64

@@ -1,4 +1,4 @@
-// expect: family-specific target: sm_120f
+// expect: family-specific target: sm_107f (or higher in the same family), sm_120f
 // add.s8x4 on the plain sm_120: family features need an f/a target (11.1.2)
 .version 9.2
 .target sm_120

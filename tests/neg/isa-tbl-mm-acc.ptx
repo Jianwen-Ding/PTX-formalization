@@ -1,5 +1,5 @@
 // expect: multimem.ld_reduce: .acc_prec is not valid with .f16x2
-// PTX ISA 9.3 9.7.9.15: .acc::f16 applies to the fp8 types only
+// PTX ISA 9.4 9.7.10.15: .acc::f16 applies to the fp8 types only
 .version 8.6
 .target sm_100a
 .address_size 64

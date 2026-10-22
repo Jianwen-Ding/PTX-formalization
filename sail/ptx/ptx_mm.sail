@@ -140,7 +140,7 @@ function isaTables(base, m, ts) = {
       (bulkRedErr(has(m, "global"), atomOp(m), t, has(m, "noftz")), "9.7.9.26.4.2")
     else if base == "multimem" & (has(m, "ld_reduce") | has(m, "st") | has(m, "red")) & not_bool(has(m, "cp")) then (mmErr(m, t), "9.7.9.15")
     else ("", "");
-  if e == "" then "" else concat_str(e, concat_str(" [PTX ISA 9.3 ", concat_str(sec, "]")))
+  if e == "" then "" else concat_str(e, concat_str(" [PTX ISA 9.4 ", concat_str(sec, "]")))
 }
 
 val exec_mm : (opcode, list(xop)) -> bool

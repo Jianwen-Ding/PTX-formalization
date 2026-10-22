@@ -1,5 +1,5 @@
-// expect: mbarrier: the .multicast::cluster::32b forms are not in PTX ISA 9.3 (9.7.14.16)
-// the .multicast::cluster::32b forms are not in the 9.3 text, reported under .isacheck
+// expect: instruction needs PTX ISA 9.4
+// the .multicast::cluster::32b forms are introduced in PTX ISA 9.4 (9.4 9.7.15.16); .version 9.3 is reported under .isacheck
 .version 9.3
 .target sm_90
 .address_size 64

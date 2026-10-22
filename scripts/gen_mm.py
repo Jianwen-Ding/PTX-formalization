@@ -90,7 +90,7 @@ def fp8red(vf, ef, op, lanes, acc16=False):
 emit("%r0", fp8red(*E4, lambda a, b: a + b, 4))
 body.append("    multimem.ld_reduce.add.acc::f16.e4m3x4 %r0, [%mm+40];")
 emit("%r0", fp8red(*E4, lambda a, b: a + b, 4, True))
-# "the size of the specified type along with .vec must equal either 32-bits or 64-bits or 128-bits" (PTX ISA 9.3 9.7.9.15):
+# "the size of the specified type along with .vec must equal either 32-bits or 64-bits or 128-bits" (PTX ISA 9.4 9.7.10.15):
 # .e4m3x2 needs .v2 at least; the two 16-bit elements are packed into %r0 (first element low)
 body.append("    multimem.ld_reduce.max.v2.e4m3x2 {%h0, %h1}, [%mm+40];  mov.b32 %r0, {%h0, %h1};")
 emit("%r0", fp8red(*E4, max, 4))

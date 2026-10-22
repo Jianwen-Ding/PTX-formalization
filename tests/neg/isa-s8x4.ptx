@@ -1,5 +1,5 @@
-// expect: family-specific target: sm_120f
-// add.s8x4: sm_120f or higher in the same family (9.7.1.1 L5762); sm_90 is not
+// expect: family-specific target: sm_107f (or higher in the same family), sm_120f
+// add.s8x4: sm_120f or higher in the same family (PTX ISA 9.4 9.7.1.1: sm_107f or sm_120f, or higher in the same family); sm_90 is not
 .version 9.2
 .target sm_90
 .address_size 64

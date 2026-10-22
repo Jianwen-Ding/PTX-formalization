@@ -1,5 +1,5 @@
 // expect: multimem.ld_reduce: .and is not valid with .u32
-// PTX ISA 9.3 9.7.9.15 op / base type table: .and, .or, .xor take .b32, .b64
+// PTX ISA 9.4 9.7.10.15 op / base type table: .and, .or, .xor take .b32, .b64
 .version 8.6
 .target sm_100a
 .address_size 64

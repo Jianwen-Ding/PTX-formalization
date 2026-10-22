@@ -1,4 +1,4 @@
-// expect: family-specific target: sm_120f
+// expect: family-specific target: sm_107f (or higher in the same family), sm_120f
 // add.s8x4 on sm_100f: another family (11.1.2 Table 67)
 .version 9.2
 .target sm_100f

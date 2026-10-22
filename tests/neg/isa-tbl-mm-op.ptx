@@ -1,5 +1,5 @@
 // expect: multimem.ld_reduce: .min is not valid with .f32
-// PTX ISA 9.3 9.7.9.15 op / base type table: .min, .max take no .f32
+// PTX ISA 9.4 9.7.10.15 op / base type table: .min, .max take no .f32
 .version 8.6
 .target sm_100a
 .address_size 64

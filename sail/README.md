@@ -220,7 +220,7 @@ runs a test and compares stdout with the `.out` file (exit code from the model's
 
 **Reference.**  The K semantics (`semantics/`, `agx/agx.k`) is obsolete for now; these Sail models are the maintained
 ones.  The PTX model was written as a re-expression of the K semantics in `semantics/`, and has since been
-corrected against the public PTX ISA (Release 9.3) wherever the two differ; `docs/review-checklist.md` lists each
+corrected against the public PTX ISA (Release 9.3, and 9.4 since) wherever the two differ; `docs/review-checklist.md` lists each
 correction with its ISA section and every place where this model and the K rules now disagree.
 
 Instructions keep K's representation: `opc(base, modifiers, types)` from `decodeOpc` and operands as

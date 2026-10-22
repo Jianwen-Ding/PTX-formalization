@@ -446,9 +446,9 @@ function tc_mma(m, ad, av, bv, id, da, meta, rest) = {
      .kind::tf32 and .kind::f16" (9.7.17.10.9.1): reported under .isacheck */
   let nsc = list_length(tcOps(rest));
   if isachk & nsc >= 2 & not_bool(has(m, "ws")) & (tcSc(rest) < 0 | tcSc(rest) > 15) then
-    fault("tcgen05.mma: scale-input-d outside [0, 15] [PTX ISA 9.3 9.7.17.10.9.1]", tcSc(rest))
+    fault("tcgen05.mma: scale-input-d outside [0, 15] [PTX ISA 9.4 9.7.18.10.10.1]", tcSc(rest))
   else if isachk & nsc >= 2 & not_bool(has(m, "ws")) & not_bool(has(m, "kind::tf32") | has(m, "kind::f16")) then
-    fault("tcgen05.mma: scale-input-d is only valid for .kind::tf32 and .kind::f16 [PTX ISA 9.3 9.7.17.10.9.1]", 0);
+    fault("tcgen05.mma: scale-input-d is only valid for .kind::tf32 and .kind::f16 [PTX ISA 9.4 9.7.18.10.10.1]", 0);
   if stuck then return ();
   if not_bool(has(m, "cta_group::2")) then {
     let tm = tcSpace(c, "tm");
@@ -618,7 +618,7 @@ val tcCgOk : (int, int) -> bool
 function tcCgOk(c, g) = {
   let mp = c_misc[cchk(c)];
   if smap_has(mp, "tccg") & smap_get(mp, "tccg") != g then {
-    fault("tcgen05: instructions of the kernel specify different .cta_group values [PTX ISA 9.3 9.7.17.7.1]", g); false
+    fault("tcgen05: instructions of the kernel specify different .cta_group values [PTX ISA 9.4 9.7.18.7.1]", g); false
   } else { smap_set(mp, "tccg", g); true }
 }
 

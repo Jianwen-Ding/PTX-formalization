@@ -1,7 +1,7 @@
-// expect: fabric: the .try_atom and .tensor forms are not in PTX ISA 9.3
-// forms beyond the 9.3 reference run in the default mode; .isacheck reports them
+// expect: instruction needs target sm_100 [PTX ISA 9.4 9.7.11.5.10]
+// fabric.try_atom: PTX ISA 9.4, sm_100 or higher (9.4 9.7.11.5.10); runs in the default mode, .isacheck reports the target
 .version 9.4
-.target sm_100a
+.target sm_90
 .address_size 64
 .isacheck ;
 .visible .entry k(.param .u64 po)
