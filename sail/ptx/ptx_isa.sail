@@ -316,6 +316,16 @@ function isaSyncAligned(b, m) =
   | (b == "tensormap" & has(m, "cp_fenceproxy"))
   | (b == "tcgen05" & isaAny(m, [|"alloc", "dealloc", "relinquish_alloc_permit", "ld", "st", "wait::ld", "wait::st"|]))
 
+/* the .collector::X::op qualifiers of the buffers xs */
+val isaColl : list(string) -> list(string)
+function isaColl(xs) = match xs {
+  [||] => [||],
+  x :: r => {
+    let p = concat_str("collector::", concat_str(x, "::"));
+    concat_str(p, "fill") :: concat_str(p, "use") :: concat_str(p, "lastuse") :: concat_str(p, "discard") :: isaColl(r)
+  }
+}
+
 val isaQual : (opcode, list(xop)) -> string
 function isaQual(o, ops) = {
   let m = o.mods;
@@ -407,6 +417,23 @@ function isaQual(o, ops) = {
     "prefetch.L1::32B: .valid_addr must be specified and the state space, if specified, must be .global [PTX ISA 9.4 9.7.10.16]"
   else if b == "alloca" & isaBadAlign(ops) then
     "alloca: immAlign must be a power of 2 not above 2^23 [PTX ISA 9.4 9.7.19.3]"
+  /* tcgen05.mma collector qualifiers (9.4 syntax of 9.7.18.10.10.1-3): .collector::a / ::b for mma{.sp}, ::b only in
+     the .kind::ti16 integer forms, ::bN (N = 0..3) for .ws; "It is illegal to specify either of .collector::a::use or
+     .collector::a::fill along with .ashift" */
+  else if b == "tcgen05" & has(m, "mma") & has(m, "ashift") & isaAny(m, [|"collector::a::use", "collector::a::fill"|]) then
+    "tcgen05.mma: .collector::a::use and .collector::a::fill are illegal with .ashift [PTX ISA 9.4 9.7.18.10.10.1]"
+  else if b == "tcgen05" & has(m, "mma") & has(m, "ws") & isaAny(m, isaColl([|"a", "b"|])) then
+    "tcgen05.mma.ws: the collector qualifier is .collector::bN::op, N = 0..3 [PTX ISA 9.4 9.7.18.10.10.3]"
+  else if b == "tcgen05" & has(m, "mma") & not_bool(has(m, "ws")) & isaAny(m, isaColl([|"b0", "b1", "b2", "b3"|])) then
+    "tcgen05.mma: .collector::bN::op is a .ws qualifier; the other forms take .collector::a / .collector::b [PTX ISA 9.4 9.7.18.10.10.1]"
+  else if b == "tcgen05" & has(m, "mma") & has(m, "kind::i8") & isaAny(m, isaColl([|"b"|])) then
+    "tcgen05.mma.kind::i8 has no .collector::b::op form (the integer forms with it are .kind::ti16) [PTX ISA 9.4 9.7.18.10.10.1]"
+  /* "Decompression of pre-compressed B matrix" (9.7.18.10.10.1 form 7): tcgen05.mma (no .sp / .ws form) with
+     .kind::f8f6f4, or .kind::mxf8f6f4.block_scale with .scale_vectorsize = { .block32 } */
+  else if b == "tcgen05" & has(m, "mma") & has(m, "decompress::lut::b")
+          & (has(m, "sp") | has(m, "ws") | not_bool(has(m, "kind::f8f6f4") | (has(m, "kind::mxf8f6f4") & has(m, "block_scale")))
+             | isaAny(m, [|"scale_vec::1X", "scale_vec::2X", "scale_vec::4X", "block16"|])) then
+    "tcgen05.mma.decompress::lut::b: only tcgen05.mma.kind::f8f6f4 and tcgen05.mma.kind::mxf8f6f4.block_scale{.block32} [PTX ISA 9.4 9.7.18.10.10.1]"
   else ""
 }
 

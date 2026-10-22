@@ -437,3 +437,53 @@ is recorded in the list under "Second review pass".  The legality table is gener
 - [x] already modelled before the migration: ldmatrix `.s8.s4` `.m8n16` (sign extension of the 4-bit elements),
       `.override::global_address` / `.override_attribute` tensor operands, cvt `.pzo` / `.scaled::n1::ue8m0` /
       `.ue5m3x2`, set with packed integers, spcompress / spdecompress
+- [x] tcgen05.mma `.kind::ti16` (9.4 §9.7.18.4.2 Table 53, §9.7.18.2.1 Table 50, §9.7.18.10.9): A / B `.s1z4m11`, D `.s32`,
+      K = 16 dense / 32 sparse, for mma, mma.sp, mma.ws and mma.ws.sp.  The products are summed exactly and the `.s32`
+      result wraps (the tcgen05 text gives only the Saturate bit, "0 (NA)" for ti16; the mma / wgmma wording "on overflow
+      ... limited to MIN_INT32..MAX_INT32 ... If .satfinite is not specified, the accumulated value is wrapped" is
+      followed, as for `.kind::i8`).  Negate A / B negate the integers (Table 64: ti16 Yes, i8 No).  The sparse
+      metadata uses the `.kind::f16` layout (Figures 287 / 288 name ti16; sparsity selector honoured), as the model
+      already did for M = 64 (lanes 16 (r / 16) .. as A and D).  `.isacheck` reports an idesc with dtype != S32,
+      atype / btype != S1Z4M11, bit 3 or bit 29 set (the default mode ignores the type fields and gives bit 3 its
+      `.kind::i8` saturation meaning); `.ub strict` reports an element outside [-2047, 2047] (tests/tc-94-0..3.ptx,
+      tests/neg/tc-94-ti16-ub-range.ptx, tests/neg/isa-tc-94-ti16-idesc.ptx).  Spec gaps: the bit encoding of `.s1z4m11`
+      is only "a 16-bit signed integer with the range [-2^11 + 1, 2^11 - 1]"; the model reads two's complement (the
+      name suggests sign / 4 zero bits / 11-bit magnitude, which differs for negative values).  Table 53 says ti16
+      "No Transpose = 0", Table 64 says transpose "Yes": the bits are honoured and not reported.  The 9.4 syntax of
+      `tcgen05.mma.sp ... .kind::ti16.collector_b_usage` lists no `[sp-meta-tmem]` operand (taken as a typo: the model
+      needs the metadata operand)
+- [x] tcgen05.mma block scaling with UE5M3 scales (9.4 Table 55 bits 23-24: UE4M3 = 0, UE8M0 = 1, UE5M3 = 2; §5.2.3,
+      Table 71): `tcScaleTy` reads the 2-bit field for `.kind::mxf4nvf4` (and `.kind::mxf4`, whose only listed value is
+      UE8M0: other values reported under `.isacheck`, honoured in the default mode; `.kind::mxf8f6f4` keeps UE8M0 and
+      `.isacheck` reports bit 23 = 0); UE5M3 decodes as the model's `.ue5m3` (5 exponent bits, bias 15, 3 mantissa
+      bits, NaN 0xff, no infinity).  UE5M3 is valid with every `.scale_vectorsize` of `.kind::mxf4nvf4`.  Value 3 is an
+      error.  "requires target architecture sm_107f or higher in the same family, otherwise behavior is undefined" (UE5M3,
+      and UE4M3 with `.block32`) under `.ub strict` against the `.target` (tests/tc-94-4.ptx, tc-94-5.ptx,
+      tests/neg/tc-94-ue5m3-ub-target.ptx).  Gap: the bias of ue5m3 is not stated in §5.2.3 (15 = 2^(5-1) - 1 as cvt)
+- [x] tcgen05.mma `.decompress::lut::b` (9.4 §9.7.18.10.8, §9.7.18.4.1 bit 53, §9.7.18.10.10.1 form 7, Figures 279-282):
+      `[b-decompress-metadata]` operand, for `.kind::f8f6f4` and `.kind::mxf8f6f4.block_scale`.  Per B row n the 48 bytes
+      of a K = 128 index block are read as a K-major row of 8-bit elements of b-compressed-desc, descriptor bit 53 selects
+      the 24-byte chunk (K = 64), index k is bits 3k..3k+2 of the chunk, and B(n, k) is entry j of the 8-byte table of N
+      slice n / 8 in TMEM lane n / 8, column metadata + j / 4, byte j % 4 (Figure 279: one lane per 8-column slice, 8
+      one-byte entries; Figure 282: the K[0:63] / K[64:127] tables side by side).  Negate B applies.  `.isacheck`: btype
+      other than E4M3 ("the only type allowed is E4M3"), Layout B / C / F (M = 64 with cta_group::1, M = 128 with
+      cta_group::2), and statically a `.sp` / `.ws` / other kind / other `.scale_vectorsize` form; `.ub strict`: a
+      metadata column that is not two-column aligned.  Errors: transposed B ("doesn't support transpose": no layout for
+      the indices), K != 64, `.cta_group::2` (tests/tc-94-6..8.ptx, tests/neg/isa-tc-94-lut-btype.ptx,
+      tests/neg/isa-tc-94-lut-sp.ptx).  Spec gaps: the bit order of the 3-bit indices in the 24 bytes (the model packs
+      LSB first, as its fp6 / fp4 rows), the byte order of the table entries in the two 32-bit columns (entry j at byte
+      j % 4 of column j / 4; Figure 279 labels the 8 bytes "1 TMEM col"), which lane holds the tables (rows 0-31 of
+      Figures 279 / 282; the address's lane field is not used, as for the scale factors and the sparsity metadata),
+      whether the table for K[64:127] is chosen by bit 53 or by the address (the model: by the address only), the
+      meaning of K = 32 and of the CTA pair (which CTA's tables serve which N)
+- [x] `.collector::b::*` (and `::a::*`, `::bN::*` of `.ws`) have no effect on the result ("reuse is opportunistic ... the
+      source memory ... must not be modified while the MMA instruction ... has not completed - regardless of collector
+      qualifier permissions", §9.7.18.10).  `.ub strict` tracks one collector state per CTA and buffer: ::fill
+      validates, ::lastuse / ::discard (and the default ::discard of a missing `.collector::a` / `::b`, or of `::b0` for
+      `.ws` without a collector qualifier) end it, and ::use / ::lastuse without a valid fill ("This requires a previous
+      fill to the collector buffer to be still valid") is reported.  `.isacheck` (isaQual): `.collector::a::use` /
+      `::fill` with `.ashift` ("It is illegal"), `::a` / `::b` on `.ws`, `::bN` off `.ws`, `::b` with `.kind::i8` (only the
+      ti16 integer forms have it) (tests/tc-94-0.ptx, tests/neg/tc-94-coll-ub-use.ptx,
+      tests/neg/isa-tc-94-coll-ashift.ptx).  Gaps: the ISA does not say whose buffer it is (CTA, SM, issuing thread,
+      CTA pair) or whether the filled matrix must be the one later used; the model checks per CTA and only the fill
+- [ ] tcgen05.alloc / dealloc `.exclusive` (9.4): not yet checked against the model
