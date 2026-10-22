@@ -236,6 +236,10 @@ function exec_memq_prio(o, ops) = {
 
 val exec_memq : (opcode, list(xop)) -> bool
 function exec_memq(o, ops) = match (o.base, ops) {
+  /* "The valid range of values for the operand fraction is (0.0,.., 1.0]" (9.7.9.19): reported under .isacheck */
+  ("createpolicy", [|d, fr|]) if isachk & has(o.mods, "fractional") & not_bool(fv_lt(FV_Fin(false, 0, 0), decodeF(rd(fr, F32), 32)) & not_bool(fv_lt(fv_one(), decodeF(rd(fr, F32), 32)))) => {
+    fault("createpolicy: fraction outside (0.0, 1.0] [PTX ISA 9.3 9.7.9.19]", 0); true
+  },
   ("createpolicy", d :: _) => { wr(d, 0); true },
   _ => false
 }

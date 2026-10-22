@@ -313,6 +313,9 @@ Open:
       (tests/neg/tc-alloc-ub-window.ptx, clc-ub-window.ptx); with the earlier ones (mbarrier, st / red.async, st.bulk,
       discard, applypriority, cvta, ldmatrix / stmatrix, multimem) every window rule of §9.7 is checked except
       createpolicy's (an opaque policy with no memory access in the model) and cp.async's prefetch hint
+- [x] operand ranges under `.isacheck`: createpolicy fraction in (0.0, 1.0] (§9.7.9.19), tensormap.replace ord in
+      [0..4] (§9.7.9.27), tcgen05.mma scale-input-d in [0, 15] and only with .kind::tf32 / .kind::f16
+      (§9.7.17.10.9.1) (tests/neg/isa-createpolicy-fraction.ptx, isa-tensormap-ord.ptx); the existing uses pass
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

@@ -366,6 +366,8 @@ function isaQual(o, ops) = {
   else if b == "mbarrier" & isaAny(m, [|"test_wait", "try_wait"|]) & has(m, "parity")
           & (isaBadImm(ops, 3, 2, 0, 1, 1) | isaBadImm(ops, 4, 2, 0, 1, 1) | isaBadImm(ops, 4, 3, 0, 1, 1) | isaBadImm(ops, 5, 3, 0, 1, 1)) then
     "mbarrier.test_wait / try_wait.parity: the phase parity is 0 or 1 [PTX ISA 9.3 9.7.14.16.19]"
+  else if b == "tensormap" & has(m, "replace") & isaBadImm(ops, 3, 1, 0, 4, 1) then
+    "tensormap.replace: the only valid values for ord are [0..4] [PTX ISA 9.3 9.7.9.27]"
   else if (b == "discard" | b == "applypriority") & isaBadImm(ops, 2, 1, 128, 128, 1) then
     concat_str(b, if b == "discard" then ": the only supported size is 128 [PTX ISA 9.3 9.7.9.18]"
                   else ": the only supported size is 128 [PTX ISA 9.3 9.7.9.17]")
