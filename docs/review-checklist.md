@@ -82,8 +82,10 @@ the reference for correctness.
 - [x] f64 `mma` "precision ... identical to that of .f64 precision fused multiply-add" (§9.7.15.5.14): each product is
       now added by an f64 fma rounded with the modifier, starting from c, in k order (the order is the model's choice);
       it rounded the exact sum once. tests/mma-f64-fma.ptx; scripts/gen_mma.py / gen_mma_m8n8k4.py model the chain.
-- [ ] open: Figure 187 (`.16x32bx2`) draws threads 16-31 at lanes 16-31 while the text and the model use t % 16;
-      M = 64 "Layout F" lane placement is not modelled
+- [ ] open: Figure 187 (`.16x32bx2`; Figure 190 in 9.4, unchanged) draws threads 16-31 at lanes 16-31 of the
+      second access while the text ("A warp executing tcgen05{.ld,.st}.16x32bx2 will access 16 lanes of the Tensor
+      Memory", 9.4 §9.7.18.2.3.6; the second access is ".16x32b" at taddr+immHalfSplitoff) and the model use lane
+      t % 16 for both accesses; M = 64 "Layout F" lane placement is not modelled
 
 ## Floating-point review against the ISA (fixed, Sail only)
 
