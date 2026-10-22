@@ -287,6 +287,11 @@ Open:
       (tests/neg/tc-alloc-ub-ncols.ptx).  The tcgen05 tests now conform under `.isacheck` and `.ub strict`:
       scripts/gen_tcgen05.py emits `.version 8.8`, tests/tc-red.ptx targets sm_103a (tcgen05.ld.red is not on sm_100a),
       tests/tc-alloc-generic.ptx deallocates its tensor memory
+- [x] sweep: every test without its own `.isacheck` / `.ub` run with both.  No model false positive was found; the reports
+      are the tests' own: an older `.version` / `.target` than the forms need (mostly generated mma.sp / wgmma.sp / mma
+      tests), `sm_107f` (not in 9.3), and tests of forms outside the syntax on purpose.  tests/tex.ptx and
+      tests/surf.ptx did an 8-byte suld at a 4-byte aligned x ("must be naturally aligned to a multiple of the access
+      size", §9.7.12.1); scripts/gen_tex.py and gen_surf.py now use x = 8
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 
