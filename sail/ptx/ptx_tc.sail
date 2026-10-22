@@ -1,7 +1,7 @@
 /* =============================================================================
  * PTX-EXEC-TC (semantics/ptx-exec-tc.k): fifth-generation tensor core (tcgen05): tensor memory
  * allocation, ld / st (with .red and .spcompress), mma (dense, sparse, block-scaled, .ws,
- * .ashift, cta_group::2), commit, cp (with decompression) and shift.
+ * .ashift, cta_group::2, .kind::ti16, .decompress::lut::b), commit, cp (with decompression) and shift.
  *
  * Tensor memory, its allocations and the warp-collective alloc / dealloc results are per-CTA maps
  * (spaces created on first use).  Asynchronous operations complete at issue, as in K.
@@ -224,7 +224,7 @@ function isMxK(m) = has(m, "kind::mxf8f6f4") | has(m, "kind::mxf4") | has(m, "ki
 
 val tcDT : (list(string), int) -> ty
 function tcDT(m, i) =
-  if isMxK(m) then mkty("f", 32) else if has(m, "kind::i8") then mkty("s", 32)
+  if isMxK(m) then mkty("f", 32) else if has(m, "kind::i8") | has(m, "kind::ti16") then mkty("s", 32)
   else if land_int(asr_int(i, 4), 3) == 0 then mkty("f", 16) else mkty("f", 32)
 
 val tcF8 : int -> ty
@@ -235,6 +235,9 @@ function tcAT(m, i) =
   if has(m, "kind::mxf4") | has(m, "kind::mxf4nvf4") then mkty("e2m1p", 4)
   else if has(m, "kind::tf32") then mkty("tf", 32)
   else if has(m, "kind::i8") then (if land_int(asr_int(i, 7), 7) == 0 then mkty("u", 8) else mkty("s", 8))
+  /* "In case of .kind::ti16 qualifier, the atype and btype are of type .s1z4m11 which is a 16-bit signed integer with the
+     range [-2^11 + 1, 2^11 - 1]" (PTX ISA 9.4 9.7.18.4.2, Table 53): held as .s16 (two's complement, see tcTi16) */
+  else if has(m, "kind::ti16") then mkty("s", 16)
   else if has(m, "kind::f8f6f4") | has(m, "kind::mxf8f6f4") then tcF8(land_int(asr_int(i, 7), 7))
   else if land_int(asr_int(i, 7), 7) == 0 then mkty("f", 16) else mkty("bf", 16)
 val tcBT : (list(string), int) -> ty
@@ -251,6 +254,7 @@ function tcK(m, i) =
   else if has(m, "kind::mxf4") | has(m, "kind::mxf4nvf4") then (if land_int(asr_int(i, 3), 1) == 1 then 128 else if land_int(asr_int(i, 31), 1) == 1 then 96 else 64)
   else if has(m, "kind::tf32") then 8
   else if has(m, "kind::i8") then 32
+  else if has(m, "kind::ti16") then 16
   else if has(m, "kind::f8f6f4") then (if land_int(asr_int(i, 29), 1) == 1 then 64 else 32)
   else 16
 
@@ -280,15 +284,31 @@ function tcSE(sp, d, km, t, r, kk, k) = {
   } else wgElemS(sp, tcDesc(d), km, ew(t), r, kk)
 }
 
+/* .kind::ti16 elements (.s16 here): the ISA gives the range of .s1z4m11, [-2^11 + 1, 2^11 - 1] (PTX ISA 9.4
+   9.7.18.4.2), but of its encoding only "a 16-bit signed integer"; the model reads two's complement .s16 (the name
+   suggests sign / 4 zero bits / 11-bit magnitude, which agrees on the non-negative values only).  An element outside
+   the range is not an .s1z4m11 value: reported under .ub strict */
+val tcTi16 : (ty, int) -> int
+function tcTi16(t, v) = {
+  if ub & t.k == "s" & t.w == 16 & not_bool(stuck) & (sext(v, 16) < -2047 | sext(v, 16) > 2047) then
+    fault("tcgen05.mma.kind::ti16: an A / B element outside the .s1z4m11 range [-2^11 + 1, 2^11 - 1] [PTX ISA 9.4 9.7.18.4.2]", sext(v, 16));
+  v
+}
+
+/* negation (idesc bits 13 / 14): the sign of a float element; .kind::ti16 negates the integer (Table 53 "Negate = 1";
+   Table 64 "Is Negate A/B supported": ti16 Yes, i8 No, so the bits stay ignored for .kind::i8) */
+val tcNeg : (ty, int, int) -> int
+function tcNeg(t, sg, v) = if t.k == "s" & t.w == 16 then (if sg < 0 then trunc(negate(sext(v, 16)), 16) else v) else wgNeg(t, sg, v)
+
 /* A (M x K) into SP_MA: from shared memory (descriptor) or tensor memory */
 val tcTileA : (bool, int, int, int, ty, int, bool, int, int) -> unit
 function tcTileA(desc, v, tm, sp, t, sg, km, m, k) = {
   smap_clear(SP_MA);
   foreach (r from 0 to (m - 1))
     foreach (kk from 0 to (k - 1))
-      mset(SP_MA, rc(r, kk), wgNeg(t, sg,
+      mset(SP_MA, rc(r, kk), tcNeg(t, sg, tcTi16(t,
         if desc then tcSE(sp, v, km, t, r, kk, k)
-        else land_int(asr_int(tcWord(tm, tcKey(r, tcCol(v) + tdiv_int(kk * ew(t), 32))), fmod_int(kk * ew(t), 32)), mask(ew(t)))))
+        else land_int(asr_int(tcWord(tm, tcKey(r, tcCol(v) + tdiv_int(kk * ew(t), 32))), fmod_int(kk * ew(t), 32)), mask(ew(t))))))
 }
 
 /* zero-column mask descriptor (.ws) */
@@ -306,12 +326,32 @@ function tcZero(z, md, n, c) =
     tcZBit(z, tdiv_int(c, w), fmod_int(c, w))
   } else false
 
-/* B (K x N) into SP_MB at column offset co */
-val tcTileB : (int, int, ty, int, bool, int, int, int, int, int, int) -> unit
-function tcTileB(v, sp, t, sg, km, n, k, sh, z, md, co) =
+/* .decompress::lut::b (PTX ISA 9.4 9.7.18.10.8, 9.7.18.4.1, 9.7.18.10.10.1): B element (n, k) is the 8-bit entry of a
+   lookup table selected by a 3-bit index.  "Data loaded from shared memory contains a 3-bit index for each element";
+   the instruction "reads 48 bytes of B matrix from shared memory" (one K = 128 block of indices of row n, read as bytes
+   0..47 of a K-major row of 8-bit elements of b-compressed-desc) and needs 24 (3 * 64 / 8): the first or the second
+   24-byte chunk as descriptor bit 53 says ("K_Segment start offset in K=128 (48B) block - 0: 0 - 1: 24").  The indices
+   are packed least significant bit first, as the model's other bit-packed elements (the ISA does not give the order).
+   "Every element in the same 8-column-aligned 8-column slice of the B matrix shares the same set of 8 possible values":
+   the table of N slice n / 8 is TMEM row n / 8 (Figures 279, 282), 8 bytes from the two-column-aligned column lc of
+   b-decompress-metadata, entry j in column lc + j / 4, byte j % 4 */
+val tcLutE : (int, int, int, int, int, int) -> int
+function tcLutE(tm, sp, d, lc, n, kk) = {
+  let bp = 192 * land_int(asr_int(d, 53), 1) + 3 * kk;
+  let lo = wgElemS(sp, tcDesc(d), true, 8, n, tdiv_int(bp, 8));
+  let hi = if fmod_int(bp, 8) + 3 > 8 then shl_int(wgElemS(sp, tcDesc(d), true, 8, n, tdiv_int(bp, 8) + 1), 8) else 0;
+  let j = land_int(asr_int(lor_int(lo, hi), fmod_int(bp, 8)), 7);
+  land_int(asr_int(tcWord(tm, tcKey(tdiv_int(n, 8), lc + tdiv_int(j, 4))), 8 * fmod_int(j, 4)), 255)
+}
+
+/* B (K x N) into SP_MB at column offset co; lut >= 0: the lookup-table column of .decompress::lut::b */
+val tcTileB : (int, int, int, ty, int, bool, int, int, int, int, int, int, int) -> unit
+function tcTileB(tm, v, sp, t, sg, km, n, k, sh, z, md, co, lut) =
   foreach (nn from 0 to (n - 1))
     foreach (kk from 0 to (k - 1))
-      mset(SP_MB, rc(kk, nn + co), if tcZero(z, md, n, nn) then 0 else wgNeg(t, sg, tcSE(sp, v, km, t, nn + sh, kk, k)))
+      mset(SP_MB, rc(kk, nn + co),
+           if tcZero(z, md, n, nn) then 0
+           else tcNeg(t, sg, if lut >= 0 then tcLutE(tm, sp, v, lut, nn + sh, kk) else tcTi16(t, tcSE(sp, v, km, t, nn + sh, kk, k))))
 
 /* the D accumulator input, scaled by 2^-s, into SP_MC */
 val tcTileD : (int, ty, int, int, int, int) -> unit
@@ -439,8 +479,47 @@ function tcPeer() = {
   if pt != c & 0 <= pt & pt < ncta_slots & c_alive[cchk(pt)] then Some(pt) else None()
 }
 
-val tc_mma : (list(string), bool, int, int, int, int, int, list(xop)) -> unit
-function tc_mma(m, ad, av, bv, id, da, meta, rest) = {
+/* .kind::ti16 instruction descriptor (PTX ISA 9.4 9.7.18.4.2, Table 53): dtype S32 = 2, atype / btype S1Z4M11 = 3,
+   bit 3 (Saturate) "0 (NA)", bit 29 (K Dimension) "NA" (K = 16 dense / 32 sparse is unique, so "the instruction
+   descriptor bit corresponding to K must be set to 0", 9.7.18.2.2): other values reported under .isacheck.  The default
+   mode reads the elements as .s1z4m11 and the result as .s32 whatever the type fields say, and gives bit 3 its integer
+   meaning (saturation, as .kind::i8).  Transpose (bits 15 / 16) is "No Transpose = 0" in Table 53 but "Yes" in Table 64:
+   the bits are honoured and not reported */
+val tcTi16Idesc : (list(string), int) -> bool
+function tcTi16Idesc(m, id) =
+  has(m, "kind::ti16") & (land_int(asr_int(id, 4), 3) != 2 | land_int(asr_int(id, 7), 7) != 3 | land_int(asr_int(id, 10), 7) != 3
+                          | land_int(asr_int(id, 3), 1) != 0 | land_int(asr_int(id, 29), 1) != 0)
+
+/* .decompress::lut::b (PTX ISA 9.4 9.7.18.10.10.1): "matrix B doesn't support transpose and the only type allowed is
+   E4M3.  Layout B (M = 128 + cta_group::2 + Dense A matrix), Layout C (M = 128 + cta_group::2 + Sparse A matrix) and
+   Layout F (M = 64 + non .ws mode) are not allowed for storing the lookup tables in Tensor Memory" (btype and the
+   layouts under .isacheck; the default mode reads the table entries as btype); b-decompress-metadata "is the two column
+   aligned address" (under .ub strict).  A transposed index matrix, a K other than 64 ("needs only 24 bytes(3 * 64 /
+   8)"), a kind other than f8f6f4 / mxf8f6f4 and the CTA pair (which CTA's table holds which N slices) have no meaning
+   in the ISA: errors.  Returns false when the instruction cannot run */
+val tcLutOk : (list(string), int, int) -> bool
+function tcLutOk(m, id, lut) = {
+  if lut < 0 then return true;
+  let md = tcMD(m, id);
+  if isachk & land_int(asr_int(id, 10), 7) != 0 then
+    fault("tcgen05.mma.decompress::lut::b: the only B type allowed is E4M3 [PTX ISA 9.4 9.7.18.10.10.1]", land_int(asr_int(id, 10), 7))
+  else if isachk & ((not_bool(has(m, "cta_group::2")) & md == 64) | (has(m, "cta_group::2") & md == 128)) then
+    fault("tcgen05.mma.decompress::lut::b: data path Layout B, C or F (M = 64, or M = 128 with .cta_group::2) is not allowed for the lookup tables [PTX ISA 9.4 9.7.18.10.10.1]", md)
+  else if ub & fmod_int(lut, 2) != 0 then
+    fault("tcgen05.mma.decompress::lut::b: b-decompress-metadata is not two-column aligned [PTX ISA 9.4 9.7.18.10.10.1]", lut)
+  else if not_bool(has(m, "kind::f8f6f4") | has(m, "kind::mxf8f6f4")) then
+    fault("tcgen05.mma.decompress::lut::b applies to .kind::f8f6f4 and .kind::mxf8f6f4 only", 0)
+  else if not_bool(tcKmB(id)) then
+    fault("tcgen05.mma.decompress::lut::b: matrix B doesn't support transpose (no layout of a transposed index matrix)", 0)
+  else if tcK(m, id) != 64 then
+    fault("tcgen05.mma.decompress::lut::b: the index layout is given for K = 64 only", tcK(m, id))
+  else if has(m, "cta_group::2") then
+    fault("tcgen05.mma.cta_group::2 with .decompress::lut::b is not modelled", 0);
+  not_bool(stuck)
+}
+
+val tc_mma : (list(string), bool, int, int, int, int, int, int, list(xop)) -> unit
+function tc_mma(m, ad, av, bv, id, da, meta, lut, rest) = {
   let c = cur_cta();
   /* "The valid range of values for argument scale-input-d is [0, 15]. The argument scale-input-d is only valid for
      .kind::tf32 and .kind::f16" (9.7.17.10.9.1): reported under .isacheck */
@@ -448,14 +527,16 @@ function tc_mma(m, ad, av, bv, id, da, meta, rest) = {
   if isachk & nsc >= 2 & not_bool(has(m, "ws")) & (tcSc(rest) < 0 | tcSc(rest) > 15) then
     fault("tcgen05.mma: scale-input-d outside [0, 15] [PTX ISA 9.4 9.7.18.10.10.1]", tcSc(rest))
   else if isachk & nsc >= 2 & not_bool(has(m, "ws")) & not_bool(has(m, "kind::tf32") | has(m, "kind::f16")) then
-    fault("tcgen05.mma: scale-input-d is only valid for .kind::tf32 and .kind::f16 [PTX ISA 9.4 9.7.18.10.10.1]", 0);
-  if stuck then return ();
+    fault("tcgen05.mma: scale-input-d is only valid for .kind::tf32 and .kind::f16 [PTX ISA 9.4 9.7.18.10.10.1]", 0)
+  else if isachk & tcTi16Idesc(m, id) then
+    fault("tcgen05.mma.kind::ti16: the instruction descriptor needs dtype S32 = 2, atype / btype S1Z4M11 = 3, Saturate 0 (NA) and K Dimension 0 (NA) [PTX ISA 9.4 9.7.18.4.2]", id);
+  if stuck | not_bool(tcLutOk(m, id, lut)) then return ();
   if not_bool(has(m, "cta_group::2")) then {
     let tm = tcSpace(c, "tm");
     let sp = c_smem[cchk(c)];
     let z = tcZm(m, rest);
     smap_clear(SP_MB);
-    tcTileB(bv, sp, tcBT(m, id), tcSgB(id), tcKmB(id), tcN(id), tcKS(m, id, meta), tcShiftZ(z), z, tcMD(m, id), 0);
+    tcTileB(tm, bv, sp, tcBT(m, id), tcSgB(id), tcKmB(id), tcN(id), tcKS(m, id, meta), tcShiftZ(z), z, tcMD(m, id), 0, lut);
     tcMmaB(m, tm, sp, ad, av, id, da, tcEn(rest), if has(m, "ws") then 0 else tcSc(rest), tcMk(rest), meta)
   } else match tcPeer() {
     Some(pt) => {
@@ -471,8 +552,8 @@ function tc_mma(m, ad, av, bv, id, da, meta, rest) = {
       foreach (j from 0 to 1) {
         let cc = if j == 0 then c else pt;
         smap_clear(SP_MB);
-        tcTileB(bv, se, tcBT(m, id), tcSgB(id), tcKmB(id), n2, tcKS(m, hid, meta), 0, -1, tcMD(m, hid), 0);
-        tcTileB(bv, so, tcBT(m, id), tcSgB(id), tcKmB(id), n2, tcKS(m, hid, meta), 0, -1, tcMD(m, hid), n2);
+        tcTileB(0, bv, se, tcBT(m, id), tcSgB(id), tcKmB(id), n2, tcKS(m, hid, meta), 0, -1, tcMD(m, hid), 0, -1);
+        tcTileB(0, bv, so, tcBT(m, id), tcSgB(id), tcKmB(id), n2, tcKS(m, hid, meta), 0, -1, tcMD(m, hid), n2, -1);
         tcMmaB(m, tcSpace(cc, "tm"), c_smem[cchk(cc)], ad, av, hid, da, en, s, 0, meta)
       }
     },
@@ -491,13 +572,40 @@ function tcUE(x, mn, bi) =
   if asr_int(x, mn) == 0 then FV_Fin(false, land_int(x, mask(mn)), 1 - bi - mn)
   else FV_Fin(false, land_int(x, mask(mn)) + pow2(mn), asr_int(x, mn) - bi - mn)
 val tcScaleF : (int, int) -> fv
-/* idesc bit 23 (ISA tcgen05 instruction descriptor): UE8M0 = 1 (NaN 0xff), UE4M3 = 0 (MSB padded, NaN 0x7f) */
+/* the scale matrix type (PTX ISA 9.4 9.7.18.4.2, Tables 54, 55): UE8M0 = 1 (NaN 0xff), UE4M3 = 0 (MSB padded, NaN 0x7f),
+   UE5M3 = 2 ("unsigned floating-point format with 5 bits for exponent and 3 bits for mantissa ... does not support
+   infinity.  NaN value is limited to 0xff", 5.2.3; bias 15 as the model's cvt .ue5m3x2) */
 function tcScaleF(st, x) = match st {
   1 => if x == 255 then FV_NaN() else FV_Fin(false, 1, x - 127),
+  2 => miniDecF("ue5m3", x),
   _ => if land_int(x, 127) == 127 then FV_NaN() else tcUE(land_int(x, 127), 3, 7)
 }
+/* bits 23-24 for .kind::mxf4 / .kind::mxf4nvf4 (Table 55), bit 23 for .kind::mxf8f6f4 (Table 54, whose only value is
+   UE8M0 = 1; the model reads UE8M0 whatever the bit) */
 val tcScaleTy : (list(string), int) -> int
-function tcScaleTy(m, id) = if has(m, "kind::mxf4nvf4") then land_int(asr_int(id, 23), 1) else 1
+function tcScaleTy(m, id) = if has(m, "kind::mxf4nvf4") | has(m, "kind::mxf4") then land_int(asr_int(id, 23), 3) else 1
+
+/* the "sm_107f or higher in the same family" targets (sm_107f, sm_107a); no .target: not known */
+val tc107f : unit -> bool
+function tc107f() = isasm <= 0 | ((isaarch == "a" | isaarch == "f") & isasm >= 107 & isasm < 110)
+
+/* scale type rules (PTX ISA 9.4 9.7.18.10.7.1, Table 71): .kind::mxf8f6f4 and .kind::mxf4 take UE8M0 only (under
+   .isacheck; Table 55 also gives .kind::mxf4 the 2-bit field, whose UE4M3 / UE5M3 values the default mode honours);
+   .kind::mxf4nvf4 takes UE8M0, UE4M3 or UE5M3 with every .scale_vectorsize; 3 is no scale type (error).  "Support for
+   scale type UE5M3 requires target architecture sm_107f or higher in the same family, otherwise behavior is undefined";
+   likewise "scale type UE4M3 with scale_vectorsize .block32" (both under .ub strict, against the .target) */
+val tcScaleOk : (list(string), int) -> bool
+function tcScaleOk(m, id) = {
+  let st = tcScaleTy(m, id);
+  if isachk & ((has(m, "kind::mxf8f6f4") & land_int(asr_int(id, 23), 1) != 1) | (has(m, "kind::mxf4") & st != 1)) then
+    fault("tcgen05.mma: the scale type of .kind::mxf8f6f4 / .kind::mxf4 is UE8M0 [PTX ISA 9.4 9.7.18.10.7.1]", st)
+  else if st == 3 then fault("tcgen05.mma.block_scale: scale type 3 in the instruction descriptor is not defined", id)
+  else if ub & st == 2 & not_bool(tc107f()) then
+    fault("tcgen05.mma.block_scale: scale type UE5M3 requires sm_107f or higher in the same family [PTX ISA 9.4 9.7.18.10.7.1]", isasm)
+  else if ub & st == 0 & has(m, "block32") & not_bool(tc107f()) then
+    fault("tcgen05.mma.block_scale: scale type UE4M3 with .block32 requires sm_107f or higher in the same family [PTX ISA 9.4 9.7.18.10.7.1]", isasm);
+  not_bool(stuck)
+}
 
 /* scale factor byte b (= SF ID + j) of row / column x of an M x SF or SF x N scale matrix at column x0
    (ISA 9.7.17.10.7, Figures 231-258): lane x % 32, column x0 + x / 32, byte b % 4; bytes 4.. of the K = 96 forms
@@ -507,8 +615,9 @@ function tcSF(tm, x0, b, x, dim) =
   land_int(asr_int(tcWord(tm, tcKey(fmod_int(x, 32), x0 + tdiv_int(b, 4) * (if dim > 128 then 8 else 4) + tdiv_int(x, 32))),
                    8 * fmod_int(b, 4)), 255)
 
-val tc_mmabs : (list(string), bool, int, int, int, int, bool, int, int, int) -> unit
-function tc_mmabs(m, ad, av, bv, id, da, en, sac, sbc, meta) = {
+val tc_mmabs : (list(string), bool, int, int, int, int, bool, int, int, int, int) -> unit
+function tc_mmabs(m, ad, av, bv, id, da, en, sac, sbc, meta, lut) = {
+  if not_bool(tcScaleOk(m, id)) | not_bool(tcLutOk(m, id, lut)) then return ();
   let c = cur_cta();
   let tm = tcSpace(c, "tm");
   let sp = c_smem[cchk(c)];
@@ -522,7 +631,7 @@ function tc_mmabs(m, ad, av, bv, id, da, en, sac, sbc, meta) = {
   let st = tcScaleTy(m, id);
   tcAMat(m, tm, sp, ad, av, id, meta);
   smap_clear(SP_MB);
-  tcTileB(bv, sp, bt, tcSgB(id), tcKmB(id), n, ks, 0, -1, md, 0);
+  tcTileB(tm, bv, sp, bt, tcSgB(id), tcKmB(id), n, ks, 0, -1, md, 0, lut);
   if en then tcTileD(tm, mkty("f", 32), tcCol(da), md, n, 0) else smap_clear(SP_MC);
   smap_clear(SP_SA);
   smap_clear(SP_SB);
@@ -622,6 +731,45 @@ function tcCgOk(c, g) = {
   } else { smap_set(mp, "tccg", g); true }
 }
 
+/* collector buffer usage (PTX ISA 9.4 9.7.18.10, 9.7.18.10.10.1-3): .collector::{a,b,bN}::{fill,use,lastuse,discard}
+   only give the TensorCore "permission to reuse a previously loaded A or B matrix; however reuse is opportunistic ...
+   the source memory of an A or B matrix must not be modified while the MMA instruction using those matrices has not
+   completed - regardless of collector qualifier permissions", so they have no effect on the result.  ::use and ::lastuse
+   "require a previous fill to the collector buffer to be still valid": under .ub strict a fill makes buffer x valid,
+   ::lastuse and ::discard (also the default ::discard of a missing qualifier: .collector::a / ::b for tcgen05.mma{.sp},
+   .collector::b0 for .ws when no .collector qualifier is given) end it, and a ::use / ::lastuse without a valid fill is
+   reported.  The ISA does not say whose buffer it is; the model keeps one per CTA (the issuing thread's) */
+val tcCollOp : (list(string), string) -> string
+function tcCollOp(m, x) = {
+  let p = concat_str("collector::", concat_str(x, "::"));
+  if has(m, concat_str(p, "fill")) then "fill" else if has(m, concat_str(p, "use")) then "use"
+  else if has(m, concat_str(p, "lastuse")) then "lastuse" else if has(m, concat_str(p, "discard")) then "discard" else ""
+}
+val tcCollBuf : (int, string, string) -> unit
+function tcCollBuf(mp, x, op) = {
+  let key = concat_str("tccol:", x);
+  if (op == "use" | op == "lastuse") & not_bool(smap_has(mp, key)) then
+    fault(concat_str("tcgen05.mma: .collector::", concat_str(x, concat_str("::", concat_str(op,
+          " without a valid previous fill of the collector buffer [PTX ISA 9.4 9.7.18.10.10.1]")))), 0);
+  if op == "fill" then smap_set(mp, key, 1) else if (op == "lastuse" | op == "discard") & smap_has(mp, key) then smap_del(mp, key)
+}
+val tcColl : list(string) -> bool
+function tcColl(m) = {
+  if ub then {
+    let mp = c_misc[cchk(cur_cta())];
+    if has(m, "ws") then {
+      let o0 = tcCollOp(m, "b0"); let o1 = tcCollOp(m, "b1"); let o2 = tcCollOp(m, "b2"); let o3 = tcCollOp(m, "b3");
+      tcCollBuf(mp, "b0", if o0 == "" & o1 == "" & o2 == "" & o3 == "" then "discard" else o0);
+      tcCollBuf(mp, "b1", o1); tcCollBuf(mp, "b2", o2); tcCollBuf(mp, "b3", o3)
+    } else {
+      let oa = tcCollOp(m, "a"); let ob = tcCollOp(m, "b");
+      tcCollBuf(mp, "a", if oa == "" then "discard" else oa);
+      tcCollBuf(mp, "b", if ob == "" then "discard" else ob)
+    }
+  };
+  stuck
+}
+
 val exec_tc : (opcode, list(xop)) -> bool
 function exec_tc(o, ops) = {
   let m = o.mods;
@@ -690,29 +838,44 @@ function exec_tc(o, ops) = {
       [|XB([|a|], [||]), off, vs|] => { tcStore(tm, m, tcAddr(a), tl, rdu32(off), vecRegs(vs, mkty("b", 32)), has(m, "unpack::16b")); true },
       _ => false
     }
-  } else if has(m, "mma") & has(m, "block_scale") then match ops {
+  }
+  /* .collector qualifiers: no effect on the result; the fill rules under .ub strict (tcColl) */
+  else if has(m, "mma") & tcColl(m) then true
+  else if has(m, "mma") & has(m, "block_scale") then match ops {
     [|XB([|d|], [||]), av, bd, id, XB([|sa|], [||]), XB([|sb|], [||]), en|] if not_bool(has(m, "sp")) => {
       let (ad, a) : (bool, int) = match av { XB([|x|], [||]) => (false, tcAddr(x)), _ => (true, rd(av, mkty("b", 64))) };
       if not_bool(tcAbsBad(ad, a, rd(bd, mkty("b", 64)))) then
-        tc_mmabs(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), rdu32(en) != 0, tcCol(tcAddr(sa)), tcCol(tcAddr(sb)), -1);
+        tc_mmabs(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), rdu32(en) != 0, tcCol(tcAddr(sa)), tcCol(tcAddr(sb)), -1, -1);
       true
     },
-    [|XB([|d|], [||]), av, bd, XB([|mt|], [||]), id, XB([|sa|], [||]), XB([|sb|], [||]), en|] if has(m, "sp") => {
+    /* .decompress::lut::b: [d-tmem], a, b-compressed-desc, [b-decompress-metadata], idesc, ... */
+    [|XB([|d|], [||]), av, bd, XB([|lt|], [||]), id, XB([|sa|], [||]), XB([|sb|], [||]), en|] if has(m, "decompress::lut::b") & not_bool(has(m, "sp")) => {
       let (ad, a) : (bool, int) = match av { XB([|x|], [||]) => (false, tcAddr(x)), _ => (true, rd(av, mkty("b", 64))) };
       if not_bool(tcAbsBad(ad, a, rd(bd, mkty("b", 64)))) then
-        tc_mmabs(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), rdu32(en) != 0, tcCol(tcAddr(sa)), tcCol(tcAddr(sb)), tcCol(tcAddr(mt)));
+        tc_mmabs(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), rdu32(en) != 0, tcCol(tcAddr(sa)), tcCol(tcAddr(sb)), -1, tcCol(tcAddr(lt)));
+      true
+    },
+    [|XB([|d|], [||]), av, bd, XB([|mt|], [||]), id, XB([|sa|], [||]), XB([|sb|], [||]), en|] if has(m, "sp") & not_bool(has(m, "decompress::lut::b")) => {
+      let (ad, a) : (bool, int) = match av { XB([|x|], [||]) => (false, tcAddr(x)), _ => (true, rd(av, mkty("b", 64))) };
+      if not_bool(tcAbsBad(ad, a, rd(bd, mkty("b", 64)))) then
+        tc_mmabs(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), rdu32(en) != 0, tcCol(tcAddr(sa)), tcCol(tcAddr(sb)), tcCol(tcAddr(mt)), -1);
       true
     },
     _ => false
   } else if has(m, "mma") then match ops {
-    XB([|d|], [||]) :: av :: bd :: XB([|mt|], [||]) :: id :: rest if has(m, "sp") => {
+    XB([|d|], [||]) :: av :: bd :: XB([|mt|], [||]) :: id :: rest if has(m, "sp") & not_bool(has(m, "decompress::lut::b")) => {
       let (ad, a) : (bool, int) = match av { XB([|x|], [||]) => (false, tcAddr(x)), _ => (true, rd(av, mkty("b", 64))) };
-      if not_bool(tcAbsBad(ad, a, rd(bd, mkty("b", 64)))) then tc_mma(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), tcCol(tcAddr(mt)), rest);
+      if not_bool(tcAbsBad(ad, a, rd(bd, mkty("b", 64)))) then tc_mma(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), tcCol(tcAddr(mt)), -1, rest);
       true
     },
-    XB([|d|], [||]) :: av :: bd :: id :: rest if not_bool(has(m, "sp")) => {
+    XB([|d|], [||]) :: av :: bd :: XB([|lt|], [||]) :: id :: rest if has(m, "decompress::lut::b") & not_bool(has(m, "sp")) => {
       let (ad, a) : (bool, int) = match av { XB([|x|], [||]) => (false, tcAddr(x)), _ => (true, rd(av, mkty("b", 64))) };
-      if not_bool(tcAbsBad(ad, a, rd(bd, mkty("b", 64)))) then tc_mma(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), -1, rest);
+      if not_bool(tcAbsBad(ad, a, rd(bd, mkty("b", 64)))) then tc_mma(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), -1, tcCol(tcAddr(lt)), rest);
+      true
+    },
+    XB([|d|], [||]) :: av :: bd :: id :: rest if not_bool(has(m, "sp")) & not_bool(has(m, "decompress::lut::b")) => {
+      let (ad, a) : (bool, int) = match av { XB([|x|], [||]) => (false, tcAddr(x)), _ => (true, rd(av, mkty("b", 64))) };
+      if not_bool(tcAbsBad(ad, a, rd(bd, mkty("b", 64)))) then tc_mma(m, ad, a, rd(bd, mkty("b", 64)), rdb32(id), tcAddr(d), -1, -1, rest);
       true
     },
     _ => false

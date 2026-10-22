@@ -1,0 +1,15 @@
+// expect: tcgen05.mma.decompress::lut::b: only tcgen05.mma.kind::f8f6f4 and tcgen05.mma.kind::mxf8f6f4.block_scale{.block32}
+// .decompress::lut::b has no tcgen05.mma.sp form (PTX ISA 9.4 9.7.18.10.10.1, 9.7.18.10.10.2), under .isacheck
+.version 9.4
+.target sm_107f
+.address_size 64
+.isacheck ;
+.visible .entry k()
+{
+    .reg .b32 %r<5>; .reg .b64 %dA, %dB; .reg .pred %q;
+    mov.u32 %r1, 0; mov.u32 %r2, 384; mov.u32 %r3, 0; mov.u32 %r4, 400; mov.b64 %dA, 0; mov.b64 %dB, 0;
+    setp.eq.u32 %q, %r1, 1;
+    @%q tcgen05.mma.sp.cta_group::1.kind::f8f6f4.decompress::lut::b [%r1], %dA, %dB, [%r4], %r3, {%r1, %r1, %r1, %r1}, 1;
+    ret;
+}
+.launch k <<< 1, 1 >>> ();
