@@ -595,6 +595,7 @@ class Parser:
 
     def stmt(self):
         k, s = self.peek()
+        prev, self.prev_dir = getattr(self, "prev_dir", None), None
         if s == "{" and k == "punct":
             return ("block", self.block())
         if s == ".pragma":
@@ -616,8 +617,13 @@ class Parser:
                         self.take_int(); self.take_int(); self.take_int()
                 else:
                     break
+            self.prev_dir = "loc"
             return ("skip",)
         if s == ".loc_intermediate":
+            # "must be immediately preceded ... by a .loc directive for the same instruction. Only one
+            # .loc_intermediate may appear per instruction" (11.5.5): reported under .isacheck
+            if prev != "loc":
+                self.isa_notes.append(".loc_intermediate must immediately follow a .loc directive [PTX ISA 9.4 11.5.5]")
             self.next(); self.take_int(); self.take_int(); self.take_int(); return ("skip",)
         if s == "@" and k == "punct":
             self.next()
@@ -1619,6 +1625,9 @@ def serialize(mod):
     return "\n".join(lines) + "\n"
 
 def front(text):
+    # .nv_intermediate_source_section: the text between .source_begin and .source_end "may contain arbitrary text
+    # including newlines" (raw IR source, 11.5.6); it is not PTX and is dropped before lexing
+    text = re.sub(r"(\.source_begin)\b.*?(\.source_end)\b", r"\1 \2", text, flags=re.S)
     p = Parser(lex(text))
     mod = p.module()
     if p.isa_notes and any(t[0] == "isacheck" for t in mod):

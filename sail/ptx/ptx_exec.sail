@@ -99,6 +99,34 @@ function paramUb(o, ops) =
     else if n != "" & has(o.mods, "param::func") & kparam then fault(concat_str("ld.param::func: a kernel parameter: ", n), 0)
   }
 
+/* "The state space specified by memory instructions must match the state space of the address operand, otherwise the
+ * behavior is undefined" (PTX ISA 9.4 6.4.1): under .ub strict, for ld / ldu / st / atom / red with an explicit state
+ * space and a variable as the address ([var], [var+off], var[...]).  A .shared variable matches .shared::cluster
+ * (that window contains it).  An address in a register has no recorded space and is not checked. */
+val spaceUb : (opcode, list(xop)) -> unit
+function spaceUb(o, ops) =
+  if ub & has([|"ld", "ldu", "st", "atom", "red"|], o.base) & spaceOf(o.mods) != "generic" then {
+    let s = spaceOf(o.mods);
+    var x = ops;
+    while is_cons(x) do { match x {
+      XB(a :: _, _) :: rest => {
+        let n : string = match a { AN(v) => v, ANO(v, _) => v, ANR(v, _, _) => v, _ => "" };
+        if n != "" & not_bool(isRegName(n)) & not_bool(stuck) then {
+          let sy = lookupSym(n);
+          let vs = if sy < 0 then "" else sym_space(sy);
+          let f = fchk(t_fn[tchk(cur)]);
+          /* a device-function parameter whose address is taken lives in .local (5.1.6.2) and stays a .param operand */
+          let fparam = vs == "local" & s == "param" & (is_some(pdFind(f_params[f], n)) | is_some(pdFind(f_rets[f], n)));
+          if vs != "" & vs != "nosym" & vs != "func" & vs != s & not_bool(s == "shared_cluster" & vs == "shared") & not_bool(fparam) then
+            fault(concat_str(o.base, concat_str(": the instruction's state space .", concat_str(s, concat_str(" does not match the variable's .", concat_str(vs, concat_str(" (", concat_str(n, ")"))))))), 0)
+        };
+        x = rest
+      },
+      _ :: rest => x = rest,
+      [||] => ()
+    } }
+  }
+
 val exec_alu : (opcode, list(xop)) -> bool
 function exec_alu(o, ops) = {
   let m = o.mods;

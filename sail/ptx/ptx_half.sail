@@ -179,8 +179,8 @@ function exec_half(o, ops) = {
         let lt = laneTyH(ty_nth(o.tys, 0)); let w = fw(lt); let r = rd(x, U32);
         let k = if w == 16 then 13 else 16;
         let fm = fmods_of(m);
-        wr(d, pack16(post(fm, w, fround_rs(fv(rd(b, F32), F32), prec(w), ebits(w), land_int(r, mask(k)), k)),
-                     post(fm, w, fround_rs(fv(rd(a, F32), F32), prec(w), ebits(w), land_int(asr_int(r, 16), mask(k)), k))));
+        wr(d, pack16(pzoBits(m, 16, post(fm, w, fround_rs(fv(rd(b, F32), F32), prec(w), ebits(w), land_int(r, mask(k)), k))),
+                     pzoBits(m, 16, post(fm, w, fround_rs(fv(rd(a, F32), F32), prec(w), ebits(w), land_int(asr_int(r, 16), mask(k)), k)))));
         true
       } else if ntys(o) == 3 & has(m, "pack") then {
         let pt = ty_nth(o.tys, 0); let st = ty_nth(o.tys, 1);

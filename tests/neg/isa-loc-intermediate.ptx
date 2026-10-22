@@ -1,0 +1,19 @@
+// expect: .loc_intermediate must immediately follow a .loc directive
+// .loc_intermediate "must be immediately preceded ... by a .loc directive" (PTX ISA 9.4 11.5.5), under .isacheck
+.version 9.4
+.target sm_90
+.address_size 64
+.isacheck ;
+.file 1 "k.cu"
+.file 2 "k.tileir"
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r;
+    ld.param.u64 %o, [po];
+    .loc_intermediate 2 7 1
+    mov.u32 %r, 42;
+    st.global.u32 [%o], %r;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

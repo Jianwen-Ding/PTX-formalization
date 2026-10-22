@@ -520,3 +520,24 @@ is recorded in the list under "Second review pass".  The legality table is gener
       taken over rule 8), the swizzle modes per type and target, under `.ub strict` (tests/neg/tma-ub-swz-b6.ptx).
       Box-Size[0] / Tensor-Size[0] sizes stay unchecked (the byte layout question above)
 - [x] isaTables messages cited 9.3 section numbers under "PTX ISA 9.4"; renumbered
+- [x] cvt `.pzo` applied only to the f8 / f6 / f4 x2 destinations; now also `.f16`, `.bf16`, `.tf32`, `.f16x2`,
+      `.bf16x2` (also `.rs`) and the x4 `.rs` forms ("if the result of the conversion produces -0.0, it will be forced to
+      +0.0", §9.7.10.24); `.pzo` outside a float-to-float down-conversion is reported under `.isacheck`
+      (tests/cvt-pzo.ptx, tests/neg/isa-cvt-pzo-up.ptx)
+- [x] `.isacheck`: applypriority.async.bulk takes any multiple of 16 as size (the plain applypriority rule "only 128" was
+      applied to it); `.ignore_oob` with a report mechanism other than `.mbarrier::report::disabled`; fabric.try_pullred
+      imm-membermask other than 0xFFFFFFFF (9.4 makes it a rule, not UB)
+- [x] "The state space specified by memory instructions must match the state space of the address operand, otherwise the
+      behavior is undefined" (9.4 §6.4.1): ld / ldu / st / atom / red with an explicit state space on a variable of
+      another space are reported under `.ub strict` (a `.shared` variable matches `.shared::cluster`; a device-function
+      parameter moved to `.local` by taking its address stays a `.param` operand; register addresses are not tracked)
+      (tests/neg/ub-space-mismatch.ptx)
+- [x] `.nv_intermediate_source_section`: the raw text between `.source_begin` and `.source_end` was lexed as PTX (a `#`
+      or an unbalanced brace broke the module); it is now dropped before lexing.  `.loc_intermediate` not directly after
+      a `.loc` is reported under `.isacheck` (§11.5.5) (tests/syntax-intermediate-ir.ptx, tests/neg/isa-loc-intermediate.ptx).
+      Not checked: that its file index names an intermediate IR file
+- [x] `im2col_no_offs::w` (9.4 §5.5.5, §5.5.5.1): an out-of-bounds access "raises a runtime error" after the pixels
+      before it (the model silently stopped); under `.ub strict` the Lower-Corner-W >= 0 / Upper-Corner-W <= 0 rule and
+      "swizzling mode must not be set to (i) no swizzle" for the three `im2col::w` modes.  scripts/gen_tma_im2col.py's
+      store test went out of bounds on purpose; it now stays inside (tests/tma-i2c-store.ptx) and the old program is
+      tests/neg/tma-i2c-store-oob.ptx

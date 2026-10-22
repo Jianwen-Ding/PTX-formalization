@@ -32,6 +32,7 @@ function exec_dispatch(o0, ops) = {
   wgCheck(o, ops);
   paramUb(o, ops);
   hintUb(o, ops);
+  spaceUb(o, ops);
   if stuck then ()
   else if exec_prio(o, ops) then ()
   else if exec_specific(o, ops) then ()

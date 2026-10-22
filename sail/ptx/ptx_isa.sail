@@ -326,6 +326,19 @@ function isaColl(xs) = match xs {
   }
 }
 
+/* a .report_mechanism other than .mbarrier::report::disabled */
+val isaRepOn : list(string) -> bool
+function isaRepOn(m) = { let (w, _) = repPat(m); w != 0 }
+
+val isaPzoOk : list(ty) -> bool
+function isaPzoOk(ts) = match ts {
+  [|d, s|] =>
+    (s.k == "f" & s.w == 32 & (has([|"f16x2", "bf16x2", "e4m3x2", "e5m2x2", "e2m3x2", "e3m2x2", "e2m1x2", "e4m3x4", "e5m2x4",
+                                     "e2m3x4", "e3m2x4", "e2m1x4"|], d.k) | (d.k == "f" & d.w == 16) | d.k == "bf" | d.k == "tf"))
+    | ((s.k == "f16x2" | s.k == "bf16x2") & has([|"e4m3x2", "e5m2x2", "e2m3x2", "e3m2x2", "e2m1x2"|], d.k)),
+  _ => false
+}
+
 val isaQual : (opcode, list(xop)) -> string
 function isaQual(o, ops) = {
   let m = o.mods;
@@ -344,6 +357,11 @@ function isaQual(o, ops) = {
   else if b == "cvt" & isaAny([|dk|], [|"e4m3x4", "e5m2x4", "e2m3x4", "e3m2x4", "e2m1x4"|])
      & isaAny(m, [|"rn", "rz", "rm", "rp", "rna"|]) then
     concat_str("cvt to .", concat_str(dk, " rounds only with .rs [PTX ISA 9.4 9.7.10.24]"))
+  /* "The .pzo qualifier is only supported for float-to-float conversions where the destination type is strictly
+     smaller than the source type" (9.4 9.7.10.24): the forms of the syntax, .f32 to f16 / bf16 / tf32 / pairs / x2 / x4
+     and .f16x2 / .bf16x2 to the f8 / f6 / f4 x2 types */
+  else if b == "cvt" & has(m, "pzo") & not_bool(isaPzoOk(o.tys)) then
+    "cvt: .pzo is only supported for float-to-float conversions to a strictly smaller type [PTX ISA 9.4 9.7.10.24]"
   else if b == "cvt" & dk == "ue8m0x2" & isaAny(m, [|"rn", "rm", "rna", "rs"|]) then
     "cvt to .ue8m0x2 rounds with .rz or .rp (.frnd3) [PTX ISA 9.4 9.7.10.24]"
   else if b == "cvt" & dk == "ue5m3x2" & (isaAny(m, [|"rm", "rna", "rs"|]) | (has(m, "scaled::n1::ue8m0") & has(m, "rp"))) then
@@ -394,7 +412,17 @@ function isaQual(o, ops) = {
     "mbarrier.test_wait / try_wait.parity: the phase parity is 0 or 1 [PTX ISA 9.3 9.7.14.16.19]"
   else if b == "tensormap" & has(m, "replace") & isaBadImm(ops, 3, 1, 0, 4, 1) then
     "tensormap.replace: the only valid values for ord are [0..4] [PTX ISA 9.4 9.7.10.29]"
-  else if (b == "discard" | b == "applypriority") & isaBadImm(ops, 2, 1, 128, 128, 1) then
+  /* "In presence of .ignore_oob, the qualifier .report_mechanism, if specified, must be set to
+     .mbarrier::report::disabled" (9.4 9.7.10.28.4.1) */
+  else if b == "cp" & has(m, "ignore_oob") & isaRepOn(m) then
+    "cp.async.bulk: with .ignore_oob the report mechanism must be .mbarrier::report::disabled [PTX ISA 9.4 9.7.10.28.4.1]"
+  /* fabric.try_pullred: "Operand imm-membermask is an integer constant and must be 0xFFFFFFFF" (9.4 9.7.11.5.4) */
+  else if b == "fabric" & has(m, "try_pullred") & isaBadImm(ops, 5, 4, 4294967295, 4294967295, 1) then
+    "fabric.try_pullred: imm-membermask must be 0xFFFFFFFF [PTX ISA 9.4 9.7.11.5.4]"
+  /* applypriority.async.bulk: "The value of the size operand needs to be a multiple of 16" (9.4 9.7.10.18) */
+  else if b == "applypriority" & has(m, "bulk") & isaBadImm(ops, 2, 1, 16, 4294967295, 16) then
+    "applypriority.async.bulk: size must be a multiple of 16 [PTX ISA 9.4 9.7.10.18]"
+  else if (b == "discard" | (b == "applypriority" & not_bool(has(m, "bulk")))) & isaBadImm(ops, 2, 1, 128, 128, 1) then
     concat_str(b, if b == "discard" then ": the only supported size is 128 [PTX ISA 9.4 9.7.10.20]"
                   else ": the only supported size is 128 [PTX ISA 9.4 9.7.10.17]")
   else if (b == "ld" | b == "st") & isaCount(m, [|"weak", "volatile", "relaxed", sem|]) > 1 then

@@ -336,8 +336,16 @@ function tmUb(m, b, cs, store) =
       else if tmSwz(b) == 4 & padded then "the 96B swizzle mode does not support the padded sub-byte types"
       else if tmSwz(b) == 4 & not_bool(tmSub(b)) & tmBox(b, 0) * tmEb(b) > 96 then "the 96B swizzle mode needs Box-Size[0] <= 96B"
       else if tmSwz(b) == 4 & has(m, "im2col::w::128") then "the 96B swizzle mode does not support .im2col::w::128"
+      /* 9.4 5.5.5: "for these modes, the legal Swizzling Modes is required. In other words, swizzling mode must not be
+         set to (i) no swizzle and (ii) 128-byte swizzle mode with 32-byte atomicity with 8-byte flip" */
+      else if (has(m, "im2col::w") | has(m, "im2col::w::128") | has(m, "im2col_no_offs::w")) & swz == 0 then
+        "the im2col::w modes need a swizzling mode"
+      /* 9.4 5.5.5.1: for im2col_no_offs::w "Lower-Corner-W must be non-negative while the value for Upper-Corner-W must
+         be non-positive" */
+      else if has(m, "im2col_no_offs::w") & (tmLo(b, 0) < 0 | tmUp(b, 0) > 0) then
+        "im2col_no_offs::w: the bounding box must stay within the tensor (Lower-Corner-W >= 0, Upper-Corner-W <= 0)"
       else if tmSwz(b) == 3 & tmAtom(b) == 2 & store then "128B swizzle with 32B atomicity and 8B flip only for copies into shared memory"
-      else if tmSwz(b) == 3 & tmAtom(b) == 2 & (has(m, "im2col::w") | has(m, "im2col::w::128")) then "128B swizzle with 32B atomicity and 8B flip does not support .im2col::w modes"
+      else if tmSwz(b) == 3 & tmAtom(b) == 2 & (has(m, "im2col::w") | has(m, "im2col::w::128") | has(m, "im2col_no_offs::w")) then "128B swizzle with 32B atomicity and 8B flip does not support .im2col::w modes"
       else "";
     if padded then foreach (i from 1 to (tmRank(b) - 1)) if e == "" & tmod_int(tmStride(b, i), algn) != 0 then e = concat_str("tensor strides must be ", concat_str(dec_str(algn), "B aligned for the padded sub-byte types"));
     /* .global.shared::cta: "Starting co-ordinates for Bounding Box (tensorCoords) must be non-negative".  The second
@@ -495,7 +503,13 @@ else {
       let _ = memop_do(Loc("global", a), if op == "" then WrOp(eb, v) else BulkRedOp(op, t, eb, v));
       ws = rest
     }, [||] => () }
-  }
+  };
+  /* im2col_no_offs::w: "the negative values for tensor coordinates would result in illegal out-of-bounds access and
+     runtime error is raised in such cases. Additionally, note that once out of boundary access is detected, subsequent
+     pixel operations would not be performed" (PTX ISA 9.4 5.5.5.1): the pixels before the first out-of-bounds one are
+     written, then the run stops */
+  if not_bool(stuck) & has(m, "im2col_no_offs::w") & tmBad(b, cs, tmBox(b, 1)) < tmBox(b, 1) then
+    fault("cp.async.bulk.tensor.im2col_no_offs::w: out-of-bounds access (runtime error)", tmBad(b, cs, tmBox(b, 1)))
 }
 
 /* ---------------------------------------------------------------- tensormap.replace */

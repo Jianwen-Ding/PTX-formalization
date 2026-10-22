@@ -214,7 +214,7 @@ function rsPack(m, k, vs, r, i) = match vs {
   [||] => 0,
   v :: rest => {
     let sw = if mBits(k) <= 4 then 4 else 8;
-    let c = miniFromRS(k, fv(v, F32), has(m, "relu"), 3, rsBits(k, r, i), if k == "e2m1" then 8 else 16);
+    let c = pzoFix(has(m, "pzo"), k, miniFromRS(k, fv(v, F32), has(m, "relu"), 3, rsBits(k, r, i), if k == "e2m1" then 8 else 16));
     lor_int(shl_int(c, sw * (3 - i)), rsPack(m, k, rest, r, i + 1))
   }
 }

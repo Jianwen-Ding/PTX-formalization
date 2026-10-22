@@ -240,6 +240,10 @@ function bop(v, o, c) = match o { "and" => land_int(v, c), "or" => lor_int(v, c)
 val intRnd : (list(string), string) -> string
 function intRnd(m, d) = pick(m, [|"rni", "rzi", "rmi", "rpi"|], d)
 
+/* .pzo: "if the result of the conversion produces -0.0, it will be forced to +0.0" (PTX ISA 9.4 9.7.10.24) */
+val pzoBits : (list(string), int, int) -> int
+function pzoBits(m, w, r) = if has(m, "pzo") & r == pow2(w - 1) then 0 else r
+
 val cvt : (list(string), ty, ty, int) -> int
 function cvt(m, d, s, v) = {
   let fm = fmods_of(m);
@@ -249,7 +253,7 @@ function cvt(m, d, s, v) = {
   let fd = if fw(d) == 32 then fm else { fm with ftz = false };
   if isF(d) & isF(s) & intRnd(m, "") != "" then
     post(fd, fw(d), roundW(rndInt(fv(ftzIn(fs, fw(s), v), s), intRnd(m, "")), fw(d)))
-  else if isF(d) & isF(s) then fin(fd, fw(d), fv(ftzIn(fs, fw(s), v), s), false)
+  else if isF(d) & isF(s) then pzoBits(m, wid(d), fin(fd, fw(d), fv(ftzIn(fs, fw(s), v), s), false))
   else if isF(d) then fin(fd, fw(d), fv_of_int(ival(v, s)), false)
   else if isF(s) then f2i(fv(ftzIn(fs, fw(s), v), s), intRnd(m, "rzi"), d, fw(s) == 64)
   else trunc(if has(m, "sat") then clamp(ival(v, s), d) else ival(v, s), wid(d))
