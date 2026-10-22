@@ -703,5 +703,6 @@ translation handles them on the Python side); the `racy` report.  Covered by one
 barriers, control dependencies, `fence.acquire` / `fence.release`, `atom.exch` / `.cas` and other RMW operators
 (ASPLOS, where values are abstract); aliases and proxies (mixedproxy).  Neither model nor ptxmm covers mixed-size
 accesses, §8.6.1 strong cross-proxy accesses, asynchronous operations (§8.9.1.1), mbarrier, multimem, or CUDA API
-synchronization.  ptxmm still treats a failing `atom.cas` as a write of the old value (Table 20: a write only "if
-[it results] in a write"); no test here distinguishes the two.
+synchronization.  A failing `atom.cas` is no longer a write in ptxmm (Table 20: a write only "if [it results] in a
+write"): only the race verdict tells the two readings apart, so the litmus format gained an optional race expectation
+(`expect allowed race-free`) and tests/memmodel/cas-fail.litmus checks it.

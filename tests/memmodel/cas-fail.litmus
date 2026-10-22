@@ -1,0 +1,20 @@
+# "write operation: All variants of st instruction, and atomic operations if they result in a write" (PTX ISA 9.4,
+# Table 20): a failing atom.cas only reads, so a weak load of the same location does not race with it; a succeeding one
+# writes and does.
+test CAS-fail-no-race
+init x=0
+thread T1 cta=0
+  r0 = atom.relaxed.gpu.cas x 5 9
+thread T2 cta=1
+  r1 = ld.weak x
+exists r0==0 && r1==0
+expect allowed race-free
+
+test CAS-success-race
+init x=0
+thread T1 cta=0
+  r0 = atom.relaxed.gpu.cas x 0 9
+thread T2 cta=1
+  r1 = ld.weak x
+exists r0==0 && r1==9
+expect allowed racy

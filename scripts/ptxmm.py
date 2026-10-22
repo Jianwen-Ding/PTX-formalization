@@ -14,7 +14,7 @@ Litmus tests are small text files (tests/memmodel/*.litmus):
       fence.acq_rel.sys
       r1 = ld.weak x
     exists r0==1 && r1==0
-    expect forbidden
+    expect forbidden            # optionally followed by racy | race-free
 
 Instructions:  st[.weak|.relaxed|.release|.volatile][.cta|.cluster|.gpu|.sys] ADDR VAL
                rN = ld[.weak|.relaxed|.acquire|.volatile][.scope] ADDR
@@ -54,7 +54,7 @@ def parse(text):
             continue
         w = line.split()
         if w[0] == 'test':
-            cur = dict(name=w[1], init={}, threads=[], alias=[], exists=None, expect=None, desc='')
+            cur = dict(name=w[1], init={}, threads=[], alias=[], exists=None, expect=None, race=None, desc='')
             tests.append(cur)
         elif w[0] == 'init':
             for kv in w[1:]:
@@ -70,6 +70,8 @@ def parse(text):
             cur['exists'] = line.strip()[len('exists'):].strip()
         elif w[0] == 'expect':
             cur['expect'] = w[1]
+            if len(w) > 2:
+                cur['race'] = w[2]          # racy | race-free: whether some execution has a data race
         elif w[0] == 'desc':
             cur['desc'] = line.strip()[4:].strip()
         else:
@@ -270,6 +272,11 @@ def evaluate(evs, rf):
     return value, exe, env
 
 
+def rfv(w, value):
+    """the value a read takes from write w"""
+    return w.value if w.tid == -1 else value[w.idx]
+
+
 def enumerate_executions(test):
     evs, tinfo, alias = build(test)
     n = len(evs)
@@ -313,7 +320,15 @@ def enumerate_executions(test):
         livei = {e.idx for e in live}
         if any((r.idx in livei) and (rf[r.idx].tid != -1 and rf[r.idx].idx not in livei) for r in reads):
             continue
-        lw = [w for w in writes if w.idx in livei]
+        # "write operation: ... atomic operations if they result in a write" (Table 20): a failing atom.cas reads but does
+        # not write, so it is no write in this execution (nothing reads from it, it has no place in the write order)
+        failed = {e.idx for e in live if e.op == 'atom' and e.aop == 'cas' and rfv(rf[e.idx], value) != val(e.args[1], env)}
+        if any(r.idx in livei and rf[r.idx].idx in failed for r in reads):
+            continue
+        for e in evs:
+            if e.op in ('st', 'atom', 'red'):
+                e.is_write = e.idx not in failed
+        lw = [w for w in writes if w.idx in livei and w.idx not in failed]
         lr = [r for r in reads if r.idx in livei]
         # write orders per location (init first)
         per_loc = {l: [w for w in lw if w.loc == l] for l in locs}
@@ -531,8 +546,9 @@ def main(argv):
             outs = run(t)
             hit = any(holds(t['exists'], o) for o in outs) if t['exists'] else None
             verdict = 'allowed' if hit else 'forbidden'
-            ok = (t['expect'] is None) or (t['expect'] == verdict)
             racy = any(dict(o).get('#race') for o in outs)
+            ok = ((t['expect'] is None) or (t['expect'] == verdict)) and \
+                 (t['race'] is None or t['race'] == ('racy' if racy else 'race-free'))
             print(f"{'PASS' if ok else 'FAIL'}  {t['name']:28s} {verdict:9s} {'racy' if racy else 'race-free':9s} ({len(outs)} outcomes)")
             if not ok:
                 bad += 1
