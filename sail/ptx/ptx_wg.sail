@@ -273,6 +273,8 @@ function wgCheck(o, ops) =
       while is_cons(rs) & not_bool(stuck) do { match rs { r :: rest => {
         if string_length(r) > 0 & stake(r, 1) != "#" & stake(r, 1) != "+" & smap_has(sp, r) then
           fault(concat_str("access to register ", concat_str(r, " of a wgmma.mma_async before a wgmma.wait_group covering it")), 0);
+        /* "~r": accessed since the last wgmma.fence (a later mma_async on r needs a fence first, 9.7.16.7.1) */
+        smap_set(sp, concat_str("~", r), 1);
         rs = rest
       }, [||] => () } }
     }
@@ -282,7 +284,15 @@ val exec_wg : (opcode, list(xop)) -> bool
 function exec_wg(o, ops) = {
   let m = o.mods;
   if o.base != "wgmma" then false
-  else if has(m, "fence") then { if ub then smap_set(wgSp(), "#f", 1); true }
+  else if has(m, "fence") then {
+    if ub then {
+      let sp = wgSp();
+      smap_set(sp, "#f", 1);
+      var i : int = 0;
+      while i < smap_size(sp) do { let k = smap_key(sp, i); if stake(k, 1) == "~" then smap_del(sp, k) else i = i + 1 }
+    };
+    true
+  }
   else if has(m, "commit_group") then {
     if ub then { let sp = wgSp(); smap_set(sp, "#g", (if smap_has(sp, "#g") then smap_get(sp, "#g") else 0) + 1) };
     true
@@ -320,6 +330,12 @@ function exec_wg(o, ops) = {
         else {
           let g = if smap_has(sp, "#g") then smap_get(sp, "#g") else 0;
           var rs = pend_append(xopRegs([|dv|]), if isVec(av) then xopRegs([|av|]) else [||]);
+          /* "Between a register access by a thread in the warpgroup and any wgmma.mma_async instruction that accesses the
+             same registers ... wgmma.fence ... must be issued" (9.7.16.7.1) */
+          var cs = rs;
+          while is_cons(cs) & not_bool(stuck) do { match cs { r :: rest => {
+            if smap_has(sp, concat_str("~", r)) then fault(concat_str("register ", concat_str(r, " accessed since the last wgmma.fence is used by wgmma.mma_async")), 0);
+            cs = rest }, [||] => () } };
           while is_cons(rs) do { match rs { r :: rest => { if smap_has(sp, r) then smap_set(sp, r, g) else smap_set(sp, concat_str("+", r), g); rs = rest }, [||] => () } }
         }
       };

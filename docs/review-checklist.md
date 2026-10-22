@@ -261,8 +261,9 @@ Open:
 - [x] wgmma ordering (§9.7.16.7.1, §9.7.16.7.3) under `.ub strict`: a `wgmma.mma_async` before any `wgmma.fence`, and an
       instruction other than wgmma naming an accumulator or A register of an mma_async before a `wait_group` covers its
       group (wait_group N leaves the N most recent groups pending) (tests/neg/wgmma-ub-*.ptx); the 37 generated wgmma
-      tests pass under `.ub strict`.  Not checked: the fence required between other register accesses and a later
-      mma_async
+      tests pass under `.ub strict`.  Also the fence required between another register access and a later mma_async
+      on the same register (tests/neg/wgmma-ub-fence-between.ptx); not checked: the same-shape exception for
+      accumulators shared by mma_async instructions of different shapes
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 
