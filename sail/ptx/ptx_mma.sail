@@ -666,9 +666,22 @@ function spPos(t, nib, j) =
   else if ew(t) == 4 then 2 * land_int(asr_int(nib, 2 * tdiv_int(j, 2)), 3) + fmod_int(j, 2)
   else land_int(asr_int(nib, 2 * j), 3)
 
-val spFillAll : (string, ty, list((int, list(int))), int) -> unit
-function spFillAll(s, t, arr, sel) = {
+/* 9.7.15.6.1, under .ub strict: the sparsity selector is in {0..3} when one thread holds the metadata, {0, 1} for a
+ * thread pair, 0 when all four threads do; metadata values: .tf32 "0b1110 and 0b0100 are the only meaningful index
+ * values"; for mma.sp::ordered_metadata and the f8f6f4 / mx kinds "0b0100, 0b1000, 0b1001, 0b1100, 0b1101, 0b1110 are
+ * the meaningful values"; otherwise "0b0000, 0b0101, 0b1010, 0b1111 are invalid values for metadata" */
+val spSelOk : (int, int) -> bool
+function spSelOk(nc, sel) = if nc == 4 then sel >= 0 & sel <= 3 else if nc == 8 then sel == 0 | sel == 1 else sel == 0
+val spNibOk : (ty, bool, int) -> bool
+function spNibOk(t, ord, nib) =
+  if t.k == "tf" then nib == 14 | nib == 4
+  else if ord then has([|"4", "8", "9", "12", "13", "14"|], dec_str(nib))
+  else not_bool(nib == 0 | nib == 5 | nib == 10 | nib == 15)
+
+val spFillAll : (string, ty, list((int, list(int))), int, bool) -> unit
+function spFillAll(s, t, arr, sel, ord) = {
   smap_clear(SP_MA);
+  if ub & not_bool(spSelOk(tdiv_int(shK(s), spCw(t)), sel)) then fault("mma.sp: sparsity selector outside the values of the shape", sel);
   foreach (l from 0 to 31) {
     match lane_get(arr, l) {
       Some(rs) => foreach (i from 0 to (spNel(s) - 1)) {
@@ -676,12 +689,16 @@ function spFillAll(s, t, arr, sel) = {
         let rh = spRh(t, u);
         let ch = spChunk(t, u, fmod_int(l, 4));
         let nib = spNib(t, arr, tdiv_int(l, 4), rh, ch, tdiv_int(shK(s), spCw(t)), sel);
+        if ub & not_bool(stuck) & not_bool(spNibOk(t, ord, nib)) then fault("mma.sp: metadata index value that is not meaningful", nib);
         mset(SP_MA, rc(tdiv_int(l, 4) + 8 * rh, spCw(t) * ch + spPos(t, nib, fmod_int(i, spNz(t)))), fragBits(rs, 0, t, i))
       },
       None() => ()
     }
   }
 }
+
+val spOrd : list(string) -> bool
+function spOrd(m) = has(m, "sp::ordered_metadata") | has(m, "kind::f8f6f4") | has(m, "kind::mxf8f6f4") | has(m, "kind::mxf4") | has(m, "kind::mxf4nvf4")
 
 val mmasp_compute : (list(cval), list((int, list(int)))) -> list((int, list(int)))
 function mmasp_compute(d, arr) = {
@@ -692,7 +709,7 @@ function mmasp_compute(d, arr) = {
   let ct = cv_ty(d, 4);
   let ra = regsOf(spNel(s), at_);
   let rb = regsOf(nElB(s), bt);
-  spFillAll(s, at_, arr, cv_int(d, 6));
+  spFillAll(s, at_, arr, cv_int(d, 6), spOrd(cv_mods(d, 5)));
   fillAll(SP_MB, 1, s, bt, arr, nElB(s), ra);
   fillC(SP_MC, s, ct, arr, ra + rb);
   resRows(s, dt, at_, bt, ct, cv_mods(d, 5));
@@ -703,7 +720,7 @@ val mmabssp_compute : (list(cval), list((int, list(int)))) -> list((int, list(in
 function mmabssp_compute(d, arr) = {
   let s = cv_str(d, 0);
   let at_ = cv_ty(d, 2);
-  spFillAll(s, at_, arr, cv_int(d, 7));
+  spFillAll(s, at_, arr, cv_int(d, 7), spOrd(cv_mods(d, 5)));
   mmabs_core(d, arr, regsOf(spNel(s), at_))
 }
 

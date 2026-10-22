@@ -254,6 +254,10 @@ Open:
       aligned data offset and shared pointer, a `.layout::v1` mbarrier, a unicast endpoint (multicast with `.multimem`),
       a 256-byte aligned counter not overlapping the data (tests/neg/fabric-ub-unicast.ptx); tests/fabric-mm-counted.ptx
       initialised its mbarrier without `.layout::v1` and was corrected
+- [x] sparse `mma.sp` (§9.7.15.6.1) under `.ub strict`: a sparsity selector outside the shape's values ({0..3}, {0, 1}
+      or 0) and metadata index values that are not meaningful (tf32: 0b1110 / 0b0100; ordered_metadata and the f8f6f4 /
+      mx kinds: 0b0100 0b1000 0b1001 0b1100 0b1101 0b1110; otherwise not 0b0000 0b0101 0b1010 0b1111)
+      (tests/neg/mma-sp-ub-*.ptx); the generated sp / sp-bs / wgsp / tcsp tests pass under `.ub strict`
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 
