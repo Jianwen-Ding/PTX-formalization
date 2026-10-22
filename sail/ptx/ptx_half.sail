@@ -221,8 +221,15 @@ val exec_memq_prio : (opcode, list(xop)) -> bool
 function exec_memq_prio(o, ops) = {
   let m = o.mods;
   match (o.base, ops) {
-    ("atom", [|XV(ds), XB([|a|], [||]), XV(bs)|]) => { let t = ty1(o); atv(ds, ea(a, spaceOf(m)), atomOp(m), t, rdList(bs, t)); true },
-    ("red", [|XB([|a|], [||]), XV(bs)|]) => { let t = ty1(o); atv([||], ea(a, spaceOf(m)), atomOp(m), t, rdList(bs, t)); true },
+    /* a vector atom / red is one access of (elements x element size) bytes for the alignment rule (6.4.1) */
+    ("atom", [|XV(ds), XB([|a|], [||]), XV(bs)|]) => {
+      let t = ty1(o); let l = ea(a, spaceOf(m));
+      if vecAligned(l, sop_count(bs) * bytes(t)) then atv(ds, l, atomOp(m), t, rdList(bs, t)); true
+    },
+    ("red", [|XB([|a|], [||]), XV(bs)|]) => {
+      let t = ty1(o); let l = ea(a, spaceOf(m));
+      if vecAligned(l, sop_count(bs) * bytes(t)) then atv([||], l, atomOp(m), t, rdList(bs, t)); true
+    },
     _ => false
   }
 }

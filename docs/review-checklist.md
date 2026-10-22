@@ -302,7 +302,8 @@ Open:
       `.ub strict` (tests/neg/vec-ub-align.ptx).  Seven tests stored vectors at offsets that are not multiples of the
       vector size (or loaded from a 4-byte aligned array); they now use aligned pieces or `.align 8` with unchanged
       results (alloca-local, carry, const-expr, decl-init-shape, ld-nc-vec-sink, shared-per-kernel, sub-borrow);
-      no ZLUDA program is affected
+      no ZLUDA program is affected.  The same for vector atom / red (§9.7.14.5-6) (tests/atom-vec.ptx,
+      tests/neg/atom-vec-ub-align.ptx)
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 
