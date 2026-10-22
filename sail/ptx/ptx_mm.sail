@@ -205,6 +205,36 @@ function fbBases(le, off, n, all) = {
   };
   r
 }
+/* the number of devices of logical endpoint le (0: none) */
+val fbDevs : int -> int
+function fbDevs(le) = {
+  var r : int = 0;
+  var l = fabtab;
+  while is_cons(l) do { match l { (i, _, bs) :: rest => { if i == le then r = list_length(bs); l = rest }, [||] => () } };
+  r
+}
+
+/* the conditions of fabric.try_get / try_put / try_red (9.7.10.5.1-3), under .ub strict: size a multiple of 16, the data
+ * offset and the shared pointer 16-byte aligned, the mbarrier "initialized with .layout::v1", a unicast endpoint (or a
+ * multicast one with .multimem), a 256-byte aligned counter that does not overlap the data ("If counter and data
+ * overlap, the behavior is undefined", 9.7.10.4.3) */
+val fbUb : (string, int, int, int, loc, loc, int, bool) -> bool
+function fbUb(op, le, off, n, sl, bl, cn, mmc) =
+  if not_bool(ub) then true
+  else {
+    let so : int = match sl { Loc(_, a) => a, _ => 0 };
+    let (_, _, _, _, lay) = mbGet(mbKey(bl));
+    let e = if tmod_int(n, 16) != 0 then "size is not a multiple of 16"
+            else if tmod_int(off, 16) != 0 | tmod_int(so, 16) != 0 then "data offset or shared pointer not 16-byte aligned"
+            else if mbHas(mbKey(bl)) & lay != 1 then "the mbarrier is not initialized with .layout::v1"
+            else if mmc & fbDevs(le) < 2 then ".multimem needs a multicast logical endpoint"
+            else if not_bool(mmc) & fbDevs(le) > 1 then "the logical endpoint is not unicast"
+            else if cn >= 0 & tmod_int(cn, 256) != 0 then "the counter offset is not 256-byte aligned"
+            else if cn >= 0 & cn < off + n & cn + 8 > off then "the counter overlaps the data"
+            else "";
+    if e != "" then { fault(concat_str("fabric.", concat_str(op, concat_str(": ", e))), 0); false } else true
+  }
+
 val fbHead : list(int) -> int
 function fbHead(l) = match l { a :: _ => a, [||] => -1 }
 
@@ -303,6 +333,7 @@ function exec_fabric(o, ops) = {
     /* try_get [dst], [leId, off], size, [mbar] */
     XB([|d|], [||]) :: XB([|l|], [|IS(off)|]) :: sz :: XB([|b|], [||]) :: _ if has(m, "try_get") => {
       let n = rdu32(sz);
+      if not_bool(fbUb("try_get", hAddrA(l), rd_sop(off, mkty("u", 64)), n, ea(d, "shared"), ea(b, "shared"), -1, false)) then return true;
       match fbBases(hAddrA(l), rd_sop(off, mkty("u", 64)), n, false) {
         a :: _ => {
           let v = memop_do(Loc("global", a), RdOp(n));
@@ -341,23 +372,27 @@ function exec_fabric(o, ops) = {
     /* try_put [leId, off], [src], size, [mbar] {, byteMask}  /  [leId, off, counter], ... */
     XB([|l|], [|IS(off)|]) :: XB([|s|], [||]) :: sz :: XB([|b|], [||]) :: rest if has(m, "try_put") => {
       let n = rdu32(sz);
+      if not_bool(fbUb("try_put", hAddrA(l), rd_sop(off, mkty("u", 64)), n, ea(s, "shared"), ea(b, "shared"), -1, has(m, "multimem"))) then return true;
       fb_put(m, fbBases(hAddrA(l), rd_sop(off, mkty("u", 64)), n, has(m, "multimem")), ea(s, "shared"), ea(b, "shared"), n,
              if has(m, "cp_mask") & xop_count(rest) > 0 then lastArg(xtake1(rest)) else -1, [||]);
       true
     },
     XB([|l, off|], [|IS(cn)|]) :: XB([|s|], [||]) :: sz :: XB([|b|], [||]) :: _ if has(m, "try_put") => {
       let n = rdu32(sz);
+      if not_bool(fbUb("try_put", hAddrA(l), hAddrA(off), n, ea(s, "shared"), ea(b, "shared"), rd_sop(cn, mkty("u", 64)), has(m, "multimem"))) then return true;
       fb_put(m, fbBases(hAddrA(l), hAddrA(off), n, has(m, "multimem")), ea(s, "shared"), ea(b, "shared"), n, -1,
              fbBases(hAddrA(l), rd_sop(cn, mkty("u", 64)), 8, has(m, "multimem")));
       true
     },
     XB([|l|], [|IS(off)|]) :: XB([|s|], [||]) :: sz :: XB([|b|], [||]) :: _ if has(m, "try_red") => {
       let n = rdu32(sz);
+      if not_bool(fbUb("try_red", hAddrA(l), rd_sop(off, mkty("u", 64)), n, ea(s, "shared"), ea(b, "shared"), -1, has(m, "multimem"))) then return true;
       fb_red(m, fbBases(hAddrA(l), rd_sop(off, mkty("u", 64)), n, has(m, "multimem")), ea(s, "shared"), ea(b, "shared"), n, ty1(o), [||]);
       true
     },
     XB([|l, off|], [|IS(cn)|]) :: XB([|s|], [||]) :: sz :: XB([|b|], [||]) :: _ if has(m, "try_red") => {
       let n = rdu32(sz);
+      if not_bool(fbUb("try_red", hAddrA(l), hAddrA(off), n, ea(s, "shared"), ea(b, "shared"), rd_sop(cn, mkty("u", 64)), has(m, "multimem"))) then return true;
       fb_red(m, fbBases(hAddrA(l), hAddrA(off), n, has(m, "multimem")), ea(s, "shared"), ea(b, "shared"), n, ty1(o),
              fbBases(hAddrA(l), rd_sop(cn, mkty("u", 64)), 8, has(m, "multimem")));
       true

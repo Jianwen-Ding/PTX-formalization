@@ -250,6 +250,10 @@ Open:
       the existing bulk and TMA tests pass under `.ub strict`
 - [x] a plain ld / st / atom on a multimem address is reported under `.ub strict` (§9.7.9.15) (tests/neg/multimem-plain-ld.ptx);
       multimem.* on a non-multimem address already stops
+- [x] fabric try_get / try_put / try_red (§9.7.10.5.1-3, §9.7.10.4.3) under `.ub strict`: size a multiple of 16, 16-byte
+      aligned data offset and shared pointer, a `.layout::v1` mbarrier, a unicast endpoint (multicast with `.multimem`),
+      a 256-byte aligned counter not overlapping the data (tests/neg/fabric-ub-unicast.ptx); tests/fabric-mm-counted.ptx
+      initialised its mbarrier without `.layout::v1` and was corrected
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

@@ -1,0 +1,21 @@
+// expect: fabric.try_get: the logical endpoint is not unicast
+// "The logical endpoint associated with srcLeId must be a unicast logical endpoint" (9.7.10.5.1), under .ub strict
+.version 9.4
+.target sm_100a
+.address_size 64
+.ub strict ;
+.visible .entry k()
+{
+    .reg .u32 %le; .reg .b64 %off;
+    .shared .align 16 .b8 data[64];
+    .shared .align 8 .b64 bar;
+    mbarrier.init.shared.layout::v1.b64 [bar], 1;
+    mov.u32 %le, 2; mov.u64 %off, 0;
+    mbarrier.arrive.expect_tx.shared.b64 _, [bar], 32;
+    fabric.try_get.async.shared::cta.mbarrier::complete_tx::bytes.mbarrier::report::fabric.relaxed.sys [data], [%le, %off], 32, [bar];
+    ret;
+}
+.buffer B0 .u32 [32];
+.buffer B1 .u32 [32];
+.fabric 2 .size 128 { B0, B1 } ;
+.launch k <<< 1, 1 >>> ();

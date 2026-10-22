@@ -8,7 +8,7 @@
     .shared .align 16 .b8 data[64];
     .shared .align 8 .b64 bar;
     ld.param.u64 %o, [po];
-    mbarrier.init.shared.b64 [bar], 1;
+    mbarrier.init.shared.layout::v1.b64 [bar], 1;
     st.shared.v4.u32 [data], {1, 2, 3, 4}; st.shared.v4.u32 [data+16], {5, 6, 7, 8};
     mov.u32 %le, 1; mov.u64 %off, 0; mov.u64 %coff, 256;
     mbarrier.arrive.expect_tx.shared.b64 _, [bar], 2;
