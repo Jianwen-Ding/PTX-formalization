@@ -1411,11 +1411,116 @@ def check_types(fname, ld):
                 ot = ld.rk.get(r)
                 if ot is not None and not ty_agrees(it, ot, rel):
                     raise PtxError("%s: %s: operand %s of type .%s%d does not agree with the instruction type .%s%d "
-                                   "[PTX ISA 9.4 9.4, Table %s]" % (fname, opc, r.split("@")[0], ot[0], ot[1], it[0], it[1],
+                                   "[PTX ISA 9.4 section 9.4, Table %s]" % (fname, opc, r.split("@")[0], ot[0], ot[1], it[0], it[1],
                                                                     "27 / 28" if rel else "26"))
+
+# ---------------------------------------------------------------- declaration rules (ISA 9.4 5.4), under .isacheck
+MASKS = {0xFF << (8 * i) for i in range(8)}
+
+def init_leaves(v):
+    if v is None:
+        return []
+    if v[0] == "brace":
+        return [x for e in v[1] for x in init_leaves(e)]
+    return [v]
+
+def init_names(v):
+    """the symbols an initializer value refers to, and whether it is inside mask()"""
+    if v[0] in ("name", "nameoff", "generic", "genericoff"):
+        return [(v[1], False)]
+    if v[0] == "namediff":
+        return [(v[1], False), (v[2], False)]
+    if v[0] == "mask":
+        return [(n, True) for n, _ in init_names(v[2])]
+    return []
+
+def check_decl(td, spaces, labels):
+    _, a1, t, a2, items, init = td
+    st = aset(a1) | aset(a2)
+    sp = dspace(st)
+    ty = type_of(t)
+    tn = t[1:]
+    name = item_name(items[0])
+    def err(msg, sec):
+        raise PtxError("%s: %s [PTX ISA 9.4 %s]" % (name, msg, sec))
+    if not st & {"reg", "shared", "local", "param", "global", "const"}:
+        err("a variable declaration names the state space in which the variable resides", "5.4.1")
+    if tn == "pred" and sp != "reg":
+        err("predicate variables may only be declared in the register state space", "5.4.1")
+    vec = [v for v in ("v2", "v4", "v8") if v in st]
+    if vec:
+        if tn == "pred":
+            err("vectors of .pred are not allowed", "5.4.2")
+        if vec[0] == "v8":
+            err("vector variables have length 2 or 4", "5.4.2")
+        if int(vec[0][1:]) * ty[1] > 128:
+            err("vectors cannot exceed 128 bits in length", "5.4.2")
+    for a in a1 + a2:
+        if a[0] == ".align" and (a[1] <= 0 or a[1] & (a[1] - 1)):
+            err("the .align byte-count must be a power of two", "5.4.5")
+    if init is None:
+        return
+    if any(it[0] == "range" for it in items):
+        err("initializers are not permitted with parameterized variable names", "5.4.6")
+    if sp not in ("global", "const"):
+        err("variable initialization is supported only for the .const and .global state spaces", "5.4.4")
+    if "extern" in st:
+        err("initializers are not allowed in external variable declarations", "5.4.4")
+    if tn in ("f16", "f16x2", "pred"):
+        err("initializers are allowed for all types except .f16, .f16x2 and .pred", "5.4.4")
+    addr = False
+    for v in init_leaves(init):
+        if v[0] == "mask" and v[1] not in MASKS:
+            err("mask() takes 0xFF shifted by a whole number of bytes", "5.4.4")
+        for n, masked in init_names(v):
+            if n in labels:
+                err("labels cannot be used in initializers", "5.4.4")
+            if spaces.get(n, "global") not in ("global", "const", "func"):
+                err("only variables in .global or .const state spaces may be used in initializers", "5.4.4")
+            addr = True
+            if tn == "u8" and not masked:
+                err("type .u8 holds an address only with the mask() operator", "5.4.4")
+    if addr and tn not in ("u8", "u32", "u64"):
+        err("variables that hold addresses of variables or functions should be of type .u8 or .u32 or .u64", "5.4.4")
+
+def check_decls(mod):
+    spaces = {}
+    for td in mod:
+        if td[0] == "decl":
+            for it in td[4]:
+                spaces[item_name(it)] = dspace(aset(td[1]) | aset(td[3]))
+        elif td[0] in ("func", "proto"):
+            spaces[td[4] if td[0] == "func" else td[3]] = "func"
+    def body(stmts, labels, sps):
+        for st in stmts:
+            if st[0] == "block":
+                body(st[1], labels, sps)
+            elif st[0] == "decl":
+                check_decl(st, sps, labels)
+    for td in mod:
+        if td[0] == "decl":
+            check_decl(td, spaces, set())
+        elif td[0] == "func":
+            labels = set()
+            def labs(stmts):
+                for st in stmts:
+                    if st[0] == "block": labs(st[1])
+                    elif st[0] in ("label", "targets"): labels.add(st[2] if st[0] == "targets" else st[1])
+            labs(td[7])
+            sps = dict(spaces)
+            def locs(stmts):
+                for st in stmts:
+                    if st[0] == "block": locs(st[1])
+                    elif st[0] == "decl":
+                        for it in st[4]:
+                            sps[item_name(it)] = dspace(aset(st[1]) | aset(st[3]))
+            locs(td[7])
+            body(td[7], labels, sps)
 
 def serialize(mod):
     lines = []
+    if any(t[0] == "isacheck" for t in mod):
+        check_decls(mod)
     for td in mod:
         k = td[0]
         if k == "version":

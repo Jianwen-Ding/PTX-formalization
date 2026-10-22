@@ -335,9 +335,14 @@ Open:
       constant, `(21)`, was read as a constant expression (§9.7.13.5) (tests/call-const-arg.ptx); `.branchtargets N<3>`
       label ranges (§11.3.1) (tests/brx-label-range.ptx); a `.noreturn` function that returns, under `.ub strict`
       (§11.4.6) (tests/neg/noreturn-ub.ptx)
-- [ ] declarations, not reported under `.isacheck`: an initializer on `.extern`, `.v4 .f64` (over 128 bits), `.f16` /
-      `.pred` initializers, `.pred` in `.global`, an address in a `.u8` without `mask()`, an initializer on a
-      parameterized name, `.align` not a power of two, a label as a `mov` operand, `0f` literals in constant expressions
+- [x] declarations, now reported under `.isacheck` by the front end (9.4 §5.4.1-5.4.6): a declaration without a state
+      space, `.pred` outside `.reg`, `.pred` vectors, `.v8` variables, vectors over 128 bits, `.align` not a power of
+      two, an initializer on a parameterized name, outside `.global` / `.const`, on `.extern`, on `.f16` / `.f16x2` /
+      `.pred`, a label or a non-`.global` / `.const` variable in an initializer, an address held in a type other than
+      `.u8` / `.u32` / `.u64`, in a `.u8` without `mask()`, and a `mask()` value outside 0xFF << 8k.  All of them
+      still run in the default mode.  tests/cluster.ptx, cluster-mapa-generic.ptx and int-spec.ptx declared `.pred`
+      without `.reg`; fixed (tests/neg/isa-decl-*.ptx)
+- [ ] not reported under `.isacheck`: a label as a `mov` operand, `0f` literals in constant expressions
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

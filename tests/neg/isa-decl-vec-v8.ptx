@@ -1,0 +1,18 @@
+// expect: vector variables have length 2 or 4
+// 5.4.2: vectors of length 2 and 4 (reported under .isacheck)
+.version 9.4
+.target sm_90
+.address_size 64
+.isacheck ;
+.global .v8 .b16 gv;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o; .reg .b32 %r;
+
+    ld.param.u64 %o, [po];
+    mov.u32 %r, 1;
+    st.global.u32 [%o], %r;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);
