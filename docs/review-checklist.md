@@ -277,8 +277,9 @@ Open:
       4:8 kinds 0b0100 0b1000 0b1100 0b1001 0b1101 0b0110 0b1110 (this set includes 0b0110, which mma.sp's
       ordered_metadata set does not) (tests/neg/tcsp-ub-meta.ptx); mma.sp::ordered_metadata's "sorted in an
       increasing order" is the meaningful-value set already checked
-- [ ] not checked: tcgen05.ld / st "All the threads in the warp must specify the same value of taddr" (the model runs
-      them per thread)
+- [x] tcgen05.ld / st "All the threads in the warp must specify the same value of taddr" (§9.7.17.8.3-4) under
+      `.ub strict`: lanes of one instance (function, pc, per-thread visit count) compare their taddr
+      (tests/neg/tcgen05-ub-taddr.ptx); the 35 tcgen05 ld / st tests pass under `.ub strict`
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

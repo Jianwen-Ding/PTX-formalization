@@ -599,6 +599,30 @@ val mbArriveKey : int -> unit
 function mbArriveKey(k) = if mbHas(k) then mbPut(k, mbArrive(mbGet(k), 1))
 
 /* ---------------------------------------------------------------- instructions */
+/* "All the threads in the warp must specify the same value of taddr ... Otherwise, the behavior is undefined"
+ * (tcgen05.ld 9.7.17.8.3, tcgen05.st 9.7.17.8.4), under .ub strict: the first lane of the warp to execute an instance
+ * (same function, pc and per-thread visit count) records its taddr in the CTA's misc map, later lanes compare */
+val tcFirstAddr : list(xop) -> option(addr)
+function tcFirstAddr(l) = match l { [||] => None(), XB(a :: _, _) :: _ => Some(a), _ :: rest => tcFirstAddr(rest) }
+val tcUniform : (string, list(xop)) -> unit
+function tcUniform(op, ops) =
+  if ub then match tcFirstAddr(ops) {
+    Some(a) => {
+      let t = tchk(cur);
+      let site = concat_str("tcu@", concat_str(f_name[fchk(t_fn[t])], concat_str(":", dec_str(t_pc[t]))));
+      let cs = t_cseq[t];
+      let sk = seqKey(site, 0);
+      let v = if smap_has(cs, sk) then smap_get(cs, sk) else 0;
+      smap_set(cs, sk, v + 1);
+      let mp = c_misc[cchk(cur_cta())];
+      let key = concat_str(site, concat_str(":", concat_str(dec_str(tdiv_int(t_tid[t], 32)), concat_str(":", dec_str(v)))));
+      let ta = tcAddr(a);
+      if smap_has(mp, key) & smap_get(mp, key) != ta then fault(concat_str(op, ": threads of the warp use different taddr values"), ta)
+      else smap_set(mp, key, ta)
+    },
+    None() => ()
+  }
+
 val exec_tc : (opcode, list(xop)) -> bool
 function exec_tc(o, ops) = {
   let m = o.mods;
@@ -624,6 +648,7 @@ function exec_tc(o, ops) = {
     },
     _ => false
   } else if has(m, "ld") then {
+    tcUniform("tcgen05.ld", ops);
     let tm = tcSpace(c, "tm");
     let pk = has(m, "pack::16b");
     match ops {
@@ -652,6 +677,7 @@ function exec_tc(o, ops) = {
       _ => false
     }
   } else if has(m, "st") then {
+    tcUniform("tcgen05.st", ops);
     let tm = tcSpace(c, "tm");
     match ops {
       [|XB([|a|], [||]), vs|] => { tcStore(tm, m, tcAddr(a), tl, 0, vecRegs(vs, mkty("b", 32)), has(m, "unpack::16b")); true },
