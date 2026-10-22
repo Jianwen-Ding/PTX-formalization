@@ -175,6 +175,7 @@ class Parser:
     def __init__(self, toks):
         self.t = toks
         self.i = 0
+        self.isa_notes = []   # legality notes reported under .isacheck
 
     def peek(self, k=0):
         return self.t[self.i + k]
@@ -275,6 +276,10 @@ class Parser:
             v = ptx_int(ss)
             return cval(v, ss[-1] in "uU" or v > (1 << 63) - 1)
         if kk == "hex" and ss[1] in "fF":     # loose: 0f / 0d literals by their value (the ISA keeps them out)
+            # 0f values "retain their exact 32-bit single-precision value and may not be used in constant
+            # expressions" (4.5.2): reported under .isacheck
+            self.isa_notes.append("a 0f single-precision literal may not be used in a constant expression "
+                                  "[PTX ISA 9.4 4.5.2]")
             return (struct.unpack("<f", struct.pack("<I", int(ss.rstrip("uU")[2:], 16)))[0], False, True)
         if kk == "hex" and ss[1] in "dD":
             return (struct.unpack("<d", struct.pack("<Q", int(ss.rstrip("uU")[2:], 16)))[0], False, True)
@@ -1382,6 +1387,10 @@ def check_types(fname, ld):
         opc, ops = c[2], c[3]
         parts = opc.split(".")
         base = parts[0]
+        # mov takes a register, a special register, a variable (with an offset) or a function name, not a label
+        # (9.7.10.3)
+        if base == "mov" and len(ops) == 2 and ops[1][0] in ("name", "nameplus") and ops[1][1] in ld.L:
+            raise PtxError("%s: %s: a label is not a mov operand [PTX ISA 9.4 9.7.10.3]" % (fname, opc))
         tys = [SIMPLE_TY[p] for p in parts[1:] if p in SIMPLE_TY]
         alltys = [p for p in parts[1:] if p in SIMPLE_TY or p in ("pred", "bf16", "tf32") or "x" in p and p[-1].isdigit()]
         checks = []
@@ -1610,7 +1619,11 @@ def serialize(mod):
     return "\n".join(lines) + "\n"
 
 def front(text):
-    return serialize(Parser(lex(text)).module())
+    p = Parser(lex(text))
+    mod = p.module()
+    if p.isa_notes and any(t[0] == "isacheck" for t in mod):
+        raise PtxError(p.isa_notes[0])
+    return serialize(mod)
 
 if __name__ == "__main__":
     sys.stdout.write(front(open(sys.argv[1]).read()))

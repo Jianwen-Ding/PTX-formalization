@@ -342,7 +342,8 @@ Open:
       `.u8` / `.u32` / `.u64`, in a `.u8` without `mask()`, and a `mask()` value outside 0xFF << 8k.  All of them
       still run in the default mode.  tests/cluster.ptx, cluster-mapa-generic.ptx and int-spec.ptx declared `.pred`
       without `.reg`; fixed (tests/neg/isa-decl-*.ptx)
-- [ ] not reported under `.isacheck`: a label as a `mov` operand, `0f` literals in constant expressions
+- [x] a label as a `mov` operand (§9.7.10.3) and a `0f` literal in a constant expression (§4.5.2: such values "may not be
+      used in constant expressions") are reported under `.isacheck` (tests/neg/isa-mov-label.ptx, isa-cexpr-0f.ptx)
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 
