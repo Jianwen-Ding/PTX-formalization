@@ -267,6 +267,9 @@ Open:
 - [x] wmma.load / wmma.store (§9.7.15.4.2-4) under `.ub strict`: a stride below the shape's default, and an address or
       stride (in bytes) that is not a multiple of the fragment size (tests/neg/wmma-ub-*.ptx); the existing wmma
       programs pass under `.ub strict`
+- [x] under `.ub strict`: `cvta.to.<space>` of a generic address outside that window (§9.7.9.21), `cp.async` with
+      src-size larger than cp-size, and two `cp.async` of one cp.async-group copying to the same location
+      (§9.7.9.26.3.1) (tests/neg/cvta-ub-window.ptx, cpasync-ub-*.ptx, tests/cpasync-groups-ub.ptx)
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

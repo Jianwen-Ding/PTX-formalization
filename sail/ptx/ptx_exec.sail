@@ -143,7 +143,11 @@ function exec_alu(o, ops) = {
         if has(m, "shared::cluster") then {
           let own = rreg("%cluster_ctarank");
           wr(xop_nth(ops, 0), trunc(if has(m, "to") then clFromGeneric(a, own) else clToGeneric(a, own), wid(t)))
-        } else
+        } else if ub & has(m, "to") & genWin(a) != spaceOf(m) then
+          /* "the resulting address is undefined in cases where the generic address does not fall within the address
+             window of the specified state space" (9.7.9.21): under .ub strict */
+          fault(concat_str("cvta.to.", concat_str(spaceOf(m), ": generic address outside the window of the state space")), a)
+        else
           wr(xop_nth(ops, 0), trunc(if has(m, "to") then a - winBase(spaceOf(m)) else a + winBase(spaceOf(m)), wid(t)));
         true
       }

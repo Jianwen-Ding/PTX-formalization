@@ -1,0 +1,16 @@
+// expect: cvta.to.shared: generic address outside the window of the state space
+// cvta.to.shared of a global generic address: "the resulting address is undefined" (9.7.9.21), reported under .ub strict
+.version 8.0
+.target sm_90
+.address_size 64
+.ub strict ;
+.visible .entry k(.param .u64 pi)
+{
+    .reg .b64 %i, %g, %s; .reg .b32 %r;
+    .shared .align 16 .b8 buf[64];
+    ld.param.u64 %i, [pi];
+    cvta.to.shared.u64 %s, %i;
+    ret;
+}
+.buffer I .u32 [16];
+.launch k <<< 1, 1 >>> (I);

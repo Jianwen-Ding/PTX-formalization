@@ -479,7 +479,15 @@ function exec_async(o, ops) = {
   let m = o.mods;
   if o.base != "cp" | not_bool(has(m, "async")) | has(m, "tensor") then false
   else if not_bool(has(m, "bulk")) then {
-    if has(m, "commit_group") | has(m, "wait_group") | has(m, "wait_all") then true
+    if has(m, "commit_group") | has(m, "wait_all") then {
+      /* a new cp.async-group starts (wait_all commits too) */
+      if ub then {
+        let mp = t_misc[tchk(cur)];
+        var i : int = 0;
+        while i < smap_size(mp) do { let k = smap_key(mp, i); if stake(k, 4) == "cpa:" then smap_del(mp, k) else i = i + 1 }
+      };
+      true
+    } else if has(m, "wait_group") then true
     else if has(m, "mbarrier") then match ops {
       [|XB([|a|], [||])|] => {
         /* "If no state space is specified then Generic Addressing is used" (9.7.14.16.18) */
@@ -498,6 +506,22 @@ function exec_async(o, ops) = {
       XB([|d|], [||]) :: XB([|s|], [||]) :: XS(SI(n)) :: rest => {
         let k = cpSrcN(n, rest, has(m, "L2::cache_hint"));
         let dl = ea(d, "shared");
+        /* "Specifying src-size larger than cp-size results in undefined behavior"; "two or more cp.async operations
+           within a cp.async-group copying data to the same location results in undefined behavior" (9.7.9.26.3.1):
+           under .ub strict, with "cpa:<byte>" in the thread's misc space for the bytes of the open group */
+        if ub then {
+          let sz : int = match rest { XS(SI(x)) :: _ => x, x :: _ if regW(x) != 1 & not_bool(has(m, "L2::cache_hint") & xop_count(rest) == 1) => rdu32(x), _ => 0 };
+          if sz > n then { fault("cp.async: src-size larger than cp-size", sz); return true };
+          match dl { Loc(_, off) => {
+            let mp = t_misc[tchk(cur)];
+            foreach (b from 0 to (n - 1)) {
+              if smap_has(mp, concat_str("cpa:", dec_str(off + b))) & not_bool(stuck) then
+                fault("cp.async: two cp.async of one cp.async-group copy to the same location", off + b);
+              smap_set(mp, concat_str("cpa:", dec_str(off + b)), 1)
+            }
+          }, _ => () };
+          if stuck then return true
+        };
         let v = if k > 0 then memop_do(ea(s, "generic"), RdOp(k)) else 0;
         if not_bool(stuck) then { let _ = memop_do(dl, WrOp(n, v)); () };
         true
