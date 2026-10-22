@@ -14,7 +14,7 @@
     st.global.v2.u32 [%o+16], {%r5, %r6};
     sub.cc.u32 %r0, 0, 1;  subc.cc.u32 %r1, 0, 0;  addc.u32 %r2, 0, 0;
     sub.cc.u32 %r3, 0, 0;  subc.u32 %r4, 7, 2;
-    st.global.v4.u32 [%o+24], {%r0, %r1, %r2, %r4};
+    st.global.v2.u32 [%o+24], {%r0, %r1}; st.global.v2.u32 [%o+32], {%r2, %r4};
     ret;
 }
 .buffer O .u32 [10];

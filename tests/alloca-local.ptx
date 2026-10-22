@@ -28,7 +28,7 @@
     setp.eq.u64 %c, %p, %q;
     selp.u32 %r6, 1, 0, %c;
     st.global.v2.u32 [%o], {%r1, %r2};
-    st.global.v4.u32 [%o+8], {%r3, %r4, %r5, %r6};
+    st.global.v2.u32 [%o+8], {%r3, %r4}; st.global.v2.u32 [%o+16], {%r5, %r6};
     ret;
 }
 .buffer OUT .u32 [6];

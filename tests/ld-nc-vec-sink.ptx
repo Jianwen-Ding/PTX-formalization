@@ -10,7 +10,7 @@
     ld.global.nc.v4.u64 {%d0, _, %d2, %d3}, [%i];
     st.global.v4.u32 [%o], {%r0, %r2, %r3, %r5};
     st.global.v2.u32 [%o+16], {%r6, %r7};
-    st.global.v2.u64 [%o+24], {%d0, %d3};
+    st.global.u64 [%o+24], %d0; st.global.u64 [%o+32], %d3;
     ret;
 }
 .buffer I .u32 = { 1, 2, 3, 4, 5, 6, 7, 8 };

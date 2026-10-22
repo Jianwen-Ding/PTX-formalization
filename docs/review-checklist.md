@@ -297,6 +297,12 @@ Open:
       2048-byte output buffer.  Reports kept as the programs' own: ldmatrix stores past its 256-byte shared array
       (threads 32-63 at +128), vector8_extract uses `ld.v8.u8` (not a 9.3 form), vote_ballot_nosync non-`.sync` vote on
       sm_70+
+- [x] a vector ld / st is one access for the alignment rule ("the access size of ld.v4.b32 is 16 bytes ... must be
+      naturally aligned to a multiple of the access size", §6.4.1); the model only checked each element.  Now under
+      `.ub strict` (tests/neg/vec-ub-align.ptx).  Seven tests stored vectors at offsets that are not multiples of the
+      vector size (or loaded from a 4-byte aligned array); they now use aligned pieces or `.align 8` with unchanged
+      results (alloca-local, carry, const-expr, decl-init-shape, ld-nc-vec-sink, shared-per-kernel, sub-borrow);
+      no ZLUDA program is affected
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

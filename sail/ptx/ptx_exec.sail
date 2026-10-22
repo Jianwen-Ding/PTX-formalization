@@ -212,6 +212,17 @@ function atOpG(l, op, t) = match l {
 
 /* ---------------------------------------------------------------- memory (PTX-EXEC-MEM) */
 val exec_mem : (opcode, list(xop)) -> bool
+/* "The access size of a memory instruction is the total number of bytes accessed in memory. For example, the access
+ * size of ld.v4.b32 is 16 bytes ... The address must be naturally aligned to a multiple of the access size" (6.4.1):
+ * a vector ld / st is checked as one access under .ub strict (its elements are accessed one by one) */
+val vecAligned : (loc, int) -> bool
+function vecAligned(l, total) = match l {
+  Loc(sp, a) => if ub & total > 0 & tmod_int(a, total) != 0 then {
+      fault(concat_str("misaligned ", concat_str(sp, concat_str(" vector access of ", concat_str(dec_str(total), " bytes")))), a); false
+    } else true,
+  _ => true
+}
+
 function exec_mem(o, ops) = {
   let m = o.mods;
   let n = xop_count(ops);
@@ -225,7 +236,7 @@ function exec_mem(o, ops) = {
           Some(a) => {
             let l = ea(a, spaceOf(m));
             match xop_nth(ops, 0) {
-              XV(ds) => ldv(ds, l, t),
+              XV(ds) => if vecAligned(l, sop_count(ds) * bytes(t)) then ldv(ds, l, t),
               d => { let v = memop_do(l, RdOp(bytes(t))); if not_bool(stuck) then ldwb(d, t, v) }
             };
             true
@@ -239,7 +250,7 @@ function exec_mem(o, ops) = {
           Some(a) => {
             let l = ea(a, spaceOf(m));
             match xop_nth(ops, 1) {
-              XV(vs) => stv(vs, l, t),
+              XV(vs) => if vecAligned(l, sop_count(vs) * bytes(t)) then stv(vs, l, t),
               v => { let _ = memop_do(l, WrOp(bytes(t), rd(v, t))) in () }
             };
             true

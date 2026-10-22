@@ -24,7 +24,7 @@
     st.shared.u32 [buf + 4], 22;
     ld.shared.u32 %r2, [buf + 4];
     mov.u32 %r3, %total_smem_size;
-    st.global.v4.u32 [%o + 8], {%r1, %r2, %r3, %r3};
+    st.global.v2.u32 [%o + 8], {%r1, %r2}; st.global.v2.u32 [%o + 16], {%r3, %r3};
     ret;
 }
 .buffer OUT .u32 [6];
