@@ -80,6 +80,8 @@ register tick : int = 1000
 /* without an .address_size directive the address size is 32 (PTX ISA 11.1.3) */
 register asz32 : bool = true
 register dynsmem : int = 0          /* dynamic shared memory of the launch (bytes) */
+register pcmBase : int = 0          /* per-CTA global memory of the launch (PTX ISA 9.4 10.34, 10.35, 11.4.10): */
+register pcmSize : int = 0          /* the first slice's address and the pitch, 0 without .minperctamemory */
 register explcl : bool = false      /* the launch has an explicit cluster (.reqnctapercluster) */
 register nfaddr : int = 0
 register stuck : bool = false

@@ -1,0 +1,33 @@
+// per-CTA global memory (PTX ISA 9.4 10.34, 10.35, 11.4.10): .minperctamemory 1500 gives every CTA a slice of
+// %perctamemorysize bytes (a multiple of 1024, at least 1500: 2048 here) at %perctamemoryoffset, in CTA order
+.version 9.4
+.target sm_90
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po) .minperctamemory 1500
+{
+    .reg .b64 %o, %off, %base, %t, %a; .reg .b32 %sz, %c, %v, %lo;
+    ld.param.u64 %o, [po];
+    mov.u32 %sz, %perctamemorysize;
+    mov.u64 %off, %perctamemoryoffset;
+    mov.u32 %c, %ctaid.x;
+    cvt.u64.u32 %t, %c;
+    mul.wide.u32 %a, %c, %sz;
+    sub.u64 %base, %off, %a;                  // the same first-slice address in every CTA
+    cvt.u32.u64 %lo, %off; and.b32 %lo, %lo, 1023;
+    add.u32 %v, %c, 100;
+    st.global.u32 [%off+2044], %v;            // the last word of the slice is the CTA's own
+    ld.global.u32 %v, [%off+2044];
+    mul.lo.u64 %t, %t, 16;
+    add.u64 %o, %o, %t;
+    st.global.u32 [%o], %sz;
+    st.global.u32 [%o+4], %lo;
+    st.global.u32 [%o+8], %v;
+    cvt.u32.u64 %lo, %base;
+    and.b32 %lo, %lo, 1023;
+    st.global.u32 [%o+12], %lo;
+    ret;
+}
+.buffer OUT .u32 [12];
+.launch k <<< 3, 1 >>> (OUT);
+.expect OUT .u32 = { 2048, 0, 100, 0, 2048, 0, 101, 0, 2048, 0, 102, 0 };

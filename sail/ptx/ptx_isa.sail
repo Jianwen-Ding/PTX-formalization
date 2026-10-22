@@ -433,6 +433,32 @@ function isaModule() = {
   else ""
 }
 
+/* an operand of the instruction is %perctamemoryoffset or %perctamemorysize */
+val isaPcmOps : list(xop) -> bool
+function isaPcmOps(l) = match l {
+  [||] => false,
+  XS(s) :: rest => has([|"%perctamemoryoffset", "%perctamemorysize"|], sop_name(s)) | isaPcmOps(rest),
+  _ :: rest => isaPcmOps(rest)
+}
+
+/* per-CTA global memory (PTX ISA 9.4 10.34, 10.35, 11.4.10): the directive "is only allowed on .entry functions";
+ * "Only entry functions specifying this directive are allowed to use special registers %perctamemoryoffset or
+ * %perctamemorysize"; both introduced in PTX ISA 9.4 and requiring sm_80 */
+val isaPcm : (int, item) -> string
+function isaPcm(f, it) = {
+  let pd = hasPerfN(perf_of(f_name[fchk(f)]), "minperctamemory");
+  match it {
+    INS(_, _, ops) =>
+      if not_bool(isaPcmOps(ops)) then ""
+      else if f_kind[fchk(f)] != "entry" | not_bool(pd) then
+        "%perctamemoryoffset / %perctamemorysize are valid only in an entry function with .minperctamemory [PTX ISA 9.4 10.34]"
+      else if isaver < 94 then "%perctamemoryoffset / %perctamemorysize need PTX ISA 9.4 [PTX ISA 9.4 10.34]"
+      else if isaNorm(isasm) < 80 then "%perctamemoryoffset / %perctamemorysize need target sm_80 [PTX ISA 9.4 10.34]"
+      else "",
+    _ => ""
+  }
+}
+
 /* #isaChk: the module directives, then the first offending instruction (functions in definition order,
  * then program order) */
 function isa_check() = {
@@ -441,8 +467,19 @@ function isa_check() = {
     var f : int = 0;
     while f < nfuncs & msg == "" do {
       let fs = fchk(f);
+      if hasPerfN(perf_of(f_name[fs]), "minperctamemory") then {
+        msg = if f_kind[fs] != "entry" then ".minperctamemory is only allowed on .entry functions [PTX ISA 9.4 11.4.10]"
+              else if isaver < 94 then ".minperctamemory needs PTX ISA 9.4 [PTX ISA 9.4 11.4.10]"
+              else if isaNorm(isasm) < 80 then ".minperctamemory needs target sm_80 [PTX ISA 9.4 11.4.10]"
+              else ""
+      };
       var pc : int = 0;
-      while pc < f_len[fs] & msg == "" do { msg = isaIns(get_item(f_base[fs] + pc)); pc = pc + 1 };
+      while pc < f_len[fs] & msg == "" do {
+        let it = get_item(f_base[fs] + pc);
+        msg = isaIns(it);
+        if msg == "" then msg = isaPcm(fs, it);
+        pc = pc + 1
+      };
       f = f + 1
     };
     if msg != "" then fault(msg, 0)

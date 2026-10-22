@@ -392,4 +392,23 @@ is recorded in the list under "Second review pass".  The legality table is gener
       9.7.9.21 (cvta in 9.3) instead of cvt
 - [x] `.isacheck` sweep of tests/*.ptx with the 9.4 table: the new reports are the tests' own (9.4 forms under an older
       `.version`, sm_107f forms on other targets, .rm / .rp / .rn cvt to f8 / ue8m0x2 tested on purpose)
-- [ ] the semantics of the remaining 9.4 additions (release notes, 9.4 L45798 ff.): see the list below
+- [x] alternate floating point x4 add / sub / mul / fma (9.4 §9.7.6) were not modelled ("unsupported instruction"): the
+      four elements are extracted per the Semantics (f8 / ue8m0 a[8i..8i+7], f6 a[8i..8i+5], .e2m1p4x4 a[8i..8i+3],
+      .e2m1x4 a[4i..4i+3] of a .b16), operated on exactly and rounded to nearest even into .e4m3 / .e5m2; .satfinite gives
+      the sign-preserved MAX_NORM; without it an .e4m3 overflow is NaN ("converted to NaN") and an .e5m2 overflow
+      infinity (IEEE overflow; the ISA states only the .e4m3 case).  NaN results are 0x7f (bits not given by the ISA).
+      The front end knows .ue8m0x4 and .e2m1p4x4 (tests/altfp-x4.ptx)
+- [x] per-CTA global memory (9.4 §10.34, §10.35, §11.4.10): `%perctamemoryoffset` / `%perctamemorysize` were not
+      predefined (front-end error).  A kernel with `.minperctamemory N` gets one zero-initialised slice per CTA of
+      max(alignUp(N, 1024), 1024) bytes ("a multiple of 1024 bytes", at least N), 1024-aligned, in linear CTA order;
+      without the directive both registers read 0 (the "Driver that doesn't support allocation" value).  `.isacheck`
+      reports their use outside an entry with the directive, the directive on a non-entry, and PTX ISA < 9.4 / sm < 80
+      (tests/perctamemory.ptx, tests/neg/isa-perctamemory.ptx)
+- [x] mixed precision (9.4 §9.7.5) 3-type forms were already modelled (tests/mixed-prec.ptx); the table row for the
+      fma form checks four types.  Spec inconsistency: `fma.dtype.atype.btype.ctype` gives `.btype = .f32x2` in the
+      syntax but `convert(b[0:15])` in the semantics; the model reads b as a pair of `.atype` (also accepted when
+      spelled `.atype`).  `.ftz` on `add.rz.ftz.f16x2.f32x2.f32x2` is not described; the model flushes the f32 inputs
+      and the f32 intermediate
+- [ ] the semantics of the remaining 9.4 additions (release notes, 9.4 L45798 ff.): ldmatrix .s8.s4 .m8n16, tcgen05
+      .kind::ti16 / UE5M3 scale / .decompress::lut::b / .exclusive, .report_mechanism, .override_attribute,
+      .level::eviction_priority on bulk prefetch

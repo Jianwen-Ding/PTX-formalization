@@ -9,7 +9,7 @@ function exec_prio(o, ops) = exec_misc_prio(o, ops) | exec_memq_prio(o, ops)
 
 val exec_specific : (opcode, list(xop)) -> bool
 function exec_specific(o, ops) =
-  exec_mini(o, ops) | exec_half(o, ops) | exec_alu(o, ops) | exec_mem(o, ops) | exec_ctrl(o, ops) | exec_warp(o, ops) | exec_bits(o, ops)
+  exec_altfp(o, ops) | exec_mini(o, ops) | exec_half(o, ops) | exec_alu(o, ops) | exec_mem(o, ops) | exec_ctrl(o, ops) | exec_warp(o, ops) | exec_bits(o, ops)
   | exec_intx(o, ops) | exec_pred(o, ops) | exec_misc(o, ops) | exec_memq(o, ops) | exec_video(o, ops) | exec_ext(o, ops)
 
 val exec_gx : (opcode, list(xop)) -> bool

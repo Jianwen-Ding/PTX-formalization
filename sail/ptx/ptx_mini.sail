@@ -64,13 +64,14 @@ function roundGridR(f, rdm, rb, nb) = match f {
 val roundGrid : (fv, int) -> int
 function roundGrid(f, rdm) = roundGridR(f, rdm, 0, 0)
 
+/* the magnitude code of n * 2^(e - mM) (n < 2^(mM + 1) after rounding at exponent e), before saturation */
+val miniCodeRaw : (string, int, int) -> int
+function miniCodeRaw(k, e, n) =
+  if n >= pow2(mM(k) + 1) then shl_int(e + 1 + mBias(k), mM(k))
+  else if n >= pow2(mM(k)) then shl_int(e + mBias(k), mM(k)) + (n - pow2(mM(k)))
+  else n
 val miniCode : (string, int, int) -> int
-function miniCode(k, e, n) = {
-  let raw = if n >= pow2(mM(k) + 1) then shl_int(e + 1 + mBias(k), mM(k))
-            else if n >= pow2(mM(k)) then shl_int(e + mBias(k), mM(k)) + (n - pow2(mM(k)))
-            else n;
-  min_int(mTop(k), raw)
-}
+function miniCode(k, e, n) = min_int(mTop(k), miniCodeRaw(k, e, n))
 
 /* magnitude code of |x| with rounding 0 nearest-even, 1 toward zero, 2 up; saturating */
 val miniEncR : (string, fv, int, int, int) -> int
@@ -291,6 +292,87 @@ function exec_mini(o, ops) = {
           let v = rd(a, st);
           wr(d, pack16(ueDec(land_int(v, 255)), ueDec(land_int(asr_int(v, 8), 255)))); true
         } else false
+      },
+      _ => false
+    }
+  }
+}
+
+/* ---------------------------------------------------------------- alternate floating point x4 (PTX ISA 9.4 9.7.6)
+ * add / sub{.rn}{.satfinite}.cdtype.atype d, a, c; mul{.rn}{.satfinite}.dtype.atype.ctype d, a, c;
+ * fma{.rn}{.satfinite}.cdtype.atype.btype d, a, b, c.  d (and c of add / sub / fma) is .e5m2x4 / .e4m3x4; the sources
+ * are .e5m2x4 .e4m3x4 .e3m2x4 .e2m3x4 .e2m1x4 .e2m1p4x4 .ue8m0x4.  Element i is a[8i .. 8i+7] (f8, ue8m0), a[8i .. 8i+5]
+ * (f6), a[8i .. 8i+3] (.e2m1p4x4) or a[4i .. 4i+3] (.e2m1x4, a .b16 operand).  The operation is exact ("with an infinite
+ * precision") and rounded to nearest even; .satfinite: |result| > MAX_NORM gives the sign-preserved MAX_NORM; without
+ * it an .e4m3 result beyond the largest representable value is NaN, an .e5m2 one infinity.  A NaN result is the
+ * canonical 0x7f (the ISA does not give its bits). */
+val isAlt4 : string -> bool
+function isAlt4(k) = has([|"e5m2x4", "e4m3x4", "e3m2x4", "e2m3x4", "e2m1x4", "e2m1p4x4", "ue8m0x4"|], k)
+
+val alt4Elem : (string, int, int) -> fv
+function alt4Elem(k, v, i) =
+  if k == "ue8m0x4" then {
+    let c = land_int(asr_int(v, 8 * i), 255);
+    if c == 255 then FV_NaN() else FV_Fin(false, 1, c - 127)
+  }
+  else if k == "e2m1x4" then miniDecF("e2m1", land_int(asr_int(v, 4 * i), 15))
+  else if k == "e2m1p4x4" then miniDecF("e2m1", land_int(asr_int(v, 8 * i), 15))
+  else miniDecF(stake(k, 4), land_int(asr_int(v, 8 * i), mask(mBits(stake(k, 4)))))
+
+val alt4Enc : (string, fv, bool) -> int
+function alt4Enc(k, x, satf) = {
+  let sg = if fv_sign(x) then 128 else 0;
+  let over = if satf then sg + mTop(k) else if k == "e5m2" then sg + 124 else 127;
+  if fv_is_nan(x) then 127
+  else if fv_is_inf(x) then over
+  else if fv_is_zero(x) then sg
+  else {
+    let a = fv_abs(x);
+    var e : int = 1 - mBias(k);
+    while fv_cmp(a, FV_Fin(false, 1, e + 1)) >= 0 & e < 40 do e = e + 1;
+    let raw = miniCodeRaw(k, e, roundGrid(scaleP2(a, mM(k) - e), 0));
+    if raw <= mTop(k) then sg + raw else over
+  }
+}
+
+val exec_altfp : (opcode, list(xop)) -> bool
+function exec_altfp(o, ops) = {
+  let b = o.base;
+  let n = ntys(o);
+  if not_bool(has([|"add", "sub", "mul", "fma"|], b)) | n < 2 | not_bool(isAlt4(ty_nth(o.tys, 1).k))
+     | not_bool(has([|"e5m2x4", "e4m3x4"|], ty_nth(o.tys, 0).k))
+     | n != (if b == "mul" | b == "fma" then 3 else 2) then false
+  else {
+    let dk = stake(ty_nth(o.tys, 0).k, 4);
+    let aty = ty_nth(o.tys, 1);
+    let satf = has(o.mods, "satfinite");
+    match ops {
+      [|d, a, c|] if b != "fma" => {
+        let ct = if b == "mul" then ty_nth(o.tys, 2) else ty_nth(o.tys, 0);
+        let va = rd(a, aty);
+        let vc = rd(c, ct);
+        var r : int = 0;
+        foreach (i from 0 to 3) {
+          let x = alt4Elem(aty.k, va, i);
+          let y = alt4Elem(ct.k, vc, i);
+          let z = if b == "add" then fv_add_exact(x, y, RN) else if b == "sub" then fv_add_exact(x, fv_neg(y), RN)
+                  else fv_mul_exact(x, y);
+          r = lor_int(r, shl_int(alt4Enc(dk, z, satf), 8 * i))
+        };
+        wr(d, r); true
+      },
+      [|d, a, bo, c|] if b == "fma" => {
+        let bt = ty_nth(o.tys, 2);
+        let ct = ty_nth(o.tys, 0);
+        let va = rd(a, aty);
+        let vb = rd(bo, bt);
+        let vc = rd(c, ct);
+        var r : int = 0;
+        foreach (i from 0 to 3) {
+          let z = fv_add_exact(fv_mul_exact(alt4Elem(aty.k, va, i), alt4Elem(bt.k, vb, i)), alt4Elem(ct.k, vc, i), RN);
+          r = lor_int(r, shl_int(alt4Enc(dk, z, satf), 8 * i))
+        };
+        wr(d, r); true
       },
       _ => false
     }

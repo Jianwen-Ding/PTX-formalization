@@ -107,7 +107,9 @@ function gx_half(o, ops) = {
     let f32x2 = mkty("f32x2", 64);
     match ops {
       [|d, a, b, x|] => {
-        if op == "fma" & ty_eq(dt, f32x2) & isNarrowPair(aty) & ty_eq(bt, f32x2) & ty_eq(ct, f32x2) then {
+        /* fma.dtype.atype.btype.ctype (PTX ISA 9.4 9.7.5.3): the syntax gives .btype = .f32x2, the semantics
+           convert(b[0:15]) / convert(b[16:31]) a pair like a; b is read as a pair of .atype, also when spelled so */
+        if op == "fma" & ty_eq(dt, f32x2) & isNarrowPair(aty) & (ty_eq(bt, f32x2) | ty_eq(bt, aty)) & ty_eq(ct, f32x2) then {
           let va = rd(a, aty); let vb = rd(b, aty); let vx = rd(x, ct); let lt = laneTyH(aty);
           wr(d, pack32(tern("fma", m, F32, up32(lt, lane16(va, 0)), up32(lt, lane16(vb, 0)), lane32(vx, 0)),
                        tern("fma", m, F32, up32(lt, lane16(va, 1)), up32(lt, lane16(vb, 1)), lane32(vx, 1)))); true

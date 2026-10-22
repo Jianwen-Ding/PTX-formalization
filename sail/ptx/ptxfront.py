@@ -85,7 +85,7 @@ def float_bits(s):
 TYPES = {".u8", ".u16", ".u32", ".u64", ".s8", ".s16", ".s32", ".s64", ".b8", ".b16", ".b32", ".b64", ".f16", ".f32",
          ".f64", ".pred", ".b128", ".bf16", ".tf32", ".f16x2", ".bf16x2", ".s16x2", ".u16x2", ".u8x4", ".s8x4", ".f32x2",
          ".ue5m3x2", ".s2f6x2", ".e4m3", ".e5m2", ".e4m3x2", ".e5m2x2", ".e4m3x4", ".e5m2x4", ".e2m3x2", ".e3m2x2",
-         ".e2m3x4", ".e3m2x4", ".e2m1x2", ".e2m1x4", ".ue8m0x2", ".u4", ".s4", ".u2", ".s2", ".b1"}
+         ".e2m3x4", ".e3m2x4", ".e2m1x2", ".e2m1x4", ".ue8m0x2", ".ue8m0x4", ".e2m1p4x4", ".u4", ".s4", ".u2", ".s2", ".b1"}
 DATTRS = {".visible", ".extern", ".weak", ".common", ".global", ".shared", ".local", ".const", ".param", ".reg",
           ".align", ".ptr", ".v2", ".v4", ".v8", ".attribute"}
 TEXKINDS = {".texref", ".samplerref", ".surfref"}
@@ -102,7 +102,8 @@ def type_of(t):
                "e4m3": ("e4m3", 8), "e5m2": ("e5m2", 8), "e4m3x2": ("e4m3x2", 16), "e5m2x2": ("e5m2x2", 16),
                "e4m3x4": ("e4m3x4", 32), "e5m2x4": ("e5m2x4", 32), "e2m3x2": ("e2m3x2", 16), "e3m2x2": ("e3m2x2", 16),
                "e2m3x4": ("e2m3x4", 32), "e3m2x4": ("e3m2x4", 32), "e2m1x2": ("e2m1x2", 8), "e2m1x4": ("e2m1x4", 16),
-               "ue8m0x2": ("ue8m0x2", 16), "b1": ("b", 1)}
+               "ue8m0x2": ("ue8m0x2", 16), "ue8m0x4": ("ue8m0x4", 32), "e2m1p4x4": ("e2m1p4x4", 32),
+               "b1": ("b", 1)}
     if s in special:
         return special[s]
     return (s[0], int(s[1:]))
@@ -1243,7 +1244,8 @@ def split_opc(s):
 TY_STRS = {"u8", "u16", "u32", "u64", "s8", "s16", "s32", "s64", "b8", "b16", "b32", "b64", "f16", "f32", "f64", "pred",
            "b128", "bf16", "tf32", "f16x2", "bf16x2", "s16x2", "u16x2", "u8x4", "s8x4", "f32x2", "ue5m3x2", "s2f6x2",
            "e4m3", "e5m2", "e4m3x2", "e5m2x2", "e4m3x4", "e5m2x4", "e2m3x2", "e3m2x2", "e2m3x4", "e3m2x4", "e2m1x2",
-           "e2m1x4", "ue8m0x2", "e3m2", "e2m3", "e2m1", "ue8m0", "ue4m3", "u4", "s4", "u2", "s2", "b1"}
+           "e2m1x4", "ue8m0x2", "ue8m0x4", "e2m1p4x4", "e3m2", "e2m3", "e2m1", "ue8m0", "ue4m3", "u4", "s4", "u2", "s2",
+           "b1"}
 def is_ty_str(x):
     return x in TY_STRS
 
@@ -1301,7 +1303,7 @@ SREGS = ({"%tid", "%ntid", "%laneid", "%warpid", "%nwarpid", "%ctaid", "%nctaid"
           "%clock", "%clock_hi", "%clock64", "%globaltimer", "%globaltimer_lo", "%globaltimer_hi",
           "%reserved_smem_offset_begin", "%reserved_smem_offset_end", "%reserved_smem_offset_cap",
           "%reserved_smem_offset_0", "%reserved_smem_offset_1", "%total_smem_size", "%aggr_smem_size",
-          "%dynamic_smem_size", "%current_graph_exec", "%warpsize"}
+          "%dynamic_smem_size", "%current_graph_exec", "%warpsize", "%perctamemoryoffset", "%perctamemorysize"}
          | {"%%pm%d" % i for i in range(8)} | {"%%pm%d_64" % i for i in range(8)} | {"%%envreg%d" % i for i in range(32)})
 
 COLOUR = {"r": "x", "g": "y", "b": "z", "a": "w"}

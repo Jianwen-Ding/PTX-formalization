@@ -966,10 +966,11 @@ OVERRIDES = [
      [(op, "", "0:30") for op in ("vadd4", "vsub4", "vavrg4", "vabsdiff4", "vmin4", "vmax4")]),
     # ---- PTX ISA 9.4 additions (the Lnnnn citations below are of the 9.4 text) ----
     # 9.7.5 mixed precision: the 3-type forms (add.dtype2.atype2.ctype2 ..., L11131; mul L11405) (L11196, L11202)
-    *[(n, "with .f16x2/.bf16x2/.f32x2 types introduced", [(op, "n=3", "94:")]) for n, op in (
-        ("9.7.5.1", "add"), ("9.7.5.2", "sub"), ("9.7.5.3", "fma"))],
-    *[(n, "with .f16x2/.bf16x2/.f32x2 types is supported on following family-specific", [(op, "n=3", "0:107f")])
-      for n, op in (("9.7.5.1", "add"), ("9.7.5.2", "sub"), ("9.7.5.3", "fma"))],
+    # (fma.dtype.atype.btype.ctype has four types, L11319)
+    *[(n, "with .f16x2/.bf16x2/.f32x2 types introduced", [(op, k, "94:")]) for n, op, k in (
+        ("9.7.5.1", "add", "n=3"), ("9.7.5.2", "sub", "n=3"), ("9.7.5.3", "fma", "n=4"))],
+    *[(n, "with .f16x2/.bf16x2/.f32x2 types is supported on following family-specific", [(op, k, "0:107f")])
+      for n, op, k in (("9.7.5.1", "add", "n=3"), ("9.7.5.2", "sub", "n=3"), ("9.7.5.3", "fma", "n=4"))],
     ("9.7.5.4", "Supported on following family-specific architectures", [("mul", "", "0:107f")]),   # L11462
     # 9.7.6 alternate floating point (L11578, L11584 ...): the section guard selects the x4 types
     *[(n, "as instruction types introduced", [(op, "", "94:")]) for n, op in (

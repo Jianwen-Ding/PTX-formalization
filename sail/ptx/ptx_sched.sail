@@ -229,6 +229,10 @@ function mk_sregs(sp, c, t, g, b, cd) = {
   let unit = if isasm >= 30 & isasm < 80 then 256 else 128;
   sreg_set(sp, "%total_smem_size", alignUp(stop + dynsmem, unit)); sreg_set(sp, "%aggr_smem_size", alignUp(stop + dynsmem, unit) + 1024);
   sreg_set(sp, "%dynamic_smem_size", dynsmem); sreg_set(sp, "%current_graph_exec", 0);
+  /* per-CTA global memory (PTX ISA 9.4 10.34, 10.35): "the 64-bit address of the current CTA's memory slice", slices
+     in CTA order at the pitch %perctamemorysize; both 0 for a kernel without .minperctamemory (no allocation) */
+  sreg_set(sp, "%perctamemoryoffset", if pcmSize > 0 then pcmBase + c * pcmSize else 0);
+  sreg_set(sp, "%perctamemorysize", pcmSize);
   /* the region reserved for system software (PTX ISA 10.29) must not overlap user shared memory: 1024 bytes placed
      after the CTA's static and dynamic shared memory (its size and place are the implementation's choice) */
   let rb = alignUp(stop + dynsmem, unit);

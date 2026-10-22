@@ -10,3 +10,4 @@ val isa_check : unit -> unit
 /* harness helpers of ptx_main.sail used by the extension directives */
 val do_alloc : (string, ty, int, list(initval)) -> unit
 val tk_ty : unit -> ty
+val perf_of : string -> list((string, list(int)))

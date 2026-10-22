@@ -256,7 +256,6 @@ function do_link(attrs, l) = {
 }
 
 /* ---------------------------------------------------------------- functions */
-val perf_of : string -> list((string, list(int)))
 function perf_of(k) = {
   var x = perfd;
   var r : list((string, list(int))) = [||];
@@ -416,6 +415,10 @@ function argVal(a, t) = match a {
 }
 
 
+/* the first argument of directive d, -1 without it */
+val perfVal : (list((string, list(int))), string) -> int
+function perfVal(p, d) = match p { [||] => -1, (n, xs) :: rest => if n == d then nthD(xs, 0, 0) else perfVal(rest, d) }
+
 val hasPerf : (list((string, list(int))), string) -> bool
 function hasPerf(p, d) = match p { [||] => false, (n, _) :: rest => n == d | hasPerf(rest, d) }
 
@@ -476,6 +479,15 @@ function do_launch(k, g, b, dyn, args) = {
               };
               kernel = k; kfid = f; gridDim = g; blockDim = b; clusterDim = cd;
               dynsmem = dyn; explcl = hasPerf(perf_of(k), "reqnctapercluster");
+              /* .minperctamemory size: "the minimum number of bytes of per-CTA global memory that must be available
+                 when this kernel is launched" (PTX ISA 9.4 11.4.10); the size is "a multiple of 1024 bytes" and at
+                 least the directive's (10.35): one zero-initialised slice per CTA of the grid, 1024-aligned */
+              let pcm = perfVal(perf_of(k), "minperctamemory");
+              if pcm >= 0 then {
+                pcmSize = max_int(alignUp(pcm, 1024), 1024);
+                pcmBase = alignUp(gtop, 1024);
+                gtop = pcmBase + pcmSize * vol(g)
+              } else { pcmSize = 0; pcmBase = 0 };
               nextcta = 0; resident = 0; nthreads = 0; ncta_slots = 0;
               colls = [||];
               let lim = if occ > 0 & occ < vol(g) then occ else vol(g);
