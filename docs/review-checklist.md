@@ -18,7 +18,7 @@ the reference for correctness.
 | `mma.sync.m8n8k4` with non-`.f64` inputs is unsupported instead of running on the f64 fragments | §9.7.15.5.1 and Figures 46–52: `.f16` m8n8k4 is a separate form (4 MMA operations, its own fragments) | confirmed defect; the form itself is still to be implemented |
 | tcgen05 Negate A/B flips bit 5 of fp6 / fp4 elements | Table 56 (negate supported for `.kind::f8f6f4`, `.kind::mxf8f6f4`); fp6 `.b8` elements have "2 MSB bits padded" (§5.2); Figure 195: fp4 in an 8-bit container is `0 0 S E2 M1 0 0` (sign at bit 5); Figure 197: fp6 is `0 0 S …` | confirmed |
 | `tcgen05.mma.cta_group::2` with a non-zero disable-output-lane stops as not modelled | §9.7.17.10 (tcgen05.mma): a set bit means the lane "will not be updated"; vector size 8 for `::2`. The split of the 256 bits between the CTA pair is not stated | confirmed defect (the mask was ignored); bit-to-CTA mapping unspecified, so not modelled |
-| `.ashift` with `.sp`: rows of the expanded A shift | §9.7.17.10: ".ashift shifts the rows of the A matrix down by one row, except for the last row in the Tensor Memory", also allowed on `tcgen05.mma.sp`. Whether the compressed data or the logical matrix shifts (and whether the metadata moves) is not stated | **open**: the ISA does not decide between the old and new behaviour |
+| `.ashift` with `.sp`: rows of the expanded A shift | §9.7.17.10: ".ashift shifts the rows of the A matrix down by one row, except for the last row in the Tensor Memory", also allowed on `tcgen05.mma.sp`. Whether the compressed data or the logical matrix shifts (and whether the metadata moves) is not stated | decided (9.4 text unchanged, §9.7.18.10.10.2): the model shifts the expanded A, so each row keeps its own metadata; shifting the compressed rows alone would pair every row with the previous row's metadata, which has no sensible reading |
 | textures: wrap / mirror with unnormalized coordinates clamp | §5.3.2 defers address modes to the CUDA C++ Programming Guide ("See the CUDA C++ Programming Guide for more details") | not in the PTX ISA; follows the CUDA guide |
 | a call whose return list does not match the declaration faults (Sail looped forever) | §9.7.13 call: "Input arguments and return values are optional"; operands are type-checked against flist / fproto | the loop was a defect; that such a call must fault is not stated by the ISA |
 | `d\|p` operands reject a literal after the bar | §9.7.14.15 elect.sync: `d` is a register or the sink `_`, `p` a predicate | confirmed |
@@ -42,7 +42,7 @@ the reference for correctness.
       64-bit PTX addresses do; keys outside [0, 2^64) read 0 and are not written (the model checks its addresses first).
 - [x] `docs/prior-work.md` (tcgen05.cp decompression) said 4-bit values land in the low bits; Figure 195 puts them in
       bits 2–5, as the code does (doc corrected; the K header is obsolete with the K semantics).
-- [ ] `.ashift` with `.sp`: decide the reading (see table) and document it.
+- [x] `.ashift` with `.sp`: decided and documented (see table): the expanded A shifts, rows keep their metadata.
 
 ## Integer review against the ISA (fixed)
 
@@ -178,7 +178,7 @@ Open:
 - [x] `brkpt` "Suspends execution" (§9.7.20.1): the run stops there (it was a no-op) (tests/neg/brkpt.ptx)
 - [x] function-scope variables (`.shared`, `.global`, `.const`) are bound per function: equal names in two functions no
       longer share a symbol (tests/func-scope-vars.ptx)
-- [ ] `.ashift` with `.sp`, Figure 187 lane placement (see the matrix section)
+- [x] `.ashift` with `.sp` decided (see table); Figure 187 lane placement stays open (see the matrix section)
 - [x] `tcgen05.alloc` without `.shared::cta` takes a generic address (§9.7.17.7.1: "If no state space is specified then
       Generic Addressing is used"); the model read it as a shared offset (tests/tc-alloc-generic.ptx)
 - [x] `.multimem` fabric operations with counted completion bump the counter on every destination device, each counting
