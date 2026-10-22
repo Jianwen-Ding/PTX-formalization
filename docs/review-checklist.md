@@ -292,6 +292,11 @@ Open:
       tests), `sm_107f` (not in 9.3), and tests of forms outside the syntax on purpose.  tests/tex.ptx and
       tests/surf.ptx did an 8-byte suld at a 4-byte aligned x ("must be naturally aligned to a multiple of the access
       size", §9.7.12.1); scripts/gen_tex.py and gen_surf.py now use x = 8
+- [x] ZLUDA programs under `.isacheck` + `.ub strict`: no model false positive.  Harness fixes (scripts/import_zluda.py):
+      `.extern .shared` programs get 128 bytes of dynamic shared memory (they had none), the 64-thread 2x mma test a
+      2048-byte output buffer.  Reports kept as the programs' own: ldmatrix stores past its 256-byte shared array
+      (threads 32-63 at +128), vector8_extract uses `ld.v8.u8` (not a 9.3 form), vote_ballot_nosync non-`.sync` vote on
+      sm_70+
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 
