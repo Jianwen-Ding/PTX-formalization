@@ -330,6 +330,25 @@ function isaColl(xs) = match xs {
 val isaRepOn : list(string) -> bool
 function isaRepOn(m) = { let (w, _) = repPat(m); w != 0 }
 
+/* the type kind of the i-th instruction type */
+val isaTyK : (list(ty), int) -> string
+function isaTyK(ts, i) = match ts { [||] => "", t :: rest => if i == 0 then t.k else isaTyK(rest, i - 1) }
+
+/* the 9.4 packed mixed-precision forms (9.7.5): 1 down-converting (.f16x2 / .bf16x2 from .f32x2, .f32x2), 2 up-converting
+   to .f32x2 (add / sub / fma), 3 mul.bf16x2.bf16x2.f16x2 / mul.f16x2.f16x2.bf16x2, 0 otherwise */
+val isaMixKind : list(ty) -> int
+function isaMixKind(ts) = {
+  let n = list_length(ts);
+  let d = isaTyK(ts, 0);
+  let a = isaTyK(ts, 1);
+  let c = isaTyK(ts, 2);
+  let nar = d == "f16x2" | d == "bf16x2";
+  if n == 3 & nar & a == "f32x2" & c == "f32x2" then 1
+  else if (n == 3 | n == 4) & d == "f32x2" & (a == "f16x2" | a == "bf16x2") then 2
+  else if n == 3 & nar & a == d & (c == "f16x2" | c == "bf16x2") & c != d then 3
+  else 0
+}
+
 val isaPzoOk : list(ty) -> bool
 function isaPzoOk(ts) = match ts {
   [|d, s|] =>
@@ -412,6 +431,31 @@ function isaQual(o, ops) = {
     "mbarrier.test_wait / try_wait.parity: the phase parity is 0 or 1 [PTX ISA 9.3 9.7.14.16.19]"
   else if b == "tensormap" & has(m, "replace") & isaBadImm(ops, 3, 1, 0, 4, 1) then
     "tensormap.replace: the only valid values for ord are [0..4] [PTX ISA 9.4 9.7.10.29]"
+  /* mixed precision (9.4 9.7.5): the down-converting forms are add / sub.rz{.ftz}.f16x2.f32x2.f32x2,
+     add / sub.rz.bf16x2.f32x2.f32x2, mul.ftz.rz.f16x2.f32x2.f32x2, mul.rz.bf16x2.f32x2.f32x2 (the model rounds them with
+     .rz whatever is given); the other packed forms take no .ftz / .sat, and mul.bf16x2.bf16x2.f16x2 /
+     mul.f16x2.f16x2.bf16x2 no rounding */
+  else if isaMixKind(o.tys) == 1 & (not_bool(has(m, "rz")) | isaAny(m, [|"rn", "rm", "rp", "sat"|])
+                                    | (has(m, "ftz") & isaTyK(o.tys, 0) == "bf16x2")) then
+    concat_str(b, ": the down-converting mixed-precision forms take .rz, .ftz only to .f16x2, no .sat [PTX ISA 9.4 9.7.5]")
+  else if isaMixKind(o.tys) == 2 & isaAny(m, [|"ftz", "sat"|]) then
+    concat_str(b, ": no .ftz / .sat on the .f32x2 mixed-precision forms [PTX ISA 9.4 9.7.5]")
+  else if isaMixKind(o.tys) == 3 & isaAny(m, [|"rn", "rz", "rm", "rp", "ftz", "sat"|]) then
+    "mul: no rounding, .ftz or .sat on the .f16x2 / .bf16x2 mixed forms [PTX ISA 9.4 9.7.5.4]"
+  /* fence (9.4 9.7.15.4): ".sync_restrict::shared::cta, .sem must be .release", "::shared::cluster, .sem must be
+     .acquire", "::shared::cluster::read, .sem must be .release", and with any of them ".the .scope must be specified as
+     .cluster"; fence.proxy.alias with .acquire / .release takes ".scope_alias = { .sys }"; the [addr], size form: "The
+     only supported value for the size operand is 128" */
+  else if b == "fence" & has(m, "sync_restrict::shared::cta") & not_bool(has(m, "release") & has(m, "cluster")) then
+    "fence.sync_restrict::shared::cta needs .release and .cluster [PTX ISA 9.4 9.7.15.4]"
+  else if b == "fence" & has(m, "sync_restrict::shared::cluster") & not_bool(has(m, "acquire") & has(m, "cluster")) then
+    "fence.sync_restrict::shared::cluster needs .acquire and .cluster [PTX ISA 9.4 9.7.15.4]"
+  else if b == "fence" & has(m, "sync_restrict::shared::cluster::read") & not_bool(has(m, "release") & has(m, "cluster")) then
+    "fence.sync_restrict::shared::cluster::read needs .release and .cluster [PTX ISA 9.4 9.7.15.4]"
+  else if b == "fence" & has(m, "alias") & isaAny(m, [|"acquire", "release"|]) & not_bool(has(m, "sys")) then
+    "fence.proxy.alias with .acquire / .release needs the .sys scope [PTX ISA 9.4 9.7.15.4]"
+  else if b == "fence" & has(m, "tensormap::generic") & isaBadImm(ops, 2, 1, 128, 128, 1) then
+    "fence.proxy.tensormap::generic: the only supported size is 128 [PTX ISA 9.4 9.7.15.4]"
   /* "In presence of .ignore_oob, the qualifier .report_mechanism, if specified, must be set to
      .mbarrier::report::disabled" (9.4 9.7.10.28.4.1) */
   else if b == "cp" & has(m, "ignore_oob") & isaRepOn(m) then
@@ -435,6 +479,8 @@ function isaQual(o, ops) = {
     concat_str(b, ": .relaxed and .acquire / .release need a .scope [PTX ISA 9.4 9.7.10.8 / 9.7.10.11]")
   else if (b == "ld" | b == "st") & has(m, "mmio") & not_bool(has(m, "sys") & has(m, "relaxed")) then
     concat_str(b, ": only .relaxed.sys is valid for .mmio [PTX ISA 9.4 9.7.10.8 / 9.7.10.11]")
+  /* also the mixed fma.f32.{f16,bf16}: 9.4 writes its syntax fma{.rnd}{.sat}.cdtype.abtype (9.7.5.3) but keeps "Rounding
+     modifiers(no default)" in its Notes; with no default there is no meaning without one, so the report stays */
   else if b == "fma" & fl & not_bool(isaAny(m, [|"rn", "rz", "rm", "rp"|])) then
     "fma needs a rounding modifier [PTX ISA 9.4 9.7.3.6]"
   else if b == "mma" & has(m, "m8n8k4") & (match o.tys { [|dt, _, _, ct|] => ty_eq(ct, mkty("f", 32)) & not_bool(ty_eq(dt, mkty("f", 32))), _ => false }) then

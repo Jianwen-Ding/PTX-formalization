@@ -14,8 +14,8 @@
     prefetch.global.L2::evict_last [%g];
     ld.global.u32.proxy::readonly %r0, [%g];
     ld.u32.proxy::readonly %r1, [%g+4];
-    fence.proxy.alias.acquire.cta;
-    fence.proxy.alias.release.gpu;
+    fence.proxy.alias.acquire.sys;
+    fence.proxy.alias.release.sys;
     fence.proxy.async::generic.release.sync_restrict::shared::cluster::read.cluster;
     st.global.v2.u32 [%o], {%r0, %r1};
     ret;

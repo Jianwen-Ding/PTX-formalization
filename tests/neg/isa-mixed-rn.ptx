@@ -1,0 +1,18 @@
+// expect: the down-converting mixed-precision forms take .rz
+// add.rn.f16x2.f32x2.f32x2: the down-converting form is add.rz{.ftz} (PTX ISA 9.4 9.7.5.1); under .isacheck (the model
+// rounds it with .rz in the default mode)
+.version 9.4
+.target sm_107f
+.address_size 64
+.isacheck ;
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %a, %c; .reg .b32 %r;
+    ld.param.u64 %o, [po];
+    mov.b64 %a, 0x3f8000003f800000; mov.b64 %c, 0x3f8000003f800000;
+    add.rn.f16x2.f32x2.f32x2 %r, %a, %c;
+    st.global.u32 [%o], %r;
+    ret;
+}
+.buffer O .u32 [1];
+.launch k <<< 1, 1 >>> (O);

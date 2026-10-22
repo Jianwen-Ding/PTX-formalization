@@ -541,3 +541,15 @@ is recorded in the list under "Second review pass".  The legality table is gener
       "swizzling mode must not be set to (i) no swizzle" for the three `im2col::w` modes.  scripts/gen_tma_im2col.py's
       store test went out of bounds on purpose; it now stays inside (tests/tma-i2c-store.ptx) and the old program is
       tests/neg/tma-i2c-store-oob.ptx
+- [x] fence rules under `.isacheck` (9.4 §9.7.15.4): `.sync_restrict::shared::cta` needs `.release`, `::shared::cluster`
+      `.acquire`, `::shared::cluster::read` `.release`, all with `.cluster`; `fence.proxy.alias` with `.acquire` /
+      `.release` only `.sys` (`.scope_alias = { .sys }`; tests/hint94.ptx used `.cta` / `.gpu`, fixed); the
+      `tensormap::generic` acquire form only size 128 (tests/neg/isa-fence-restrict.ptx)
+- [x] mixed precision (9.4 §9.7.5) under `.isacheck`: the down-converting forms need `.rz` (no other rounding, no `.sat`,
+      `.ftz` only to `.f16x2`), the `.f32x2` forms take no `.ftz` / `.sat`, the `.bf16x2.bf16x2.f16x2` mul forms no
+      rounding / `.ftz` / `.sat`.  The default mode keeps rounding the down-conversion with `.rz` (honouring another
+      mode would need a single exact rounding the model does not do here) (tests/neg/isa-mixed-rn.ptx)
+- [x] mixed `fma.f32.{f16,bf16}` without rounding: 9.4's syntax shows `{.rnd}` but its Notes keep "Rounding
+      modifiers(no default)"; the `.isacheck` report stays (no meaning without a default) -- spec inconsistency
+- [x] multicast mbarrier expect_tx / complete_tx / arrive / arrive_drop skipped an uninitialised object of ctaMask
+      silently; reported under `.ub strict` like the local forms

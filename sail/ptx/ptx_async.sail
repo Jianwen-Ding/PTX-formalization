@@ -311,7 +311,12 @@ function exec_mbar(o, ops) = {
     [|XB([|a|], [||]), n, mk|] if (has(m, "expect_tx") | has(m, "complete_tx")) & not_bool(has(m, "arrive")) & mc => {
       let v = if has(m, "complete_tx") then negate(rdu32(n)) else rdu32(n);
       var ks = mbMcKeys(land_int(locOffA(ea(a, sp)), 16777215), rdu32(mk));
-      while is_cons(ks) do { match ks { k :: rest => { if mbHas(k) then mbPut(k, mbTx(mbGet(k), v)); ks = rest }, [||] => () } };
+      /* an object of the ctaMask that is not initialised is undefined (9.7.15.16): under .ub strict, as for the
+         non-multicast forms */
+      while is_cons(ks) do { match ks { k :: rest => {
+        if mbHas(k) then mbPut(k, mbTx(mbGet(k), v))
+        else if ub then fault("mbarrier (multicast): an object of ctaMask is not initialised", 0);
+        ks = rest }, [||] => () } };
       true
     },
     XB([|a|], [||]) :: n :: _ if (has(m, "expect_tx") | has(m, "complete_tx")) & not_bool(has(m, "arrive") | has(m, "arrive_drop")) & not_bool(mc) => {
@@ -336,7 +341,7 @@ function exec_mbar(o, ops) = {
           let (_, _, e0, _, _) = mbGet(k);
           if has(m, "arrive_drop") & ub & e0 - cnt == 0 then fault("mbarrier.arrive_drop: the expected arrival count becomes zero", 0)
           else mbPut(k, if has(m, "arrive_drop") then mbDrop(mbTx(mbGet(k), tx), cnt) else mbArrive(mbTx(mbGet(k), tx), cnt))
-        };
+        } else if ub then fault("mbarrier (multicast): an object of ctaMask is not initialised", 0);
         ks = rr }, [||] => () } };
       true
     },
