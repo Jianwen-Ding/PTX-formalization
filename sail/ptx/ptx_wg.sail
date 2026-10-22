@@ -289,7 +289,7 @@ function exec_wg(o, ops) = {
       let sp = wgSp();
       smap_set(sp, "#f", 1);
       var i : int = 0;
-      while i < smap_size(sp) do { let k = smap_key(sp, i); if stake(k, 1) == "~" then smap_del(sp, k) else i = i + 1 }
+      while i < smap_size(sp) do { let k = smap_key(sp, i); if stake(k, 1) == "~" | stake(k, 1) == "@" then smap_del(sp, k) else i = i + 1 }
     };
     true
   }
@@ -336,6 +336,15 @@ function exec_wg(o, ops) = {
           while is_cons(cs) & not_bool(stuck) do { match cs { r :: rest => {
             if smap_has(sp, concat_str("~", r)) then fault(concat_str("register ", concat_str(r, " accessed since the last wgmma.fence is used by wgmma.mma_async")), 0);
             cs = rest }, [||] => () } };
+          /* "except when these are accumulator register accesses across multiple wgmma.mma_async instructions of the same
+             shape": "@r" holds that r was an accumulator since the last fence, "@r=shape" with which shape */
+          var ds = xopRegs([|dv|]);
+          while is_cons(ds) & not_bool(stuck) do { match ds { r :: rest => {
+            let ks = concat_str("@", concat_str(r, concat_str("=", wgShape(m))));
+            if smap_has(sp, concat_str("@", r)) & not_bool(smap_has(sp, ks)) then
+              fault(concat_str("accumulator ", concat_str(r, " shared by wgmma.mma_async of different shapes without a wgmma.fence")), 0);
+            smap_set(sp, concat_str("@", r), 1); smap_set(sp, ks, 1);
+            ds = rest }, [||] => () } };
           while is_cons(rs) do { match rs { r :: rest => { if smap_has(sp, r) then smap_set(sp, r, g) else smap_set(sp, concat_str("+", r), g); rs = rest }, [||] => () } }
         }
       };
