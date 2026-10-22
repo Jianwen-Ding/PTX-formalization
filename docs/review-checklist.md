@@ -596,3 +596,108 @@ is recorded in the list under "Second review pass".  The legality table is gener
       is 32 (`tcTileB` takes it separately) (tests/tc-94b-7.ptx sparse K = 64 with a padded E2M1 B, tc-94b-8.ptx sparse
       K = 128 with an unpadded E2M3 B).  scripts/gen_tcgen05_94b.py generates tests/tc-94b-*.ptx and the `.ub strict`
       negative test
+
+## Independent floating-point oracle (MPFR / OCP MX)
+
+`scripts/fporacle/` (README there) is a seeded differential fuzzer that runs PTX programs on the built model
+(`ptxfront.py` + `build/ptx`, never rebuilt) and compares every result bit pattern with a reference written
+independently of the Sail sources: MPFR through `gmpy2` (precision, exponent range and subnormalisation of
+f64 / f32 / f16 / bf16, all four `.rnd`), cross-checked case by case against exact rational arithmetic with a
+rounding routine of its own (which also covers `.rna`, `.rs`, tf32 and the small formats); the FP8 / FP6 / FP4 /
+E8M0 encodings come from the OCP Microscaling Formats (MX) v1.0 specification (5.3 Tables 2-3, 5.4.1), and
+wherever PTX defines the behaviour (`.ftz`, `.sat`, `.relu`, `.satfinite`, `.pzo`, NaN results, float-to-int
+saturation and NaN values, packing order) the PTX ISA 9.4 text (9.7.3, 9.7.4, 9.7.5, 9.7.6, 9.7.10.24) is the
+authority.  No NVIDIA software or hardware is involved.  Inputs are edge-biased (signed zeros, subnormals,
+smallest / largest normals, ties, overflow boundaries, infinities, quiet and signalling NaNs, cancellation in
+`add` / `fma`, values on grids finer than the destination for conversions); the up-conversions from the x2
+formats are exhaustive.  NaN results are compared by class where the ISA says "unspecified NaN"; f64 payload
+propagation and the usual canonical NaNs (0x7fffffff, 0x7fff) are soft checks (no deviations seen).  Every
+disagreement is re-run as a one-thread, one-instruction program and its inputs are simplified byte by byte.
+
+Final run: `fuzz.py --seed 2026 --cases 2048 --batch 1024 --jobs 3` (178,304 input tuples, 1,589 instruction variants in 90 groups, 3,207,168 variant x input cases, 6,909,952 result lanes):
+
+| area | groups | variants | cases (variant x input) | lanes | ok | alt | any | FAIL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| f32 add/sub/mul/div/fma/mad/rcp/sqrt (.rn/.rz/.rm/.rp, .ftz, .sat) | 3 | 92 | 188416 | 188416 | 185253 | 3163 | 0 | 0 |
+| f64 add/sub/mul/div/fma/mad/rcp/sqrt (.rn/.rz/.rm/.rp) | 3 | 32 | 65536 | 65536 | 65536 | 0 | 0 | 0 |
+| f32x2 add/sub/mul/fma (.rnd, .ftz) | 2 | 32 | 65536 | 131072 | 131072 | 0 | 0 | 0 |
+| min/max f32 (.ftz .NaN .xorsign.abs, 3-input .abs), f64 | 2 | 34 | 69632 | 69632 | 69632 | 0 | 0 | 0 |
+| f16 / f16x2 add/sub/mul/fma (.rn .ftz .sat .relu) | 4 | 36 | 73728 | 110592 | 108988 | 1604 | 0 | 0 |
+| bf16 / bf16x2 add/sub/mul/fma (.rn .relu) | 4 | 10 | 20480 | 30720 | 30720 | 0 | 0 | 0 |
+| min/max f16/f16x2/bf16/bf16x2 (.ftz .NaN .xorsign.abs) | 4 | 48 | 98304 | 147456 | 147456 | 0 | 0 | 0 |
+| mixed precision 9.7.5 (.f32.f16/bf16, 9.4 .f32x2 / down-converting / mul forms) | 10 | 80 | 163840 | 229376 | 228833 | 12 | 53 | 478 |
+| alternate-format x4 add/sub (9.7.6) | 14 | 56 | 114688 | 458752 | 458752 | 0 | 0 | 0 |
+| alternate-format x4 mul (9.7.6) | 7 | 196 | 401408 | 1605632 | 1605632 | 0 | 0 | 0 |
+| alternate-format x4 fma (9.7.6) | 7 | 196 | 401408 | 1605632 | 1605632 | 0 | 0 | 0 |
+| cvt float -> float (f64/f32/f16/bf16/tf32, all modes, .ftz .sat .relu .satfinite .pzo, integral rounding) | 5 | 153 | 313344 | 313344 | 303724 | 9620 | 0 | 0 |
+| cvt float -> int (rni/rzi/rmi/rpi, .ftz) | 4 | 160 | 327680 | 327680 | 327680 | 0 | 0 | 0 |
+| cvt int -> float (rn/rz/rm/rp) | 8 | 128 | 262144 | 262144 | 262144 | 0 | 0 | 0 |
+| cvt -> e4m3x2/e5m2x2/e2m3x2/e3m2x2/e2m1x2/ue5m3x2/ue8m0x2, f16x2/bf16x2 (.rn .rz .rp .relu .satfinite .pzo) | 3 | 178 | 364544 | 729088 | 680876 | 0 | 46505 | 1707 |
+| cvt .scaled::n1 / n2 ::ue8m0 | 4 | 88 | 180224 | 360448 | 327807 | 4750 | 19372 | 8519 |
+| cvt .rs (f16x2/bf16x2 exact; x4 forms neighbour check) | 2 | 36 | 73728 | 229376 | 198006 | 31370 | 0 | 0 |
+| cvt x2 formats -> f16x2/bf16x2 (exhaustive) | 4 | 34 | 22528 | 45056 | 45056 | 0 | 0 | 0 |
+| **total** | 90 | 1589 | 3207168 | 6909952 | 6782799 | 50519 | 65930 | 10704 |
+
+`alt` = the model chose one of the readings an ambiguity allows (listed below); `any` = the ISA defines no result
+(the model's choice is recorded below).
+
+Confirmed model bugs (open; the regression tests fail on the current model, their `.expect` values come from the
+oracle).  All 10,704 failing lanes of the run are these three: re-running the failing groups with an oracle patched to
+emulate them leaves no disagreement.  Per bug: ue5m3 1,707 + 3,579 (`.scaled`) lanes, mixed `.ftz` 478, `.scaled`
+`-0.0` 4,940 lanes.
+
+- [ ] `cvt{.rn,.rz,.rp}.satfinite.ue5m3x2.{f32,f16x2,bf16x2}` (also `.scaled::n1::ue8m0`) of a negative input whose
+      magnitude exceeds MAX_NORM (e.g. -inf, -2^17) gives 0x00; 9.7.10.24 `.satfinite`: "If the absolute value of input
+      (ignoring sign) is greater than MAX_NORM ... the result is ... a positive MAX_NORM in .ue8m0x2 and .ue5m3x2 for
+      which the destination sign is not supported" -> 0xfe (1.75 * 2^16).  The model clamps every negative ue5m3 input
+      to zero before the saturation test (it already gives 0xfe for `.ue8m0x2`).  Minimal case:
+      `cvt.rn.satfinite.ue5m3x2.f32 d, 0xff800000, 0xc8000000` -> 0xfefe (model 0x0000).
+      tests/fporacle-ue5m3-satfinite-neg.ptx
+- [ ] `add / sub.rz.ftz.f16x2.f32x2.f32x2` and `mul.ftz.rz.f16x2.f32x2.f32x2` (9.7.5.1 / .2 / .4) do not flush f16
+      subnormal results: the model applies `.ftz` to the f32 operation and then rounds to f16 with `.rz`.  `.ftz` is
+      "flushes subnormal inputs and results to sign-preserving zero" (9.7.3, 9.7.4), the result of the instruction is the
+      `.f16x2` d, and the syntax offers `.ftz` only (and mandatorily) with the `.f16x2` destination, not with `.bf16x2`
+      whose exponent range equals f32's.  9.7.5 itself only says "By default, subnormal numbers are supported", so this
+      rests on the general meaning of `.ftz`.  Minimal case: `add.rz.ftz.f16x2.f32x2.f32x2 d, {0x3f7fff00, 1.0},
+      {-1.0, 1.0}` -> lane 0 = -2^-16 -> 0x8000 (model 0x8100, a subnormal).  tests/fporacle-mixed-ftz-f16.ptx
+- [ ] `.scaled::n1::ue8m0` down-conversions turn a -0.0 input into +0.0 (all of e4m3x2 / e5m2x2 / e2m3x2 / e3m2x2 /
+      e2m1x2 / ue5m3x2 from f32, f16x2, bf16x2): 9.7.10.24 "subnormal values for inputs a and b are flushed to zero
+      before conversion"; -0.0 is not subnormal and the conversion keeps the sign of zero (only `.pzo` forces +0.0).  The
+      model's flush (`flushIn`) maps every |x| below the smallest normal, zeros included, to +0.0.  Minimal case:
+      `cvt.rn.satfinite.scaled::n1::ue8m0.e4m3x2.f32 d, 0x80000000, 1.0, 0x7f` -> 0x8038 (model 0x0038).
+      tests/fporacle-scaled-negzero.ptx
+
+Spec ambiguities and undefined cases (accepted either way; the model's choice in brackets):
+
+- `.sat` of a -0.0 result (f32 / f16 / f16x2 `add` `sub` `mul` `fma`, the mixed `.f32` forms, `cvt .sat`): "clamps the
+      result to [0.0, 1.0]" (9.7.3.3, 9.7.4.1, 9.7.5.1, 9.7.10.24); -0.0 compares equal to 0.0, so it may stay.  [model
+      keeps -0.0; 14,399 lanes]  `.relu` of a -0.0 result ("clamps the result to 0 if negative") [+0.0 in every case]
+- ue5m3 (5.2.3) gives no bias: 15 assumed by both sides (MAX_NORM 0xfe = 1.75 * 2^16; `cvt.rn.f16x2.ue5m3x2` of values
+      above 65504 is +inf on both sides).  Undefined by the text: a negative in-range input to `.ue5m3x2` / `.ue8m0x2`
+      (no sign) [0x00]; `.ue8m0x2` of zero or of a value below 2^-127 (no zero encoding) [0x00 = 2^-127]; overflow
+      without `.satfinite` into `.ue5m3x2` / `.ue8m0x2` (the 9.7.6 text gives NaN only for e4m3) [0xfe, 0x00 if negative]
+- scale factor 0xFF (the ue8m0 NaN) in `.scaled::n1` / `.scaled::n2` [NaN where the destination has one: e4m3 / e5m2
+      0x7f, ue5m3 0xff, bf16 0x7fff; +MAX_NORM for e2m3 / e3m2 / e2m1, as the `.satfinite` NaN rule]; `.scaled::n1`
+      "flushed to zero" of a negative subnormal input (elsewhere always "sign-preserving zero") [+0]
+- down-converting mixed forms: whether `.ftz` also flushes the f32 inputs [it does: `inf * f32-subnormal` is NaN];
+      `fma.rnd.f32x2.{f16x2,bf16x2}.f32x2.f32x2` (9.7.5.3): the syntax says `.btype = .f32x2`, the semantics convert
+      `b[0:15]` / `b[16:31]` as a half pair [the model reads b as a `.b32` pair of `.atype`, also when spelled
+      `.f16x2`; the fuzzer uses that reading]; `mul.bf16x2.bf16x2.f16x2` / `mul.f16x2.f16x2.bf16x2` give no rounding for
+      `convert(c)` nor for the product [convert to nearest even, then multiply to nearest even: the model matched this
+      reading wherever the single-rounding reading differs; an overflowing convert times 0 is NaN]
+- canonical NaN bits of `.NaN` min / max and `.relu` are given only for `rcp` / `rsqrt.approx.ftz.f64`
+      (0x7fffffff00000000) [0x7fffffff / 0x7fff; f64 NaN payloads are propagated quietened]; tf32 layout is
+      "implementation defined" (5.2.3) [an f32 pattern with the 13 low bits zero, as assumed by the oracle]
+- `.rs` (9.7.10.24): the random-bit layouts are only in Figures 39-42.  `.f16x2` / `.bf16x2` from normal-range values are
+      checked exactly against the carry rule (13 / 16 random bits); a subnormal f16 result and the x4 forms only for
+      being one of the two neighbours (toward / away from zero; 31,370 lanes); overflow without `.satfinite` [inf]
+- `.ftz` results that round up to the smallest normal are kept (flush after rounding) on both sides; 6-bit
+      (e2m3 / e3m2) inputs with nonzero padding bits are outside the ISA and only recorded
+
+Not covered: `.approx` instructions (no exact result except the special-value tables), `rsqrt`, `sin` / `cos` / `lg2` /
+`ex2` / `tanh`, `testp`, `copysign`, `abs`, `neg`; `.s2f6x2` fixed-point conversions; the `fma.oob` modifier (needs
+the OOB NaN of the tensor section); the `.f32x2` spelling of `b` in `fma.f32x2.{f16x2,bf16x2}.f32x2.f32x2`;
+`.scaled::n2::ue8m0` with `.s2f6x2`; FP atomics / reductions, `mma` /
+`tcgen05` arithmetic and texture filtering; the exact random-bit layout of the x4 `.rs` conversions and of `.rs` to a
+subnormal f16 (only the two neighbours are checked: the layouts are in Figures 39-42, which the text extraction
+loses).  Berkeley SoftFloat was not used as a second opinion (the MPFR and rational paths cross-check each other).

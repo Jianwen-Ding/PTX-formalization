@@ -1,0 +1,32 @@
+// .ftz on the down-converting mixed-precision forms add / sub.rz.ftz.f16x2.f32x2.f32x2 and mul.ftz.rz.f16x2.f32x2.f32x2
+// (PTX ISA 9.4 9.7.5.1 / 9.7.5.2 / 9.7.5.4; found by scripts/fporacle).  The result d is .f16x2, and .ftz means
+// "flushes subnormal inputs and results to sign-preserving zero" (9.7.3, 9.7.4); the syntax offers .ftz only with the
+// .f16x2 destination (not with .bf16x2, whose exponent range equals f32's), so it is about the f16 results.  The model
+// applies .ftz to the f32 operation and then rounds to f16 with .rz without flushing, so f16-subnormal results survive.
+.version 9.4
+.target sm_107a
+.address_size 64
+.visible .entry k(.param .u64 po)
+{
+    .reg .b64 %o, %a, %c; .reg .b32 %r<3>, %lo, %hi;
+    ld.param.u64 %o, [po];
+    // lane 0: 0x3f7fff00 + -1.0 = -2^-16 (f16 subnormal 0x8100) -> -0;  lane 1: 1 + 1 = 2.0
+    mov.b32 %lo, 0x3f7fff00; mov.b32 %hi, 0x3f800000; mov.b64 %a, {%lo, %hi};
+    mov.b32 %lo, 0xbf800000; mov.b32 %hi, 0x3f800000; mov.b64 %c, {%lo, %hi};
+    add.rz.ftz.f16x2.f32x2.f32x2 %r0, %a, %c;                // 0x40008000
+    // lane 0: 2^-14 - 2^-24 -> rz to the largest f16 subnormal 0x03ff -> +0;  lane 1: 1 - 0 = 1.0
+    mov.b32 %lo, 0x38800000; mov.b32 %hi, 0x3f800000; mov.b64 %a, {%lo, %hi};
+    mov.b32 %lo, 0x33800000; mov.b32 %hi, 0x00000000; mov.b64 %c, {%lo, %hi};
+    sub.rz.ftz.f16x2.f32x2.f32x2 %r1, %a, %c;                // 0x3c000000
+    // lane 0: 2^-15 * 0.5 = 2^-16 (f16 subnormal 0x0100) -> +0;  lane 1: -2 * 2^-15 = -2^-14 (normal 0x8400)
+    mov.b32 %lo, 0x38000000; mov.b32 %hi, 0xc0000000; mov.b64 %a, {%lo, %hi};
+    mov.b32 %lo, 0x3f000000; mov.b32 %hi, 0x38000000; mov.b64 %c, {%lo, %hi};
+    mul.ftz.rz.f16x2.f32x2.f32x2 %r2, %a, %c;                // 0x84000000
+    st.global.u32 [%o], %r0;
+    st.global.u32 [%o+4], %r1;
+    st.global.u32 [%o+8], %r2;
+    ret;
+}
+.buffer OUT .u32 [3];
+.launch k <<< 1, 1 >>> (OUT);
+.expect OUT .u32 = { 0x40008000, 0x3c000000, 0x84000000 };
