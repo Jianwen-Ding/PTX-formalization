@@ -304,6 +304,9 @@ Open:
       results (alloca-local, carry, const-expr, decl-init-shape, ld-nc-vec-sink, shared-per-kernel, sub-borrow);
       no ZLUDA program is affected.  The same for vector atom / red (§9.7.14.5-6) (tests/atom-vec.ptx,
       tests/neg/atom-vec-ub-align.ptx)
+- [x] ldmatrix / stmatrix with a generic address outside `.shared` (§9.7.15.5.15-16) under `.ub strict`
+      (tests/neg/ldmatrix-ub-global.ptx); the 23 ldmatrix / stmatrix programs pass, the ZLUDA ldmatrix program keeps its
+      own out-of-bounds store
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 
