@@ -270,6 +270,9 @@ Open:
 - [x] under `.ub strict`: `cvta.to.<space>` of a generic address outside that window (§9.7.9.21), `cp.async` with
       src-size larger than cp-size, and two `cp.async` of one cp.async-group copying to the same location
       (§9.7.9.26.3.1) (tests/neg/cvta-ub-window.ptx, cpasync-ub-*.ptx, tests/cpasync-groups-ub.ptx)
+- [x] `ld.param::entry` naming something other than a parameter of the executing kernel, and `ld.param::func` naming a
+      kernel parameter (§9.7.9.8), under `.ub strict` for named addresses (tests/neg/ld-param-entry-ub.ptx); an access
+      after `stackrestore` to memory it freed (§9.7.18.3) was already reported ("local access above the stack top")
 - [ ] `tcgen05.cp … .warpx2::02_13` / `::01_23`: which warp pairs share a 32-lane slice is not spelled out beyond the
       qualifier name; the model's pairing follows the name and is unconfirmed
 

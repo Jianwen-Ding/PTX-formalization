@@ -86,6 +86,19 @@ function isFuncParam(n) = {
   & (is_some(pdFind(f_params[fchk(t_fn[t])], n)) | is_some(pdFind(f_rets[fchk(t_fn[t])], n)))
 }
 
+/* "For ld.param::entry instruction, operand a must be a kernel parameter address, otherwise behavior is undefined. For
+ * ld.param::func instruction, operand a must be a device function parameter address" (9.7.9.8); checked under .ub
+ * strict for a named address: ::entry needs a parameter of the executing kernel, ::func must not name one */
+val paramUb : (opcode, list(xop)) -> unit
+function paramUb(o, ops) =
+  if ub & o.base == "ld" & (has(o.mods, "param::entry") | has(o.mods, "param::func")) then {
+    let n : string = match ops { _ :: XB([|AN(x)|], _) :: _ => x, _ :: XB([|ANO(x, _)|], _) :: _ => x, _ => "" };
+    let f = fchk(t_fn[tchk(cur)]);
+    let kparam = f_kind[f] == "entry" & is_some(pdFind(f_params[f], n));
+    if n != "" & has(o.mods, "param::entry") & not_bool(kparam) then fault(concat_str("ld.param::entry: not a kernel parameter: ", n), 0)
+    else if n != "" & has(o.mods, "param::func") & kparam then fault(concat_str("ld.param::func: a kernel parameter: ", n), 0)
+  }
+
 val exec_alu : (opcode, list(xop)) -> bool
 function exec_alu(o, ops) = {
   let m = o.mods;
