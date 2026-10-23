@@ -26,6 +26,10 @@ AOPS = ["add", "sub", "xchg", "min", "imin", "max", "imax", "and", "or", "xor"]
 DEV_AOPS = AOPS + ["cmpxchg", "fadd", "umin64", "umax64", "end11", "end12", "end13", "end14", "end15"]
 ATOM_MODE_DEFAULT = {"fadd": 1, "umax64": 1, "umin64": 3}
 FMTS = ["u8", "u16", "u32"]
+# device accesses: every format
+DEV_FMTS = FMTS + ["f16", "u8norm", "s8norm", "u16norm", "s16norm", "rgb10a2", "srgba8", "rg11b10f", "rgb9e5", "rg11b10f.rtz",
+                   "rgb9e5.rtz"]
+FUNOPS = ["floor", "ceil", "trunc", "rint", "rsqrt", "rsqrt_special", "sin_pt_1", "sin_pt_2", "log2", "exp2"]
 
 class ParseError(Exception):
     pass
@@ -34,7 +38,7 @@ def strip_comments(text):
     text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
     return re.sub(r"//[^\n\r]*", " ", text)
 
-REG_RE = re.compile(r"^([ru])(\d+)([lh])?(?:_([ru])(\d+))?((?:\.(?:discard|cache|sx|abs|neg))*)$")
+REG_RE = re.compile(r"^([ru])(\d+)([lh])?(?:_([ru])(\d+))?((?:\.(?:odd|discard|cache|sx|abs|neg))*)$")
 
 def reg(s):
     """register -> the 7 integers of the serialized areg"""
@@ -49,6 +53,11 @@ def reg(s):
             raise ParseError("bad register pair %r" % s)
         view = 3
     flags = m.group(6).split(".")[1:]
+    if "odd" in flags:
+        # a 32-bit uniform at an odd 16-bit index (view 4)
+        if f != 1 or view != 0:
+            raise ParseError("bad register %r" % s)
+        view = 4
     hint = 1 if "cache" in flags else 2 if "discard" in flags else 0
     return [f, n, view, hint, int("sx" in flags), int("abs" in flags), int("neg" in flags)]
 
@@ -70,6 +79,10 @@ def op(s):
         return ["I", int(s)]
     if FLOAT_RE.match(s):
         return ["F", f64bits(s)]
+    m = re.match(r"^(.*?)((?:\.(?:abs|neg))+)$", s)
+    if m and FLOAT_RE.match(m.group(1)):
+        fl = m.group(2).split(".")[1:]
+        return ["M", f64bits(m.group(1)), int("abs" in fl), int("neg" in fl)]
     raise ParseError("bad operand %r" % s)
 
 def pair(s):
@@ -115,7 +128,14 @@ def instr(stmt):
         want(3); return ["IADD", int(base == "isub"), sat] + reg(ops[0]) + op(ops[1]) + op(ops[2]) + [shift_of(ops[3:])]
     if base in ("imadd", "imsub"):
         want(4); return ["IMADD", int(base == "imsub"), sat] + reg(ops[0]) + op(ops[1]) + op(ops[2]) + op(ops[3]) + [shift_of(ops[4:])]
-    if base in ("bitop", "bfi", "bfeil"):
+    m = re.match(r"^convert\.(f2i|i2f)\.([su])(8|16|32)\.(rte|rtz)$", mnem)
+    if m:
+        want(2)
+        mode = {"8": 0, "16": 4, "32": 8}[m.group(3)] | (2 if m.group(4) == "rte" else 0) | (1 if m.group(2) == "s" else 0)
+        return ["CONVERT", mode, int(m.group(1) == "i2f")] + reg(ops[0]) + op(ops[1])
+    if base == "intl":
+        want(3); return ["INTL"] + reg(ops[0]) + op(ops[1]) + op(ops[2])
+    if base in ("bitop", "bfi", "bfeil", "extr"):
         if len(pre) != 1:
             raise ParseError("missing field in %r" % stmt)
         if base == "bitop":
@@ -133,6 +153,8 @@ def instr(stmt):
         want(3); return ["FBIN", m.group(1)[1:], h, sat] + reg(ops[0]) + op(ops[1]) + op(ops[2])
     if base == "rcp":
         want(2); return ["RCP", sat] + reg(ops[0]) + op(ops[1])
+    if base in FUNOPS:
+        want(2); return ["FUNOP", base, sat] + reg(ops[0]) + op(ops[1])
     if mnem in ("icmpsel", "fcmpsel"):
         if len(pre) != 1 or pre[0] not in CCS:
             raise ParseError("bad condition in %r" % stmt)
@@ -160,17 +182,32 @@ def instr(stmt):
         if len(pre) != 1 or pre[0] not in CCS:
             raise ParseError("bad condition in %r" % stmt)
         want(3); return ["BALLOT", int(mnem[0] == "f"), pre[0]] + reg(ops[0]) + op(ops[1]) + op(ops[2])
+    if mnem in ("icmp_quad_ballot", "fcmp_quad_ballot"):
+        if len(pre) != 1 or pre[0] not in CCS:
+            raise ParseError("bad condition in %r" % stmt)
+        want(3); return ["QBALLOT", int(mnem[0] == "f"), pre[0]] + reg(ops[0]) + op(ops[1]) + op(ops[2])
+    m = re.match(r"^quad_shuffle(_xor|_up|_down)?$", mnem)
+    if m:
+        want(3); return ["QSHUFFLE", (m.group(1) or "_idx")[1:]] + reg(ops[0]) + op(ops[1]) + op(ops[2])
+    m = re.match(r"^(quad_prefix|simd_prefix|quad|simd)_(and|fadd|or|fmul|xor|min\.f|max\.f|iadd|min\.s|max\.s|min\.u|max\.u)$", mnem)
+    if m:
+        want(2); return ["XLANE", m.group(1), m.group(2)] + reg(ops[0]) + op(ops[1])
     m = re.match(r"^simd_shuffle(_xor|_up|_down)?$", mnem)
     if m:
         want(3); return ["SHUFFLE", (m.group(1) or "_idx")[1:]] + reg(ops[0]) + op(ops[1]) + op(ops[2])
     if mnem in ("device_load", "device_store"):
-        if len(pre) != 2 or pre[0] not in FMTS:
+        if len(pre) != 2 or pre[0] not in DEV_FMTS:
             raise ParseError("bad format in %r" % stmt)
         want(5)
         extra = ops[5:]
-        g = int("g1" in extra); u6 = int("u6" in extra)
-        if any(x not in ("g1", "u6") for x in extra):
-            raise ParseError("bad trailing operands in %r" % stmt)
+        g = int("g1" in extra); u6 = 0
+        for x in extra:
+            if x == "u6":
+                u6 = 1
+            elif x.startswith("u6="):
+                u6 = intv(x[3:])
+            elif x != "g1":
+                raise ParseError("bad trailing operands in %r" % stmt)
         if ops[3] not in ("signed", "unsigned"):
             raise ParseError("bad signedness in %r" % stmt)
         return ["DEVMEM", int(mnem.endswith("store")), pre[0], mask_field(pre[1])] + reg(ops[0]) + pair(ops[1]) + op(ops[2]) + \
@@ -187,7 +224,7 @@ def instr(stmt):
                 raise ParseError("bad trailing operands in %r" % stmt)
         return ["TGMEM", int(mnem.endswith("store")), pre[0], mask_field(pre[1])] + reg(ops[0]) + base + op(ops[1]) + [intv(ops[2])]
     if mnem in ("device_atomic", "threadgroup_atomic"):
-        if len(pre) != 1 or pre[0] not in (DEV_AOPS if mnem == "device_atomic" else AOPS):
+        if len(pre) != 1 or pre[0] not in (DEV_AOPS if mnem == "device_atomic" else AOPS + ["cmpxchg"]):
             raise ParseError("bad atomic op in %r" % stmt)
         dst = ["N"] if ops[0] == "_" else ["S"] + reg(ops[0])
         if mnem == "device_atomic":
@@ -209,6 +246,15 @@ def instr(stmt):
             else:
                 raise ParseError("bad trailing operands in %r" % stmt)
         return ["TGATOM", pre[0]] + dst + base + op(ops[1]) + op(ops[2])
+    if mnem in ("stack_load", "stack_store"):
+        if len(pre) != 2 or pre[0] not in FMTS:
+            raise ParseError("bad format in %r" % stmt)
+        want(2)
+        if any(x != "g1" for x in ops[2:]):
+            raise ParseError("bad trailing operands in %r" % stmt)
+        return ["STACKMEM", int(mnem.endswith("store")), pre[0], mask_field(pre[1])] + reg(ops[0]) + op(ops[1]) + [int("g1" in ops[2:])]
+    if mnem == "stack_adjust":
+        return ["STACK_ADJUST", intv(ops[0])]
     if mnem == "wait":
         return ["WAIT", intv(ops[0])]
     if mnem == "threadgroup_barrier":

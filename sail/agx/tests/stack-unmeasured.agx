@@ -1,0 +1,8 @@
+// A stack access beyond the stack_adjust allocation is not measured: the model stops with an error
+.all r4 = 1;
+stack_adjust 4;
+stack_store u32 1 r4, 16;
+stop;
+.run;
+.expectstatus fault;
+.expectmsg outside the stack allocation

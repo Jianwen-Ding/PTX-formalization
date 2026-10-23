@@ -1,0 +1,29 @@
+// Normalised and f16 device formats (agx_run's model fitted on the M2 mem_load / mem_store cases), Mesa's coherent
+// access (u6=3), and float immediates with modifiers
+.uni u2 = 4096;
+.uni u3 = 0;
+.all r4 = 1056964608;            // 0.5
+.all r5 = 3212836864;            // -1.0
+.all r6 = 2143289344;            // NaN
+.all r7 = 1073741824;            // 2.0
+device_store u8norm 1 r4, u2_u3, 0, unsigned, 0;      // 0.5 * 255 = 127.5: 128 (halves away from zero)
+device_store s8norm 1 r5, u2_u3, 1, unsigned, 0;      // -127 = 0x81
+device_store u8norm 1 r6, u2_u3, 2, unsigned, 0;      // NaN: 0
+device_store u8norm 1 r7, u2_u3, 3, unsigned, 0, u6=3; // clamped to 1: 255
+device_load u8norm 1 r8, u2_u3, 3, unsigned, 0;       // 255 / 255 = 1.0
+device_load s8norm 1 r9, u2_u3, 1, unsigned, 0, u6=3; // -127 / 127 = -1.0
+device_load u8norm 1 r10l, u2_u3, 0, unsigned, 0;     // 128 / 255 in binary16: 0x3804
+device_store f16 1 r7, u2_u3, 4, unsigned, 0;         // the low 16 bits, unconverted
+device_load f16 1 r11, u2_u3, 4, unsigned, 0;
+wait 0;
+fadd r12, 2.5.neg, 0.5.abs;      // -2.5 + 0.5
+fmul r13, -2.0.abs, r4;          // 2 * 0.5
+stop;
+.run;
+.expectdev 4096 = 4278223232;    // bytes 80 81 00 ff
+.expectall r8 = 1065353216;
+.expectall r9 = 3212836864;
+.expectall r10l = 14340;
+.expectall r11 = 0;
+.expectall r12 = 3221225472;
+.expectall r13 = 1065353216

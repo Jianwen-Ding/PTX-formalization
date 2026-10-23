@@ -53,6 +53,7 @@ function reg_str(r) = {
     0 => concat_str(p, dec_str(r.num)),
     1 => concat_str(p, concat_str(dec_str(r.num), "l")),
     2 => concat_str(p, concat_str(dec_str(r.num), "h")),
+    4 => concat_str(p, concat_str(dec_str(r.num), ".odd")),
     _ => concat_str(concat_str(p, dec_str(r.num)), concat_str(concat_str("_", p), dec_str(r.num + 1)))
   };
   let h : string = match r.hint { HNone => "", HCache => ".cache", HDiscard => ".discard" };
@@ -60,7 +61,10 @@ function reg_str(r) = {
 }
 
 val op_str : aop -> string
-function op_str(a) = match a { OReg(r) => reg_str(r), OImm(i) => dec_str(i), OFImm(b) => f64_str(b) }
+function op_str(a) = match a {
+  OReg(r) => reg_str(r), OImm(i) => dec_str(i), OFImm(b) => f64_str(b),
+  OFMod(b, ab, ng) => concat_str(f64_str(b), concat_str(if ab then ".abs" else "", if ng then ".neg" else ""))
+}
 
 val pair_str : apair -> string
 function pair_str(p) = {
@@ -78,7 +82,11 @@ function cc_str(c) = match c {
 }
 
 val fmt_str : afmt -> string
-function fmt_str(f) = match f { F_U8 => "u8", F_U16 => "u16", F_U32 => "u32" }
+function fmt_str(f) = match f {
+  F_U8 => "u8", F_U16 => "u16", F_U32 => "u32", F_F16 => "f16", F_U8NORM => "u8norm", F_S8NORM => "s8norm",
+  F_U16NORM => "u16norm", F_S16NORM => "s16norm", F_RGB10A2 => "rgb10a2", F_SRGBA8 => "srgba8", F_RG11B10F => "rg11b10f",
+  F_RGB9E5 => "rgb9e5", F_RG11B10F_RTZ => "rg11b10f.rtz", F_RGB9E5_RTZ => "rgb9e5.rtz"
+}
 
 val aop_str : aaop -> string
 function aop_str(o) = match o {
@@ -180,7 +188,7 @@ function asm_target_matches_prefix(_) = None()
 
 /* extra fields of memory instructions: wait group, store-order bit */
 val asm_memx : (int, int) <-> string
-function asm_memx_forwards(g, u6) = concat_str(if g != 0 then ", g1" else "", if u6 != 0 then ", u6" else "")
+function asm_memx_forwards(g, u6) = concat_str(if g != 0 then ", g1" else "", if u6 == 1 then ", u6" else if u6 > 1 then concat_str(", u6=", dec_str(u6)) else "")
 function asm_memx_forwards_matches(_) = true
 function asm_memx_backwards(_) = (0, 0)
 function asm_memx_backwards_matches(_) = false
@@ -235,6 +243,17 @@ mapping iunop_mnem = { U_popcount <-> "popcount", U_bitrev <-> "bitrev", U_ffs <
 val shuf_mnem : shufkind <-> string
 mapping shuf_mnem = { SH_idx <-> "simd_shuffle", SH_xor <-> "simd_shuffle_xor", SH_up <-> "simd_shuffle_up", SH_down <-> "simd_shuffle_down" }
 
+val qshuf_mnem : shufkind <-> string
+mapping qshuf_mnem = { SH_idx <-> "quad_shuffle", SH_xor <-> "quad_shuffle_xor", SH_up <-> "quad_shuffle_up", SH_down <-> "quad_shuffle_down" }
+
+val xkind_mnem : xkind <-> string
+mapping xkind_mnem = { XK_quad <-> "quad_", XK_simd <-> "simd_", XK_quad_prefix <-> "quad_prefix_", XK_simd_prefix <-> "simd_prefix_" }
+
+val xop_mnem : xop <-> string
+mapping xop_mnem = { XO_and <-> "and", XO_fadd <-> "fadd", XO_or <-> "or", XO_fmul <-> "fmul", XO_xor <-> "xor",
+  XO_fmin <-> "min.f", XO_fmax <-> "max.f", XO_iadd <-> "iadd", XO_smin <-> "min.s", XO_smax <-> "max.s",
+  XO_umin <-> "min.u", XO_umax <-> "max.u" }
+
 val stk_mnem : stkkind <-> string
 mapping stk_mnem = { SK_if <-> "if", SK_else <-> "else", SK_while <-> "while" }
 
@@ -244,17 +263,29 @@ mapping ftype = { true <-> "f", false <-> "i" }
 val half16 : bool <-> string
 mapping half16 = { true <-> "16", false <-> "" }
 
+val funop_mnem : funop <-> string
+mapping funop_mnem = { FU_floor <-> "floor", FU_ceil <-> "ceil", FU_trunc <-> "trunc", FU_rint <-> "rint", FU_rsqrt <-> "rsqrt",
+  FU_rsqrt_special <-> "rsqrt_special", FU_sin_pt_1 <-> "sin_pt_1", FU_sin_pt_2 <-> "sin_pt_2", FU_log2 <-> "log2", FU_exp2 <-> "exp2" }
+
 val fbin_mnem : fbinop <-> string
 mapping fbin_mnem = { FB_add <-> "fadd", FB_mul <-> "fmul" }
 
 val asm_fmt : afmt <-> string
-mapping asm_fmt = { F_U8 <-> "u8", F_U16 <-> "u16", F_U32 <-> "u32" }
+mapping asm_fmt = { F_U8 <-> "u8", F_U16 <-> "u16", F_U32 <-> "u32", F_F16 <-> "f16", F_U8NORM <-> "u8norm",
+  F_S8NORM <-> "s8norm", F_U16NORM <-> "u16norm", F_S16NORM <-> "s16norm", F_RGB10A2 <-> "rgb10a2", F_SRGBA8 <-> "srgba8",
+  F_RG11B10F <-> "rg11b10f", F_RGB9E5 <-> "rgb9e5", F_RG11B10F_RTZ <-> "rg11b10f.rtz", F_RGB9E5_RTZ <-> "rgb9e5.rtz" }
 
 val asm_aop : aaop <-> string
 mapping asm_aop = { A_add <-> "add", A_sub <-> "sub", A_xchg <-> "xchg", A_umin <-> "min", A_imin <-> "imin",
   A_umax <-> "max", A_imax <-> "imax", A_and <-> "and", A_or <-> "or", A_xor <-> "xor", A_cmpxchg <-> "cmpxchg",
   A_fadd <-> "fadd", A_umin64 <-> "umin64", A_umax64 <-> "umax64", A_end11 <-> "end11", A_end12 <-> "end12",
   A_end13 <-> "end13", A_end14 <-> "end14", A_end15 <-> "end15" }
+
+/* convert.f2i / convert.i2f, then the mode: s / u, width, rte / rtz (convert.f2i.s16.rte) */
+val convert_str : (int, bool) -> string
+function convert_str(m, i2f) =
+  concat_str(if i2f then "convert.i2f." else "convert.f2i.", concat_str(if bit_int(m, 0) then "s" else "u",
+    concat_str(dec_str(8 * pow2(shr_int(m, 2))), if bit_int(m, 1) then ".rte" else ".rtz")))
 
 val assembly : ast <-> string
 scattered mapping assembly
@@ -273,12 +304,19 @@ mapping clause assembly = IUNOP(o, d, a) <-> iunop_mnem(o) ^ spc() ^ asm_reg(d) 
 mapping clause assembly = FBIN(o, h, s, d, a, b) <-> fbin_mnem(o) ^ half16(h) ^ asm_sat(s) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b)
 mapping clause assembly = FMADD(h, s, d, a, b, c) <-> "fmadd" ^ half16(h) ^ asm_sat(s) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b) ^ comma() ^ asm_op(c)
 mapping clause assembly = RCP(s, d, a) <-> "rcp" ^ asm_sat(s) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a)
+mapping clause assembly = FUNOP(o, s, d, a) <-> funop_mnem(o) ^ asm_sat(s) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a)
+mapping clause assembly = EXTR(m, d, a, b, c) <-> "extr" ^ spc() ^ asm_int(m) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b) ^ comma() ^ asm_op(c)
+mapping clause assembly = INTL(d, a, b) <-> "intl" ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b)
+mapping clause assembly = forwards CONVERT(m, i2f, d, a) => concat_str(convert_str(m, i2f), concat_str(" ", concat_str(reg_str(d), concat_str(", ", op_str(a)))))
 mapping clause assembly = CMPSEL(f, cc, d, a, b, x, y) <-> ftype(f) ^ "cmpsel" ^ spc() ^ asm_cc(cc) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b) ^ comma() ^ asm_op(x) ^ comma() ^ asm_op(y)
 mapping clause assembly = STACKOP(k, f, cc, a, b, n) <-> stk_mnem(k) ^ "_" ^ ftype(f) ^ "cmp" ^ spc() ^ asm_cc(cc) ^ spc() ^ asm_op(a) ^ comma() ^ asm_op(b) ^ asm_push(n)
 mapping clause assembly = POP_EXEC(n) <-> "pop_exec" ^ spc() ^ asm_int(n)
 mapping clause assembly = JMP_EXEC(true, t) <-> "jmp_exec_any" ^ spc() ^ asm_target(t)
 mapping clause assembly = JMP_EXEC(false, t) <-> "jmp_exec_none" ^ spc() ^ asm_target(t)
 mapping clause assembly = BALLOT(f, cc, d, a, b) <-> ftype(f) ^ "cmp_ballot" ^ spc() ^ asm_cc(cc) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b)
+mapping clause assembly = XLANE(k, o, d, a) <-> xkind_mnem(k) ^ xop_mnem(o) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a)
+mapping clause assembly = QSHUFFLE(k, d, a, b) <-> qshuf_mnem(k) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b)
+mapping clause assembly = QBALLOT(f, cc, d, a, b) <-> ftype(f) ^ "cmp_quad_ballot" ^ spc() ^ asm_cc(cc) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b)
 mapping clause assembly = SHUFFLE(k, d, a, b) <-> shuf_mnem(k) ^ spc() ^ asm_reg(d) ^ comma() ^ asm_op(a) ^ comma() ^ asm_op(b)
 mapping clause assembly = DEVMEM(false, f, m, r, p, i, sg, s, g, u6) <-> "device_load" ^ spc() ^ asm_fmt(f) ^ spc() ^ asm_mask(m) ^ spc() ^ asm_reg(r) ^ comma() ^ asm_pair(p) ^ comma() ^ asm_op(i) ^ comma() ^ asm_sign(sg) ^ comma() ^ asm_int(s) ^ asm_memx(g, u6)
 mapping clause assembly = DEVMEM(true, f, m, r, p, i, sg, s, g, u6) <-> "device_store" ^ spc() ^ asm_fmt(f) ^ spc() ^ asm_mask(m) ^ spc() ^ asm_reg(r) ^ comma() ^ asm_pair(p) ^ comma() ^ asm_op(i) ^ comma() ^ asm_sign(sg) ^ comma() ^ asm_int(s) ^ asm_memx(g, u6)
@@ -288,6 +326,9 @@ mapping clause assembly = forwards DEVATOM(o, d, p, i, sg, v, g, m) =>
   concat_str("device_atomic ", concat_str(aop_str(o), concat_str(" ", concat_str(asm_adst_forwards(d), concat_str(", ",
   concat_str(pair_str(p), concat_str(", ", concat_str(op_str(i), concat_str(", ", concat_str(op_str(v), asm_atomx_forwards(o, sg, g, m)))))))))))
 mapping clause assembly = TGATOM(o, d, b, i, v) <-> "threadgroup_atomic" ^ spc() ^ asm_aop(o) ^ spc() ^ asm_adst(d) ^ comma() ^ asm_op(i) ^ comma() ^ asm_op(v) ^ asm_tgbase(b)
+mapping clause assembly = STACKMEM(false, f, m, r, o, g) <-> "stack_load" ^ spc() ^ asm_fmt(f) ^ spc() ^ asm_mask(m) ^ spc() ^ asm_reg(r) ^ comma() ^ asm_op(o) ^ asm_memx(g, 0)
+mapping clause assembly = STACKMEM(true, f, m, r, o, g) <-> "stack_store" ^ spc() ^ asm_fmt(f) ^ spc() ^ asm_mask(m) ^ spc() ^ asm_reg(r) ^ comma() ^ asm_op(o) ^ asm_memx(g, 0)
+mapping clause assembly = STACK_ADJUST(n) <-> "stack_adjust" ^ spc() ^ asm_int(n)
 mapping clause assembly = WAIT(n) <-> "wait" ^ spc() ^ asm_int(n)
 mapping clause assembly = TG_BARRIER() <-> "threadgroup_barrier"
 mapping clause assembly = MEMORY_BARRIER(a, b, c) <-> "memory_barrier" ^ spc() ^ asm_int(a) ^ comma() ^ asm_int(b) ^ comma() ^ asm_int(c)
