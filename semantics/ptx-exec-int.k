@@ -7,9 +7,12 @@
 // Each thread has a one-bit carry flag CC.CF, kept in its register file under
 // the reserved key "%%cc.cf".  Instructions without `.cc` leave it untouched.
 // Carry-out of an addition is the unsigned carry out of the type's width.
-// Subtraction is a + ~b + CF (CF = 1 means "no borrow"), so sub.cc sets CC.CF
-// to 1 exactly when a >= b (unsigned) -- this is what hardware does, and what
-// the ZLUDA conformance test subc_cc_s32 observes.
+// Subtraction follows the ISA text (PTX ISA 9.7.2.3, 9.7.2.4): sub.cc writes
+// the borrow-out into CC.CF, and subc computes d = a - (b + CC.CF) with the
+// flag as borrow-in, so CC.CF is 1 exactly when the subtraction borrows (as
+// the Sail model, sail/ptx/ptx_int.sail, and tests/sub-borrow.ptx).  (NVIDIA
+// hardware keeps the opposite polarity, which ZLUDA's subc_cc_s32 recorded;
+// the expected value of tests/zluda/subc_cc_s32.ptx is the ISA's.)
 // =============================================================================
 requires "ptx-exec-core.k"
 
@@ -24,9 +27,9 @@ module PTX-EXEC-INT
   rule ccOp(OP, _, T, CIN, A, B, _) => ccSum(trunc(A, wid(T)) +Int trunc(B, wid(T)) +Int CIN, wid(T))
     requires OP ==String "add" orBool OP ==String "addc"
   rule ccOp("sub", _, T, _, A, B, _) =>
-       ccSum(trunc(A, wid(T)) +Int trunc(~Int B, wid(T)) +Int 1, wid(T))
+       ccDiff(trunc(A, wid(T)) -Int trunc(B, wid(T)), wid(T))
   rule ccOp("subc", _, T, CIN, A, B, _) =>
-       ccSum(trunc(A, wid(T)) +Int trunc(~Int B, wid(T)) +Int CIN, wid(T))
+       ccDiff(trunc(A, wid(T)) -Int trunc(B, wid(T)) -Int CIN, wid(T))
   rule ccOp(OP, M, T, CIN, A, B, C) =>
        ccSum(madHalf(M, T, A, B) +Int trunc(C, wid(T)) +Int CIN, wid(T))
     requires OP ==String "mad" orBool OP ==String "madc"
@@ -34,6 +37,9 @@ module PTX-EXEC-INT
 
   syntax List ::= ccSum(Int, Int) [function, total]
   rule ccSum(S, W) => ListItem(trunc(S, W)) ListItem(S >>Int W)
+  // (result, borrow out): the difference modulo 2^W, and 1 when it is negative
+  syntax List ::= ccDiff(Int, Int) [function, total]
+  rule ccDiff(S, W) => ListItem(trunc(S, W)) ListItem(#if S <Int 0 #then 1 #else 0 #fi)
   syntax Int ::= madHalf(Set, Ty, Int, Int) [function, total]     // .lo / .hi half of the full product
   rule madHalf(M, T, A, B) => trunc((ival(A, T) *Int ival(B, T)) >>Int wid(T), wid(T)) requires "hi" in M
   rule madHalf(_, T, A, B) => trunc(ival(A, T) *Int ival(B, T), wid(T)) [owise]

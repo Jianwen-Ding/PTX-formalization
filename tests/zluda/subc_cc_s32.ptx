@@ -38,4 +38,5 @@
 .buffer IN .u8 = { 117, 223, 122, 98, 245, 206, 76, 134 };
 .buffer OUT .u8 [8];
 .launch subc_cc_s32 <<< 1, 1 >>> (IN, OUT);
-.expect OUT .u8 = { 128, 16, 46, 220, 0, 0, 0, 0 };
+// the ISA's CC.CF after sub.cc: the borrow of 0x627ADF75 - 0x864CCEF5, 1 (NVIDIA hardware gives 0)
+.expect OUT .u8 = { 128, 16, 46, 220, 1, 0, 0, 0 };

@@ -14,6 +14,10 @@ usage: import_zluda.py PATH/TO/ZLUDA OUTDIR
 """
 import math, os, re, struct, sys
 OUT_SIZE = {'mma_m16n8k16_f32_bf16_bf16_f32_2x': 2048}
+# Launches narrowed to what the program defines: ldmatrix's second warp stores past its 256-byte .shared array
+# (tid * 4 + 128 up to 380), gives ldmatrix rows outside it (tid * 16) and writes past the 256-byte output (8
+# bytes a thread), undefined behaviour; the recorded output is the first warp's.
+THREADS = {'ldmatrix': 32}
 
 root, outdir = sys.argv[1], sys.argv[2]
 spirv = os.path.join(root, 'ptx/src/test/spirv_run')
@@ -123,6 +127,8 @@ for kind, body in find_calls(src):
     try:
         if kind == '_warp':
             inp, out, threads = b'', to_bytes(parts[1]), 64
+            if name in THREADS:
+                threads = THREADS[name]
         else:
             inp, out, threads = to_bytes(parts[1]), to_bytes(parts[2]), 1
     except IndexError:
