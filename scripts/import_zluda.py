@@ -141,6 +141,9 @@ for kind, body in find_calls(src):
     # the 2x mma test store 32 bytes each; .extern .shared programs need dynamic shared memory
     harness.append(f'.buffer OUT .u8 [{OUT_SIZE.get(name, len(out))}];')
     args = ('IN, OUT' if inp else 'OUT') if nparams == (2 if inp else 1) else ', '.join(['IN'] * (nparams - 1) + ['OUT'])
+    if not inp and 'IN' in args:
+        # an input parameter with no recorded input (bar_red_and_pred): a zeroed buffer
+        harness.insert(1, '.buffer IN .u8 [8];')
     dyn = ', 128' if re.search(r'\.extern\s+\.shared', ptx) else ''
     harness.append(f'.launch {kernel} <<< 1, {threads}{dyn} >>> ({args});')
     harness.append(f'.expect OUT .u8 = {{ {hx(out)} }};')
