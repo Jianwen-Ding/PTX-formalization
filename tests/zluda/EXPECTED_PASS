@@ -163,6 +163,7 @@ stateful_ld_st_simple
 stateful_neg_offset
 sub
 sub_extended
+subc_cc_s32
 tanh
 tid
 uint_to_fp_bf16

@@ -50,9 +50,10 @@ def run_one(path, timeout=900):
     golden = path[:-4] + ".out"
     stuck = re.search(r"stuck: (.*)", err)
     note = stuck.group(1) if stuck else ("crash: " + err.strip()[-300:] if code != 0 or ex is None else "")
-    if os.sep + "zluda" + os.sep in path:
-        # tests/zluda (scripts/run-zluda.py): the program passes when it exits 0 and its output starts with PASS
-        ok = ex == 0 and out.strip().startswith("PASS")
+    if os.sep + "zluda" + os.sep in path or os.sep + "stress" + os.sep in path:
+        # tests/zluda (scripts/run-zluda.py) and tests/stress (generated, no .out files): the program passes when it
+        # exits 0 (every .expect held) and its output starts with PASS
+        ok = ex == 0 and out.strip().startswith("PASS") and "FAIL" not in out
         return ("PASS" if ok else "FAIL", "" if ok else (note or out.strip().replace("\n", " | ")[:160]), out, time.time() - t0)
     if UPDATE and ex == 0:
         with open(golden, "w") as f:
