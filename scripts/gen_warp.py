@@ -16,8 +16,9 @@ def shfl(mode, lane, a_of, b, c, active):
     elif mode == 'bfly': j = lane ^ bval; p = j <= maxl
     else: j = minl | (bval & ~seg & 31); p = j <= maxl
     if not p: j = lane
-    own = a_of[lane]
-    return (a_of[j] if j in a_of else own), int(p)
+    # "results are undefined if a thread sources a register from an inactive thread or a thread that is not in
+    # membermask" (ISA 9.7.9.6): d is checked only where its source is in the mask (p always)
+    return (a_of[j] if j in a_of else 0xBEEF), int(p), j in a_of
 
 cases = []   # (name, threads, per-thread input lists, mask, per-thread outputs (list per thread of out words), ptx body fn)
 def lanes_mask(active): return sum(1 << l for l in active)
@@ -31,12 +32,16 @@ for mode in ('up', 'down', 'bfly', 'idx'):
         c = [random.choice([0x1f, 0x1f | (16 << 8), 0x1f | (24 << 8), 0, 0 | (16 << 8), random.getrandbits(13)]) for _ in range(T)]
         a_of = {l: a[l] for l in active}
         outs = []
+        defined = []
         for t in range(T):
             if t in active:
-                d, p = shfl(mode, t, a_of, b[t], c[t], active)
+                d, p, ok = shfl(mode, t, a_of, b[t], c[t], active)
                 outs.append([d, p])
-            else: outs.append([0xDEAD, 0xDEAD])
-        cases.append((f'shfl.sync.{mode}.b32 %r10|%p1, %r4, %r5, %r6, {mask}', T, [a, b, c], mask, outs, 'shfl'))
+                defined.append(int(ok))
+            else:
+                outs.append([0xDEAD, 0xDEAD])
+                defined.append(1)
+        cases.append((f'shfl.sync.{mode}.b32 %r10|%p1, %r4, %r5, %r6, {mask}', T, [a, b, c, defined], mask, outs, 'shfl'))
 for kind in ('all', 'any', 'uni', 'ballot'):
     for negate in (False, True):
         for mask_kind in ('full', 'odd'):
@@ -116,6 +121,8 @@ for k, (text, T, ins, mask, outs, kind) in enumerate(cases):
     print(f"    {text};")
     if kind in ('shfl', 'elect', 'match32', 'match64') and '|%p1' in text:
         print("    selp.u32 %r11, 1, 0, %p1;")
+    if kind == 'shfl':   # (the fourth input: whether d is defined)
+        print("    setp.eq.u32 %p4, %r7, 0; @%p4 mov.u32 %r10, 48879;")
     if kind == 'votep':
         print("    selp.u32 %r10, 1, 0, %p2;")
     print("$L_done:")

@@ -22,7 +22,10 @@ def rnd(w):
     sp = [0, SIGN[w], 1, SIGN[w] | 1, bits(1.0, w), bits(-1.0, w), bits(math.inf, w), bits(-math.inf, w),
           CN[w], bits(2.5, w), bits(-2.5, w), (1 << (23 if w == 32 else 52)) - 1, 1 << (23 if w == 32 else 52)]
     if random.random() < .6: return random.choice(sp)
-    return random.getrandbits(w) if random.random() < .5 else bits(random.uniform(-4, 4), w)
+    r = random.getrandbits(w) if random.random() < .5 else bits(random.uniform(-4, 4), w)
+    # f64 keeps NaN payloads, and which operand's a two-NaN min/max returns the ISA leaves open (9.7.3.10/11:
+    # "z = NaN"): its NaN inputs are the canonical one, whose result is determined
+    return CN[w] if w == 64 and isnan(r, w) else r
 
 def minmax(op, a, b, w, ftz, nan, xs):
     if ftz: a, b = flush(a, w), flush(b, w)
