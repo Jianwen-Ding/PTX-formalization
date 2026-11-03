@@ -1,6 +1,6 @@
 # Generated stress tests
 
-`scripts/gen_stress.sh [N] [SEEDS...]` writes these programs (default: 128 cases per launch, seeds 101, 202, 303).
+`scripts/gen_stress.sh [N] [SEEDS...]` writes these programs (default: 128 cases per launch, seeds 101, 202, 303, 505).
 They come from the same generators as the corresponding tests in `tests/` (bits, carry, intx, fmisc, lop3, video,
 ieee-diff, rounding-diff, cvt, half, pred, mini, warp) with other seeds and more cases, and, with the first seed,
 the matrix generators (mma, mma.sp, wgmma, wgmma.sp, tcgen05.mma, block-scaled mma: `mma-*`, `sp-*`, `wg-*`,

@@ -3,12 +3,12 @@
 # the PTX ISA: bit-by-bit pseudo-code, big integers, the exact-rational IEEE reference ieee_ref.py) with seeds other
 # than the ones of tests/ and more cases per launch.  The programs check only the ISA's results (no hardware
 # polarity), so a backend can be run on them with tools like ZLUDA's agx_ptx_formalization_check.py.
-#   usage: scripts/gen_stress.sh [N] [SEEDS...]      (default N 128, seeds 101 202 303; the matrix generators
+#   usage: scripts/gen_stress.sh [N] [SEEDS...]      (default N 128, seeds 101 202 303 505; the matrix generators
 #   with the first seed)
 set -e
 cd "$(dirname "$0")/.."
 N=${1:-128}; [ $# -gt 0 ] && shift
-SEEDS=${*:-101 202 303}
+SEEDS=${*:-101 202 303 505}
 OUT=tests/stress
 mkdir -p "$OUT"; rm -f "$OUT"/*.ptx   # (keeping its README.md)
 g() { # name, generator, args...
